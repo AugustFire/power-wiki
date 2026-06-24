@@ -1,0 +1,39 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite cache
+node_modules/.vite
+node_modules/.tmp
+
+# Claude Code 本地状态(不进公开 repo)
+.claude/
+
+# 工单截图(用户给 AI 的输入,不是项目资产)
+fix*.png
+
+# Playwright 自动生成的验证截图(可重跑)
+screenshots/
+
+# Python 缓存
+__pycache__/
+*.pyc

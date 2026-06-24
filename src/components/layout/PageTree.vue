@@ -1,0 +1,221 @@
+<script setup lang="ts">
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useUiStore } from '@/stores/ui'
+import { usePagesStore } from '@/stores/pages'
+import type { TreeNode } from '@/types/page'
+
+const props = defineProps<{
+  node: TreeNode
+  depth?: number
+}>()
+
+const uiStore = useUiStore()
+const pagesStore = usePagesStore()
+const route = useRoute()
+const router = useRouter()
+
+const depth = computed(() => props.depth ?? 0)
+const isExpanded = computed(() => uiStore.isExpanded(props.node.id))
+const hasChildren = computed(() => props.node.children.length > 0)
+const isActive = computed(() => route.params.id === props.node.id)
+const isMenuOpen = computed(() => uiStore.openMenuId === props.node.id)
+const isRenaming = computed(() => uiStore.renamingId === props.node.id)
+
+const renameValue = ref(props.node.title)
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+const menuStyle = computed(() => {
+  const { x, y } = uiStore.menuPos
+  // 让菜单向左上偏移一点点对齐 ⋯ 按钮右下角
+  return { top: `${y + 4}px`, left: `${x + 8}px` }
+})
+
+function toggleCaret(e: MouseEvent) {
+  e.stopPropagation()
+  if (hasChildren.value) uiStore.toggle(props.node.id)
+}
+
+function navigate() {
+  if (isRenaming.value) return
+  window.location.hash = `#/p/${props.node.id}`
+}
+
+function onMoreClick(e: MouseEvent) {
+  e.stopPropagation()
+  if (isMenuOpen.value) {
+    uiStore.closeMenu()
+  } else {
+    uiStore.openMenu(props.node.id, e.clientX, e.clientY)
+  }
+}
+
+function addChild() {
+  uiStore.closeMenu()
+  uiStore.expand(props.node.id)
+  const p = pagesStore.createPage({ parentId: props.node.id })
+  router.push(`/p/${p.id}/edit`)
+}
+
+function addSibling() {
+  uiStore.closeMenu()
+  const p = pagesStore.createPage({ parentId: null })
+  router.push(`/p/${p.id}/edit`)
+}
+
+function startRename() {
+  renameValue.value = props.node.title
+  uiStore.startRename(props.node.id)
+  nextTick(() => {
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select()
+  })
+}
+
+function commitRename() {
+  if (!isRenaming.value) return
+  const next = renameValue.value.trim()
+  if (next && next !== props.node.title) {
+    pagesStore.renamePage(props.node.id, next)
+  }
+  uiStore.endRename()
+}
+
+function cancelRename() {
+  uiStore.endRename()
+}
+
+function onRenameKey(e: KeyboardEvent) {
+  // 仅处理单个按键的 Enter / Escape,不做任何 Ctrl/Meta 组合键绑定
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitRename()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelRename()
+  }
+}
+
+function deletePage() {
+  uiStore.closeMenu()
+  const descendantCount = countDescendants(props.node.id)
+  const msg =
+    descendantCount > 0
+      ? `确认删除「${props.node.title}」?这将同时删除 ${descendantCount} 个子页面。`
+      : `确认删除「${props.node.title}」?`
+  if (!confirm(msg)) return
+  const wasCurrent = route.params.id === props.node.id
+  pagesStore.deletePage(props.node.id)
+  if (wasCurrent) {
+    router.push('/')
+  }
+}
+
+function promoteToRoot() {
+  uiStore.closeMenu()
+  if (props.node.parentId === null) return
+  pagesStore.updatePage(props.node.id, { parentId: null })
+}
+
+function countDescendants(id: string): number {
+  let count = 0
+  const stack: string[] = [id]
+  while (stack.length) {
+    const cur = stack.pop()!
+    const children = pagesStore.getChildren(cur)
+    for (const c of children) {
+      count++
+      stack.push(c.id)
+    }
+  }
+  return count
+}
+
+// 当外部关闭重命名(比如点别处),把输入值还原
+watch(isRenaming, (val) => {
+  if (val) renameValue.value = props.node.title
+})
+</script>
+
+<template>
+  <div class="tree-branch">
+    <div class="tree-row" :class="{ active: isActive }" @click="navigate">
+      <span
+        class="caret"
+        :class="{ leaf: !hasChildren, open: isExpanded && hasChildren }"
+        @click="toggleCaret"
+      >
+        <span v-if="hasChildren" class="material-symbols-outlined" style="font-size:16px">chevron_right</span>
+      </span>
+      <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
+      <input
+        v-if="isRenaming"
+        ref="renameInputRef"
+        v-model="renameValue"
+        class="rename-input"
+        @click.stop
+        @blur="commitRename"
+        @keydown="onRenameKey"
+      />
+      <span v-else class="label">{{ node.title }}</span>
+      <button
+        v-show="!isRenaming"
+        class="menu-btn"
+        title="更多操作"
+        @click="onMoreClick"
+      >
+        <span class="material-symbols-outlined" style="font-size:16px">more_horiz</span>
+      </button>
+    </div>
+
+    <!-- 菜单 (position: fixed) -->
+    <template v-if="isMenuOpen">
+      <div class="menu-backdrop" @click="uiStore.closeMenu()"></div>
+      <div class="menu" :style="menuStyle" @click.stop>
+        <button class="menu-item" @click="addSibling">
+          <span class="material-symbols-outlined" style="font-size:16px">add</span>
+          <span>添加同级页面</span>
+        </button>
+        <button class="menu-item" @click="addChild">
+          <span class="material-symbols-outlined" style="font-size:16px">subdirectory_arrow_right</span>
+          <span>在此页下添加子页面</span>
+        </button>
+        <button class="menu-item" v-if="node.parentId !== null" @click="promoteToRoot">
+          <span class="material-symbols-outlined" style="font-size:16px">format_indent_decrease</span>
+          <span>提升为根级</span>
+        </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" @click="startRename">
+          <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+          <span>重命名</span>
+        </button>
+        <button class="menu-item danger" @click="deletePage">
+          <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+          <span>删除</span>
+        </button>
+      </div>
+    </template>
+
+    <div v-if="hasChildren && isExpanded" class="tree-children">
+      <PageTree
+        v-for="child in node.children"
+        :key="child.id"
+        :node="child"
+        :depth="depth + 1"
+      />
+    </div>
+  </div>
+</template>
+
+<script lang="ts">
+export default { name: 'PageTree' }
+</script>
+
+<style scoped>
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  background: transparent;
+}
+</style>

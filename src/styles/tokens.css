@@ -1,0 +1,59 @@
+/* ============================================================
+   Atlas Wiki Design Tokens
+   复制自 design/wiki-edit.html 与 design/wiki-read.html 的 :root
+   ============================================================ */
+
+:root {
+    /* Atlassian Color Palette */
+    --bg:            #FFFFFF;
+    --bg-canvas:     #F4F5F7;
+    --bg-sidebar:    #FAFBFC;
+    --bg-subtle:     #EBECF0;
+    --bg-code:       #091E42;
+    --bg-code-soft:  #F4F5F7;
+
+    /* Text */
+    --text-1:        #172B4D;
+    --text-2:        #44546F;
+    --text-3:        #6B778C;
+    --text-invert:   #FFFFFF;
+
+    /* Borders */
+    --border:        #DFE1E6;
+    --border-strong: #C1C7D0;
+
+    /* Brand Blue */
+    --accent:        #0052CC;
+    --accent-hover:  #0747A6;
+    --accent-soft:   #DEEBFF;
+    --accent-softer: #F4F8FF;
+
+    /* Semantic Colors */
+    --success:       #36B37E;
+    --success-soft:  #E3FCEF;
+    --warning:       #FFAB00;
+    --warning-soft:  #FFF7E6;
+    --danger:        #FF5630;
+    --danger-soft:   #FFEBE6;
+    --purple:        #403294;
+    --purple-soft:   #EAE6FF;
+
+    /* Shadows & Radius */
+    --shadow-sm: 0 1px 1px rgba(9,30,66,0.13), 0 0 1px rgba(9,30,66,0.13);
+    --shadow-md: 0 4px 8px -2px rgba(9,30,66,0.08), 0 0 1px rgba(9,30,66,0.08);
+    --radius: 3px;
+
+    /* Type */
+    --font-sans:    'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+    --font-mono:    'JetBrains Mono', 'Consolas', monospace;
+
+    /* Layout */
+    --topbar-h:     56px;
+    --sub-h:        48px;
+    --sidebar-w:    260px;
+    --toc-w:        220px;
+    --content-max:  1100px;
+}
+
+/* 硬约束标记 — 禁止修改或删除 */
+:root[data-no-dark] { color-scheme: light; }
