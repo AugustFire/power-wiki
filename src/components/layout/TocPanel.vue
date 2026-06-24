@@ -7,7 +7,8 @@ const props = defineProps<{
   pageKey?: string | number
 }>()
 
-const items = ref<{ id: string; text: string }[]>([])
+type TocItem = { id: string; text: string; level: 1 | 2 | 3 }
+const items = ref<TocItem[]>([])
 const activeId = ref<string>('')
 const manualId = ref<string | null>(null)
 let observer: IntersectionObserver | null = null
@@ -26,7 +27,8 @@ function collectHeadings() {
       const tag = h.tagName.toLowerCase()
       h.id = `${tag}-${idx}-${(h.textContent || '').replace(/\s+/g, '-').slice(0, 30)}`
     }
-    return { id: h.id, text: h.textContent || '' }
+    const lv = Number(h.tagName.substring(1)) as 1 | 2 | 3
+    return { id: h.id, text: h.textContent || '', level: lv }
   })
   activeId.value = ''
   manualId.value = null
@@ -105,15 +107,17 @@ watch(
     <div class="toc-title">本页目录</div>
     <div v-if="items.length === 0" class="toc-empty">没有目录</div>
     <div v-else class="toc-list">
-      <div
+      <button
         v-for="item in items"
         :key="item.id"
         class="toc-item"
-        :class="{ active: activeId === item.id }"
+        :class="[`level-${item.level}`, { active: activeId === item.id }]"
+        :title="item.text"
+        type="button"
         @click="scrollTo(item.id)"
       >
         {{ item.text }}
-      </div>
+      </button>
     </div>
 
     <div class="toc-followers">

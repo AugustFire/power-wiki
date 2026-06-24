@@ -37,3 +37,6 @@ screenshots/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# Playwright 验收脚本(本地用,不进版本控制;已提交的忽略)
+scripts/

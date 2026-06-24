@@ -4,10 +4,12 @@ import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
 import { htmlToJson } from '@/editor/htmlToJson'
+import { charCount } from '@/lib/textMetrics'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
@@ -185,19 +187,15 @@ watch(
       <div class="content">
         <div class="content-inner read-page">
           <div v-if="page">
-            <!-- 标签条(紧凑版) -->
+            <!-- 标签条(紧凑版) — 只显示有真实数据支撑的状态 -->
             <div class="page-tags">
               <span class="status-pill success">
                 <span class="material-symbols-outlined" style="font-size:14px">check_circle</span>
-                已上线
+                已发布
               </span>
               <span class="status-pill purple">
                 <span class="material-symbols-outlined" style="font-size:14px">account_circle</span>
-                我
-              </span>
-              <span class="status-pill warning">
-                <span class="material-symbols-outlined" style="font-size:14px">schedule</span>
-                下次审核 14 天内
+                {{ page.authorId === 'me' ? '我' : page.authorId }}
               </span>
               <span class="status-pill">
                 <span class="material-symbols-outlined" style="font-size:14px">update</span>
@@ -207,11 +205,11 @@ watch(
 
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
-              <span class="author"><span class="author-av">ME</span> 我</span>
+              <span class="author"><UserAvatar :size="20" /> 我</span>
               <span class="dot">·</span>
               <span>创建于 {{ new Date(page.createdAt).toLocaleDateString('zh-CN') }}</span>
               <span class="dot">·</span>
-              <span>{{ page.contentHTML.replace(/<[^>]+>/g, '').trim().length }} 字</span>
+              <span>{{ charCount(page.contentHTML) }} 字</span>
             </div>
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>

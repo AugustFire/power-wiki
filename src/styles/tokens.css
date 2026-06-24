@@ -50,8 +50,8 @@
     /* Layout */
     --topbar-h:     56px;
     --sub-h:        48px;
-    --sidebar-w:    260px;
-    --toc-w:        220px;
+    --sidebar-w:    240px;
+    --toc-w:        200px;
     --content-max:  1100px;
 }
 

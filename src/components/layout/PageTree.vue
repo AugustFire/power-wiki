@@ -139,7 +139,12 @@ watch(isRenaming, (val) => {
 
 <template>
   <div class="tree-branch">
-    <div class="tree-row" :class="{ active: isActive }" @click="navigate">
+    <div
+      class="tree-row"
+      :class="{ active: isActive }"
+      @click="navigate"
+      @contextmenu.prevent="onMoreClick"
+    >
       <span
         class="caret"
         :class="{ leaf: !hasChildren, open: isExpanded && hasChildren }"

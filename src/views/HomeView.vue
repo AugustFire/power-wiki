@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 
 const pagesStore = usePagesStore()
 const router = useRouter()
@@ -22,12 +24,25 @@ const stats = computed(() => {
   const editedToday = all.filter((p) => p.updatedAt >= todayMs).length
   const childCount = all.filter((p) => p.parentId !== null).length
   const thisWeek = all.filter((p) => p.updatedAt >= todayMs - 7 * 86400000).length
+  // 估算 localStorage 占用(JSON 序列化字节数 / 1024 取一位小数 KB)
+  let bytes = 0
+  try {
+    bytes = new Blob([JSON.stringify(all)]).size
+  } catch {
+    bytes = 0
+  }
+  const kb = bytes / 1024
+  const storageValue =
+    kb < 1024 ? kb.toFixed(1) : (kb / 1024).toFixed(2)
+  const storageUnit = kb < 1024 ? 'KB' : 'MB'
   return {
     total: all.length,
     roots: rootPages.value.length,
     children: childCount,
     editedToday,
     thisWeek,
+    storageValue,
+    storageUnit,
   }
 })
 
@@ -54,15 +69,7 @@ function relativeTime(ts: number): string {
 
 // 取内容纯文本作为摘要(去掉 HTML 标签 + 图标文字,截取前 80 字)
 function excerpt(html: string): string {
-  const text = html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    // 移除所有带 material-symbols-outlined 类的 span(图标名字)
-    .replace(/<span[^>]*class=["'][^"']*material-symbols-outlined[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return text.length > 80 ? text.slice(0, 80) + '…' : text
+  return makeExcerpt(html)
 }
 </script>
 
@@ -124,7 +131,7 @@ function excerpt(html: string): string {
             <div class="home-hero">
               <h1 class="page-title">我的知识库</h1>
               <div class="page-byline">
-                <span class="author"><span class="author-av">ME</span> 我</span>
+                <span class="author"><UserAvatar :size="20" /> 我</span>
                 <span class="dot">·</span>
                 <span>共 {{ stats.total }} 个页面 · {{ stats.roots }} 个根页面 · {{ stats.children }} 个子页面</span>
               </div>
@@ -143,10 +150,10 @@ function excerpt(html: string): string {
               <div class="stat-card success">
                 <div class="stat-label">
                   <span class="material-symbols-outlined">today</span>
-                  今日编辑
+                  今日活跃
                 </div>
                 <div class="stat-value">{{ stats.editedToday }}</div>
-                <div class="stat-trend"><span class="up">活跃</span></div>
+                <div class="stat-trend">最近 24h 更新过</div>
               </div>
               <div class="stat-card purple">
                 <div class="stat-label">
@@ -161,8 +168,8 @@ function excerpt(html: string): string {
                   <span class="material-symbols-outlined">storage</span>
                   本地存储
                 </div>
-                <div class="stat-value">localStorage</div>
-                <div class="stat-trend">Phase 3 迁移 IndexedDB</div>
+                <div class="stat-value">{{ stats.storageValue }}<span class="stat-unit">{{ stats.storageUnit }}</span></div>
+                <div class="stat-trend">浏览器 localStorage · {{ stats.total }} 页</div>
               </div>
             </div>
 
@@ -186,7 +193,7 @@ function excerpt(html: string): string {
                 <span class="qa-icon"><span class="material-symbols-outlined">search</span></span>
                 <div>
                   <div>全文搜索</div>
-                  <div class="qa-meta">Phase 3 上线</div>
+                  <div class="qa-meta">即将上线</div>
                 </div>
               </button>
             </div>

@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -22,6 +23,11 @@ const editorRef = ref<any>(null)
 
 const isExisting = computed(() => !!localId.value)
 const page = computed(() => (localId.value ? pagesStore.getPage(localId.value) : undefined))
+const parentPage = computed(() => {
+  const pid = page.value?.parentId
+  if (!pid) return null
+  return pagesStore.getPage(pid) ?? null
+})
 
 const isDirty = ref(false)
 const saveState = ref<'idle' | 'saving' | 'saved'>('idle')
@@ -174,9 +180,11 @@ onBeforeUnmount(() => {
     <div class="subheader">
       <div class="breadcrumb">
         <a href="#/">我的知识库</a>
-        <template v-if="page?.parentId">
+        <template v-if="parentPage">
           <span class="sep">/</span>
-          <span class="crumb-item">上级</span>
+          <a class="crumb-item crumb-link" :href="`#/p/${parentPage.id}`" :title="parentPage.title">
+            {{ parentPage.title }}
+          </a>
         </template>
         <span class="sep">/</span>
         <span class="crumb-item current">{{ localTitle || '无标题页面' }}</span>
@@ -240,7 +248,7 @@ onBeforeUnmount(() => {
           />
 
           <div class="edit-byline">
-            <span class="me-av" style="width:24px; height:24px; background: var(--accent); color: white; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;">ME</span>
+            <UserAvatar :size="24" />
             <span><strong>我</strong> · 创建于 {{ new Date().toLocaleDateString('zh-CN') }}</span>
             <span class="byline-hint">·</span>
             <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>

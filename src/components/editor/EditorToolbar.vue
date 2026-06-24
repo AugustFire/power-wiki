@@ -508,7 +508,13 @@ function handleClick(btn: Btn) {
 
       <!-- 块类型下拉 -->
       <div ref="blockTypeWrap" class="tb-block-type-wrap" :class="{ open: blockTypeOpen }">
-        <button class="tb-block-type" type="button" @click="toggleBlockType">
+        <button
+          class="tb-block-type"
+          type="button"
+          :aria-expanded="blockTypeOpen"
+          aria-haspopup="menu"
+          @click="toggleBlockType"
+        >
           <span>{{ blockTypeLabel }}</span>
           <span class="material-symbols-outlined chev">expand_more</span>
         </button>
@@ -619,7 +625,13 @@ function handleClick(btn: Btn) {
 
       <!-- 表格操作(仅在光标处于表格内时显示):单个下拉入口,避免挤工具栏 -->
       <div v-if="isInTable" ref="tableMenuWrap" class="tb-block-type-wrap" :class="{ open: tableMenuOpen }">
-        <button class="tb-block-type" type="button" @click="toggleTableMenu">
+        <button
+          class="tb-block-type"
+          type="button"
+          :aria-expanded="tableMenuOpen"
+          aria-haspopup="menu"
+          @click="toggleTableMenu"
+        >
           <span class="material-symbols-outlined" style="font-size:18px">table_chart</span>
           <span>表格</span>
           <span class="material-symbols-outlined chev">expand_more</span>
@@ -659,7 +671,13 @@ function handleClick(btn: Btn) {
 
       <!-- 提示框变体(仅在光标处于 callout 内时显示) -->
       <div v-if="currentCalloutVariant" ref="calloutMenuWrap" class="tb-block-type-wrap" :class="{ open: calloutMenuOpen }">
-        <button class="tb-block-type" type="button" @click="toggleCalloutMenu">
+        <button
+          class="tb-block-type"
+          type="button"
+          :aria-expanded="calloutMenuOpen"
+          aria-haspopup="menu"
+          @click="toggleCalloutMenu"
+        >
           <span class="material-symbols-outlined" style="font-size:18px">{{ CALLOUT_ICON_MAP[currentCalloutVariant] }}</span>
           <span>{{ ({ info: '信息', success: '成功', warning: '警告', danger: '危险' } as Record<string, string>)[currentCalloutVariant] }}</span>
           <span class="material-symbols-outlined chev">expand_more</span>

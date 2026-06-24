@@ -38,12 +38,26 @@ function createRoot() {
         <span class="material-symbols-outlined">home</span>
         <span>首页</span>
       </a>
-      <a class="quick-nav-item" href="#/" :class="{ disabled: true }" title="即将上线">
+      <a
+        class="quick-nav-item"
+        href="#/"
+        :class="{ disabled: true }"
+        title="即将上线"
+        aria-disabled="true"
+        @click.prevent
+      >
         <span class="material-symbols-outlined">star</span>
         <span>已加星标</span>
         <span class="coming-soon">即将上线</span>
       </a>
-      <a class="quick-nav-item" href="#/" :class="{ disabled: true }" title="即将上线">
+      <a
+        class="quick-nav-item"
+        href="#/"
+        :class="{ disabled: true }"
+        title="即将上线"
+        aria-disabled="true"
+        @click.prevent
+      >
         <span class="material-symbols-outlined">edit_note</span>
         <span>我的草稿</span>
         <span class="coming-soon">即将上线</span>
