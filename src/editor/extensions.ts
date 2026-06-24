@@ -19,57 +19,38 @@ import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import CodeBlockView from '@/components/editor/CodeBlockView.vue'
 import { HeadingAnchor } from './headingAnchor'
 import { Callout } from './calloutExtension'
+import { Toggle } from './toggleExtension'
+import { PageRef } from './pageRefExtension'
 
 /**
- * 禁用 Tiptap / StarterKit 内置的所有键盘快捷键
+ * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
  *
- * 用户硬约束:不绑定任何键盘事件,工具栏 tooltip 可显示 Ctrl+B 等文字
- * 但 click 之外不响应。这里用一个高优先级 ProseMirror 插件,在所有
- * StarterKit / 其它扩展注册的 keymap 之前 handleKeyDown 返回 true 吞掉事件。
+ * 早期的 NoKeyboardShortcuts plugin 会吞掉所有 Mod-* 组合键,把 Tiptap
+ * StarterKit / TaskList / CodeBlock 等扩展自带的格式化快捷键也一并禁掉。
+ * 经评估,这些快捷键是编辑器效率的核心,不应该禁用。现在只保留对
+ * Cmd/Ctrl+S 的拦截 — 否则用户在编辑中按 Cmd+S 会被浏览器抢去触发
+ * "保存网页"对话框,体验割裂。
  *
- * 保留:Enter / Backspace / Delete / Tab / 方向键 / Escape / 字符输入 / 退格 等
- * 都不在 blocked 集合中,走 ProseMirror 默认行为。
+ * 其余快捷键(Cmd+B/I/U/E/Z/Y、Alt+1/2/3、Cmd+Shift+7/8/9 等)全部
+ * 走 Tiptap 默认 keymap。
  *
- * 注意:必须用 Plugin + props.handleKeyDown(而非 keymap()),因为 keymap
- * 在 ProseMirror 中是按数组顺序逐个尝试,后注册的 keymap 反而优先。直接
- * 用一个高 priority 的 Plugin handleKeyDown 才能保证在所有 keymap 之前拦截。
+ * 实现原理:用 priority: 1000 的 ProseMirror Plugin,在所有 StarterKit keymap
+ * 之前 handleKeyDown 返回 true 吞掉事件。
  */
-const NoKeyboardShortcuts = Extension.create({
-  name: 'noKeyboardShortcuts',
+const BlockBrowserSave = Extension.create({
+  name: 'blockBrowserSave',
   addProseMirrorPlugins() {
     return [
       new Plugin({
-        key: new PluginKey('noKeyboardShortcuts'),
-        priority: 1000, // 远高于 StarterKit keymap(默认 100)
+        key: new PluginKey('blockBrowserSave'),
+        priority: 1000,
         props: {
           handleKeyDown(_view, event) {
-            // 只拦截修饰键组合,普通字符键都放行
             const mod = event.metaKey || event.ctrlKey
             if (!mod) return false
-            // 阻止浏览器默认(如 Ctrl+S 保存页面)
-            if (!event.altKey && !event.shiftKey) {
-              const k = event.key.toLowerCase()
-              if (k === 'b' || k === 'i' || k === 'u' || k === 'e' ||
-                  k === 'z' || k === 'y' || k === 's' || k === 'a') {
-                event.preventDefault()
-                return true
-              }
-            }
-            if (event.shiftKey && !event.altKey) {
-              const k = event.key.toLowerCase()
-              if (k === 's' || k === 'b' || k === 'z' || k === 'y' ||
-                  k === '7' || k === '8' || k === '5' || k === '9' ||
-                  k === '-' || k === 'enter') {
-                event.preventDefault()
-                return true
-              }
-            }
-            if (event.altKey && !event.shiftKey) {
-              const k = event.key.toLowerCase()
-              if (k === '1' || k === '2' || k === '3' || k === 'c') {
-                event.preventDefault()
-                return true
-              }
+            if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
+              event.preventDefault()
+              return true
             }
             return false
           },
@@ -82,31 +63,89 @@ const NoKeyboardShortcuts = Extension.create({
 /**
  * Tiptap 扩展集合
  *
- * 硬约束:
- * - 不接 Link / Image 扩展(无 URL 输入)
- * - NoKeyboardShortcuts 显式禁掉所有内置快捷键
- * - enableInputRules: false 禁用 Markdown 输入法(如 ** → bold)
+ * 当前约束:
+ * - BlockBrowserSave 拦截 Cmd/Ctrl+S 防浏览器保存对话框
+ * - Markdown 输入规则开启(`## ` → h2、`**bold**` → bold、`- ` → ul 等)
+ * - IME 中文拼音期间,Tiptap 通过 `view.composing` 字段自动跳过 inputRules
+ *   (见 @tiptap/core/src/InputRule.ts:97-104),无需自己写 composition 插件
  */
 const extensions = [
-  NoKeyboardShortcuts,
+  BlockBrowserSave,
   HeadingAnchor,
   StarterKit.configure({
     heading: false, // 用下面 HeadingAnchor 替换 StarterKit 内置 heading
     codeBlock: false, // 关闭内置 codeBlock,用低光高亮的版本替换
-    // 关闭 Markdown 输入规则(## → h2、** → bold、> → blockquote 等),
-    // 工具栏按钮是唯一的格式入口 — 和工具栏 UI 的预期对齐。
-    enableInputRules: false,
-    enablePasteRules: false,
+    // StarterKit 2.27 的 Markdown 输入规则默认开启(`## `→h2、`**bold**`→bold 等)。
+    // Tiptap 通过 view.composing 字段跳过 IME composition 期间,
+    // 中文打字不会被 inputRules 误判(见 @tiptap/core/src/InputRule.ts:97-104)。
   }),
   TaskList,
   TaskItem.configure({ nested: true }),
   Table.configure({ resizable: true }),
   TableRow,
-  TableCell,
-  TableHeader,
+  TableCell.extend({
+    // 给 td 加 backgroundColor / textAlign / verticalAlign 三个属性,
+    // 让 setCellAttribute 命令能改背景、对齐。Tiptap 通过 style 序列化。
+    addAttributes() {
+      return {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...(this.parent?.() as any),
+        backgroundColor: {
+          default: null,
+          parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
+          renderHTML: (attrs: Record<string, unknown>) => {
+            if (!attrs.backgroundColor) return {}
+            return { style: `background-color: ${attrs.backgroundColor}` }
+          },
+        },
+        textAlign: {
+          default: null,
+          parseHTML: (el: HTMLElement) => el.style.textAlign || null,
+          renderHTML: (attrs: Record<string, unknown>) => {
+            if (!attrs.textAlign) return {}
+            return { style: `text-align: ${attrs.textAlign}` }
+          },
+        },
+        verticalAlign: {
+          default: null,
+          parseHTML: (el: HTMLElement) => el.style.verticalAlign || null,
+          renderHTML: (attrs: Record<string, unknown>) => {
+            if (!attrs.verticalAlign) return {}
+            return { style: `vertical-align: ${attrs.verticalAlign}` }
+          },
+        },
+      }
+    },
+  }),
+  TableHeader.extend({
+    // 表头同样支持上述属性
+    addAttributes() {
+      return {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...(this.parent?.() as any),
+        backgroundColor: {
+          default: null,
+          parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
+          renderHTML: (attrs: Record<string, unknown>) => {
+            if (!attrs.backgroundColor) return {}
+            return { style: `background-color: ${attrs.backgroundColor}` }
+          },
+        },
+        textAlign: {
+          default: null,
+          parseHTML: (el: HTMLElement) => el.style.textAlign || null,
+          renderHTML: (attrs: Record<string, unknown>) => {
+            if (!attrs.textAlign) return {}
+            return { style: `text-align: ${attrs.textAlign}` }
+          },
+        },
+      }
+    },
+  }),
   CodeBlockLowlight.extend({
     addNodeView() {
-      return VueNodeViewRenderer(CodeBlockView)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return VueNodeViewRenderer(CodeBlockView as any)
     },
   }).configure({
     lowlight: createLowlight(common),
@@ -154,6 +193,10 @@ const extensions = [
   TextStyle,
   // 提示框:4 种 variant(信息/成功/警告/危险),支持 wrapIn / toggle / 改 variant
   Callout,
+  // 折叠块:details/summary 容器,点击 summary 切换 open/close
+  Toggle,
+  // 页面引用:块级卡片,Notion 风格,点击跳转到对应页面
+  PageRef,
 ]
 
 export default extensions

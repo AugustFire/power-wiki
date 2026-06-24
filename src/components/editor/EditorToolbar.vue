@@ -135,24 +135,88 @@ const isInTable = computed(() => {
 const tableMenuOpen = ref(false)
 const tableMenuWrap = ref<HTMLElement | null>(null)
 
-interface TableMenuOpt {
-  id: string
-  label: string
-  icon: string
-  danger?: boolean
+// 表格下拉的项类型 — 多了 kind 区分:action 直接执行,picker 打开子面板,separator 分组线
+type TableMenuItem =
+  | { kind: 'action'; id: string; label: string; icon: string; danger?: boolean; isActive?: () => boolean }
+  | { kind: 'separator' }
+  | { kind: 'picker'; id: 'cellColor'; label: string; icon: string }
+
+// 当前光标单元格的 backgroundColor / textAlign(用于高亮 active)
+function currentCellBg(): string | null {
+  const e = props.editor
+  if (!e) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((e.getAttributes('tableCell' as any).backgroundColor as string | null) ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e.getAttributes('tableHeader' as any).backgroundColor as string | null) ||
+    null)
 }
-const tableMenuOptions: TableMenuOpt[] = [
-  { id: 'addRowBefore', label: '上方插入行', icon: 'vertical_align_top' },
-  { id: 'addRowAfter', label: '下方插入行', icon: 'vertical_align_bottom' },
-  { id: 'addColBefore', label: '左侧插入列', icon: 'align_horizontal_left' },
-  { id: 'addColAfter', label: '右侧插入列', icon: 'align_horizontal_right' },
-  { id: 'deleteRow', label: '删除当前行', icon: 'horizontal_rule' },
-  { id: 'deleteCol', label: '删除当前列', icon: 'vertical_distribute' },
-  { id: 'deleteTable', label: '删除整个表格', icon: 'delete_sweep', danger: true },
+
+function currentTextAlign(): string | null {
+  const e = props.editor
+  if (!e) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((e.getAttributes('tableCell' as any).textAlign as string | null) ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e.getAttributes('tableHeader' as any).textAlign as string | null) ||
+    null)
+}
+
+const tableMenuOptions: TableMenuItem[] = [
+  // ── 行/列增删 ──
+  { kind: 'action', id: 'addRowBefore', label: '上方插入行', icon: 'vertical_align_top' },
+  { kind: 'action', id: 'addRowAfter', label: '下方插入行', icon: 'vertical_align_bottom' },
+  { kind: 'action', id: 'addColBefore', label: '左侧插入列', icon: 'align_horizontal_left' },
+  { kind: 'action', id: 'addColAfter', label: '右侧插入列', icon: 'align_horizontal_right' },
+  { kind: 'separator' },
+  // ── 合并/拆分 ──
+  { kind: 'action', id: 'mergeCells', label: '合并单元格', icon: 'merge_type' },
+  { kind: 'action', id: 'splitCell', label: '拆分单元格', icon: 'call_split' },
+  { kind: 'separator' },
+  // ── 表头切换 ──
+  {
+    kind: 'action',
+    id: 'toggleHeaderRow',
+    label: '切换表头行',
+    icon: 'view_headline',
+    isActive: () => !!props.editor?.isActive('tableHeader'),
+  },
+  { kind: 'separator' },
+  // ── 单元格对齐 ──
+  {
+    kind: 'action',
+    id: 'alignLeft',
+    label: '左对齐',
+    icon: 'format_align_left',
+    isActive: () => currentTextAlign() === 'left',
+  },
+  {
+    kind: 'action',
+    id: 'alignCenter',
+    label: '居中',
+    icon: 'format_align_center',
+    isActive: () => currentTextAlign() === 'center',
+  },
+  {
+    kind: 'action',
+    id: 'alignRight',
+    label: '右对齐',
+    icon: 'format_align_right',
+    isActive: () => currentTextAlign() === 'right',
+  },
+  { kind: 'separator' },
+  // ── 单元格背景色 ──
+  { kind: 'picker', id: 'cellColor', label: '单元格背景', icon: 'format_color_fill' },
+  { kind: 'separator' },
+  // ── 删除 ──
+  { kind: 'action', id: 'deleteRow', label: '删除当前行', icon: 'horizontal_rule', danger: true },
+  { kind: 'action', id: 'deleteCol', label: '删除当前列', icon: 'vertical_distribute', danger: true },
+  { kind: 'action', id: 'deleteTable', label: '删除整个表格', icon: 'delete_sweep', danger: true },
 ]
 
 function toggleTableMenu() {
   tableMenuOpen.value = !tableMenuOpen.value
+  cellColorOpen.value = false
 }
 
 function runTableAction(id: string) {
@@ -166,9 +230,42 @@ function runTableAction(id: string) {
     deleteRow: () => e.chain().focus().deleteRow().run(),
     deleteCol: () => e.chain().focus().deleteColumn().run(),
     deleteTable: () => e.chain().focus().deleteTable().run(),
+    mergeCells: () => e.chain().focus().mergeCells().run(),
+    splitCell: () => e.chain().focus().splitCell().run(),
+    toggleHeaderRow: () => e.chain().focus().toggleHeaderRow().run(),
+    alignLeft: () => e.chain().focus().setCellAttribute('textAlign', 'left').run(),
+    alignCenter: () => e.chain().focus().setCellAttribute('textAlign', 'center').run(),
+    alignRight: () => e.chain().focus().setCellAttribute('textAlign', 'right').run(),
+    clearAlign: () => e.chain().focus().setCellAttribute('textAlign', null).run(),
   }
   cmds[id]?.()
   tableMenuOpen.value = false
+}
+
+// ─── 单元格背景色 popover ────────────────────────
+const cellColorOpen = ref(false)
+
+// 单元格背景色 — 用稍饱和的颜色,在浅色弹窗里也能看清
+const CELL_COLORS = [
+  { name: '默认', value: null },
+  { name: '灰', value: '#DFE1E6' },
+  { name: '红', value: '#FF8B8B' },
+  { name: '橙', value: '#FFAB00' },
+  { name: '黄', value: '#FFE380' },
+  { name: '绿', value: '#79F2C0' },
+  { name: '蓝', value: '#79E2F2' },
+  { name: '紫', value: '#B3ACF5' },
+]
+
+function applyCellColor(value: string | null) {
+  const e = props.editor
+  if (!e) return
+  e.chain().focus().setCellAttribute('backgroundColor', value).run()
+  cellColorOpen.value = false
+}
+
+function clearCellColor() {
+  applyCellColor(null)
 }
 
 const historyBtns = computed<Btn[]>(() => {
@@ -636,17 +733,63 @@ function handleClick(btn: Btn) {
           <span>表格</span>
           <span class="material-symbols-outlined chev">expand_more</span>
         </button>
-        <div v-if="tableMenuOpen" class="tb-block-type-menu">
-          <button
-            v-for="opt in tableMenuOptions"
-            :key="opt.id"
-            class="tb-block-type-opt"
-            :class="{ danger: opt.danger }"
-            @mousedown.prevent="runTableAction(opt.id)"
-          >
-            <span class="material-symbols-outlined">{{ opt.icon }}</span>
-            <span>{{ opt.label }}</span>
-          </button>
+        <div v-if="tableMenuOpen" class="tb-block-type-menu tb-table-menu">
+          <template v-for="(opt, idx) in tableMenuOptions" :key="idx">
+            <div v-if="opt.kind === 'separator'" class="tb-block-type-sep"></div>
+            <div
+              v-else-if="opt.kind === 'picker' && opt.id === 'cellColor'"
+              class="tb-cell-color"
+              @mousedown.stop
+            >
+              <button
+                type="button"
+                class="tb-block-type-opt tb-cell-color-trigger"
+                :class="{ active: !!currentCellBg() }"
+                :aria-expanded="cellColorOpen"
+                @mousedown.prevent="cellColorOpen = !cellColorOpen"
+              >
+                <span class="material-symbols-outlined">{{ opt.icon }}</span>
+                <span>{{ opt.label }}</span>
+                <span
+                  class="tb-cell-color-bar"
+                  :style="{ background: currentCellBg() || 'transparent' }"
+                ></span>
+                <span class="material-symbols-outlined chev" style="font-size:14px;margin-left:auto">expand_more</span>
+              </button>
+              <div v-if="cellColorOpen" class="tb-cell-color-popover">
+                <button
+                  v-for="c in CELL_COLORS"
+                  :key="c.value || 'none'"
+                  type="button"
+                  class="tb-cell-color-swatch"
+                  :class="{ active: currentCellBg() === c.value }"
+                  :title="c.name"
+                  @mousedown.prevent="applyCellColor(c.value)"
+                >
+                  <span v-if="c.value" class="tb-cell-color-dot" :style="{ background: c.value }"></span>
+                  <span v-else class="material-symbols-outlined tb-cell-color-none">format_color_reset</span>
+                </button>
+                <div class="tb-block-type-sep" style="margin: 4px 2px"></div>
+                <button
+                  class="tb-block-type-opt danger"
+                  style="height: 26px; font-size: 12px;"
+                  @mousedown.prevent="clearCellColor"
+                >
+                  <span class="material-symbols-outlined" style="font-size:14px">format_color_reset</span>
+                  <span>清除背景</span>
+                </button>
+              </div>
+            </div>
+            <button
+              v-else
+              class="tb-block-type-opt"
+              :class="{ danger: opt.danger, active: opt.isActive?.() }"
+              @mousedown.prevent="runTableAction(opt.id)"
+            >
+              <span class="material-symbols-outlined">{{ opt.icon }}</span>
+              <span>{{ opt.label }}</span>
+            </button>
+          </template>
         </div>
       </div>
 

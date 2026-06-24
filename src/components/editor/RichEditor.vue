@@ -38,35 +38,16 @@ const editor = useEditor({
     attributes: {
       class: 'tiptap',
     },
-    // 用户硬约束:不绑定键盘快捷键。
-    // Tiptap 文档明确:editorProps.handleKeyDown 在所有 keymap 插件之前调用,
-    // 这里 return true 可以"吞掉"事件,让 StarterKit 等内置快捷键全部失效。
+    // editorProps.handleKeyDown 在所有 keymap 插件之前调用。
+    // 这里只拦截 Cmd/Ctrl+S,防止浏览器弹出"保存网页"对话框;
+    // 其余快捷键(Cmd+B/I/U/E/Z/Y 等)放行给 Tiptap 默认 keymap。
+    // 配合 extensions.ts 的 BlockBrowserSave plugin 形成双层防御。
     handleKeyDown(_view, event) {
       const mod = event.metaKey || event.ctrlKey
       if (!mod) return false
-      if (!event.altKey && !event.shiftKey) {
-        const k = event.key.toLowerCase()
-        if (k === 'b' || k === 'i' || k === 'u' || k === 'e' ||
-            k === 'z' || k === 'y' || k === 's' || k === 'a') {
-          event.preventDefault()
-          return true
-        }
-      }
-      if (event.shiftKey && !event.altKey) {
-        const k = event.key.toLowerCase()
-        if (k === 's' || k === 'b' || k === 'z' || k === 'y' ||
-            k === '7' || k === '8' || k === '5' || k === '9' ||
-            k === '-' || k === 'enter') {
-          event.preventDefault()
-          return true
-        }
-      }
-      if (event.altKey && !event.shiftKey) {
-        const k = event.key.toLowerCase()
-        if (k === '1' || k === '2' || k === '3' || k === 'c') {
-          event.preventDefault()
-          return true
-        }
+      if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        return true
       }
       return false
     },

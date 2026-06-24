@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
+import { useConfirm } from '@/composables/useConfirm'
 import type { TreeNode } from '@/types/page'
 
 const props = defineProps<{
@@ -14,6 +15,7 @@ const uiStore = useUiStore()
 const pagesStore = usePagesStore()
 const route = useRoute()
 const router = useRouter()
+const { confirm } = useConfirm()
 
 const depth = computed(() => props.depth ?? 0)
 const isExpanded = computed(() => uiStore.isExpanded(props.node.id))
@@ -99,16 +101,24 @@ function onRenameKey(e: KeyboardEvent) {
 function deletePage() {
   uiStore.closeMenu()
   const descendantCount = countDescendants(props.node.id)
-  const msg =
+  const message =
     descendantCount > 0
-      ? `确认删除「${props.node.title}」?这将同时删除 ${descendantCount} 个子页面。`
-      : `确认删除「${props.node.title}」?`
-  if (!confirm(msg)) return
-  const wasCurrent = route.params.id === props.node.id
-  pagesStore.deletePage(props.node.id)
-  if (wasCurrent) {
-    router.push('/')
-  }
+      ? `这将同时删除 ${descendantCount} 个子页面,且无法恢复。`
+      : '页面删除后无法恢复。'
+  confirm({
+    title: `删除「${props.node.title}」?`,
+    message,
+    danger: true,
+    confirmText: '删除',
+    cancelText: '取消',
+  }).then((ok) => {
+    if (!ok) return
+    const wasCurrent = route.params.id === props.node.id
+    pagesStore.deletePage(props.node.id)
+    if (wasCurrent) {
+      router.push('/')
+    }
+  })
 }
 
 function promoteToRoot() {

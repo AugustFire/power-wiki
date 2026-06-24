@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { useConfirm } from '@/composables/useConfirm'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -13,6 +14,7 @@ type AnyEditor = any
 const props = defineProps<{ id?: string; parentId?: string | null }>()
 const pagesStore = usePagesStore()
 const router = useRouter()
+const { confirm } = useConfirm()
 
 const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
@@ -104,7 +106,21 @@ function flashSaved() {
 
 function closeEditor() {
   if (isDirty.value) {
-    if (!confirm('有未保存的修改,确认关闭吗?')) return
+    confirm({
+      title: '有未保存的修改',
+      message: '关闭后当前编辑内容将丢失,确认要关闭吗?',
+      danger: true,
+      confirmText: '关闭',
+      cancelText: '继续编辑',
+    }).then((ok) => {
+      if (!ok) return
+      if (localId.value) {
+        router.push(`/p/${localId.value}`)
+      } else {
+        router.push('/')
+      }
+    })
+    return
   }
   if (localId.value) {
     router.push(`/p/${localId.value}`)

@@ -1,0 +1,191 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, watch } from 'vue'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { state, close } = useConfirm()
+
+const isDanger = computed(() => state.value.danger)
+const title = computed(() => state.value.title)
+const message = computed(() => state.value.message)
+const confirmText = computed(() => state.value.confirmText)
+const cancelText = computed(() => state.value.cancelText)
+
+function onCancel() {
+  close(false)
+}
+
+function onConfirm() {
+  close(true)
+}
+
+// Esc 取消 + Enter 确认
+function onKey(e: KeyboardEvent) {
+  if (!state.value.open) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    onCancel()
+  } else if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter 提交;Shift+Enter 留给 message 多行场景
+    e.preventDefault()
+    onConfirm()
+  }
+}
+
+// 打开时锁 body 滚动 + 监听键盘
+watch(
+  () => state.value.open,
+  (open) => {
+    if (open) {
+      document.body.style.overflow = 'hidden'
+      document.addEventListener('keydown', onKey)
+    } else {
+      document.body.style.overflow = ''
+      document.removeEventListener('keydown', onKey)
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = ''
+  document.removeEventListener('keydown', onKey)
+})
+</script>
+
+<template>
+  <Teleport to="body">
+    <transition name="confirm-fade">
+      <div v-if="state.open" class="confirm-backdrop" @mousedown.self="onCancel">
+        <div
+          class="confirm-dialog"
+          :class="{ danger: isDanger }"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-title"
+          @mousedown.stop
+        >
+          <div class="confirm-icon">
+            <span class="material-symbols-outlined">
+              {{ isDanger ? 'delete' : 'help' }}
+            </span>
+          </div>
+          <div class="confirm-body">
+            <div id="confirm-title" class="confirm-title">{{ title }}</div>
+            <div v-if="message" class="confirm-message">{{ message }}</div>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn ghost" type="button" @click="onCancel">
+              {{ cancelText }}
+            </button>
+            <button
+              class="btn"
+              :class="isDanger ? 'danger' : 'primary'"
+              type="button"
+              autofocus
+              @click="onConfirm"
+            >
+              {{ confirmText }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+  </Teleport>
+</template>
+
+<style scoped>
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 30, 66, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.confirm-dialog {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md), 0 20px 60px rgba(9, 30, 66, 0.3);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  grid-template-rows: auto auto;
+  gap: 16px 16px;
+  align-items: start;
+}
+
+.confirm-icon {
+  grid-row: 1;
+  grid-column: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.confirm-dialog.danger .confirm-icon {
+  background: rgba(255, 86, 48, 0.12);
+  color: var(--danger);
+}
+.confirm-dialog:not(.danger) .confirm-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.confirm-icon .material-symbols-outlined {
+  font-size: 22px;
+}
+
+.confirm-body {
+  grid-row: 1;
+  grid-column: 2;
+  min-width: 0;
+}
+.confirm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.confirm-message {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.confirm-actions {
+  grid-row: 2;
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 过渡动画 */
+.confirm-fade-enter-active,
+.confirm-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.confirm-fade-enter-active .confirm-dialog,
+.confirm-fade-leave-active .confirm-dialog {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.confirm-fade-enter-from,
+.confirm-fade-leave-to {
+  opacity: 0;
+}
+.confirm-fade-enter-from .confirm-dialog,
+.confirm-fade-leave-to .confirm-dialog {
+  transform: translateY(-8px) scale(0.97);
+}
+</style>

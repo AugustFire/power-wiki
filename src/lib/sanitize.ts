@@ -22,6 +22,8 @@ const ALLOWED_TAGS = [
   // 富文本常见
   'a', 'strong', 'em', 'u', 's', 'b', 'i', 'sub', 'sup', 'small',
   'figure', 'figcaption',
+  // 折叠块(Toggle 扩展):details/summary 是原生 HTML,无 XSS 风险
+  'details', 'summary',
   // 颜色 / 高亮(textStyle 用 span style,highlight 用 mark)
   'mark',
 ]
@@ -32,12 +34,15 @@ const ALLOWED_ATTR = [
   'type', 'checked', 'disabled',
   'data-type', 'data-checked',
   'data-color', // @tiptap/extension-highlight 多色模式用 data-color 标记
+  'data-page-id', // 页面引用扩展(PageRef):链接到其他页
   'colspan', 'rowspan',
   'id',
+  'open', // <details open> 折叠块默认展开标记
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等
-const SANITIZE_CONFIG: DOMPurify.Config = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const SANITIZE_CONFIG: any = {
   ALLOWED_TAGS,
   ALLOWED_ATTR,
   ALLOW_DATA_ATTR: false,
@@ -55,7 +60,7 @@ function getPurifier(): typeof DOMPurify {
   return purifyInstance
 }
 
-// 清洗 style:只允许 color 和 background-color,挡掉 position/font-size 等滥用
+// 清洗 style:只允许颜色 / 对齐相关属性,挡掉 position/font-size 等滥用
 function sanitizeStyle(style: string): string {
   if (!style) return ''
   const decls = style.split(';')
@@ -66,12 +71,27 @@ function sanitizeStyle(style: string): string {
     const prop = propRaw.trim().toLowerCase()
     const val = valRaw.trim()
     if (!prop || !val) continue
-    if (prop !== 'color' && prop !== 'background-color') continue
-    // 挡掉 url() / expression() / javascript:
-    if (/url\s*\(|expression\s*\(|javascript:/i.test(val)) continue
-    // 颜色值只接受 #hex / rgb(...) / rgba(...) / hsl(...) / 命名色
-    if (!/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(val)) continue
-    allowed.push(`${prop}: ${val}`)
+    // 颜色属性
+    if (prop === 'color' || prop === 'background-color') {
+      // 挡掉 url() / expression() / javascript:
+      if (/url\s*\(|expression\s*\(|javascript:/i.test(val)) continue
+      // 颜色值只接受 #hex / rgb(...) / rgba(...) / hsl(...) / 命名色
+      if (!/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(val)) continue
+      allowed.push(`${prop}: ${val}`)
+      continue
+    }
+    // 对齐属性(只接受白名单值)
+    if (prop === 'text-align') {
+      if (!/^(left|right|center|justify)$/i.test(val)) continue
+      allowed.push(`${prop}: ${val}`)
+      continue
+    }
+    if (prop === 'vertical-align') {
+      if (!/^(top|middle|bottom|baseline)$/i.test(val)) continue
+      allowed.push(`${prop}: ${val}`)
+      continue
+    }
+    // 其他属性一律不通过
   }
   return allowed.join('; ')
 }
@@ -85,9 +105,9 @@ export function sanitizeHtml(html: string): string {
     FORBID_ATTR: ['onerror', 'onload', 'onclick'],
   })
   // DOMPurify 默认会把 style 整个属性放行,需要二次过滤
-  if (typeof document === 'undefined') return cleaned
+  if (typeof document === 'undefined') return String(cleaned)
   const wrap = document.createElement('div')
-  wrap.innerHTML = cleaned
+  wrap.innerHTML = String(cleaned)
   wrap.querySelectorAll('[style]').forEach((el) => {
     const s = sanitizeStyle(el.getAttribute('style') || '')
     if (s) el.setAttribute('style', s)

@@ -1196,6 +1196,151 @@ body:not(.editor-hover) .drag-handle {
 .callout p { margin: 0; }
 
 /* ============================================================
+   Toggle 折叠块 — 编辑器 NodeView + read view 共用
+   ============================================================ */
+.tiptap .toggle-wrapper,
+.prose .toggle {
+    margin: 12px 0;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.tiptap .toggle-wrapper:hover,
+.prose .toggle:hover {
+    background: var(--bg-subtle);
+}
+.tiptap .toggle-wrapper.ProseMirror-selectednode,
+.prose .toggle-wrapper.ProseMirror-selectednode {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* summary 行 — 编辑器中是 button,read view 中是原生 <summary> */
+.tiptap .toggle-summary,
+.prose .toggle > summary {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 36px;
+    padding: 0 12px 0 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    user-select: none;
+    list-style: none;
+    color: var(--text-1);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: var(--radius);
+}
+/* 去掉 read view <summary> 默认三角 */
+.prose .toggle > summary::-webkit-details-marker {
+    display: none;
+}
+.prose .toggle > summary::marker {
+    display: none;
+    content: '';
+}
+
+/* chevron icon */
+.tiptap .toggle-chev {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    font-size: 18px;
+    color: var(--text-2);
+    flex-shrink: 0;
+    transition: transform 0.15s ease, color 0.15s ease;
+}
+.prose .toggle > summary::before {
+    content: 'chevron_right';
+    font-family: 'Material Symbols Outlined';
+    font-size: 18px;
+    color: var(--text-2);
+    margin-right: 4px;
+    transition: transform 0.15s ease;
+    display: inline-block;
+}
+.prose .toggle[open] > summary::before {
+    content: 'expand_more';
+}
+.tiptap .toggle-wrapper:hover .toggle-chev,
+.prose .toggle:hover > summary::before {
+    color: var(--accent);
+}
+
+/* 关闭态:内容隐藏 */
+.tiptap .toggle-wrapper[data-open="false"] .toggle-content,
+.prose .toggle:not([open]) > .toggle-content {
+    display: none;
+}
+
+/* 展开内容区 */
+.tiptap .toggle-content,
+.prose .toggle > .toggle-content {
+    padding: 4px 12px 12px 32px;
+}
+.tiptap .toggle-content > :first-child,
+.prose .toggle > .toggle-content > :first-child {
+    margin-top: 0;
+}
+.tiptap .toggle-content > :last-child,
+.prose .toggle > .toggle-content > :last-child {
+    margin-bottom: 0;
+}
+
+/* ============================================================
+   Page Reference 卡片 — 块级页面引用
+   ============================================================ */
+.tiptap .page-ref-card,
+.prose .page-ref-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    background: var(--accent-softer);
+    border-left: 3px solid var(--accent);
+    text-decoration: none;
+    color: var(--text-1);
+    font-size: 14px;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+    cursor: pointer;
+}
+.tiptap .page-ref-card:hover,
+.prose .page-ref-card:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+    text-decoration: none;
+}
+.tiptap .page-ref-card.ProseMirror-selectednode,
+.prose .page-ref-card.selected {
+    box-shadow: 0 0 0 2px var(--accent);
+    background: var(--accent-soft);
+}
+.tiptap .page-ref-icon,
+.prose .page-ref-icon {
+    font-size: 18px;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+.tiptap .page-ref-title,
+.prose .page-ref-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* ============================================================
    Home — 统计卡片 + 快捷入口 + 网格
    ============================================================ */
 .stat-grid {
@@ -1727,4 +1872,128 @@ button:active:not(:disabled):not(.btn) {
 }
 .icon-btn:active:not(:disabled) {
     transform: scale(0.92);
+}
+/* ============================================================
+   表格下拉菜单 + 单元格背景色 popover
+   ============================================================ */
+.tb-table-menu {
+    min-width: 220px;
+}
+
+.tb-cell-color {
+    position: relative;
+}
+.tb-cell-color-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.tb-cell-color-bar {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    margin-right: 4px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.tb-cell-color-popover {
+    position: absolute;
+    top: -4px;
+    left: calc(100% + 4px);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    padding: 6px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    z-index: 110;
+    min-width: 160px;
+}
+.tb-cell-color-swatch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.tb-cell-color-swatch:hover { background: var(--bg-subtle); }
+.tb-cell-color-swatch.active { background: var(--accent-soft); }
+.tb-cell-color-dot {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    box-sizing: border-box;
+    border: 1px solid rgba(9, 30, 66, 0.16);
+}
+.tb-cell-color-none {
+    font-size: 16px;
+    color: var(--text-3);
+}
+
+/* ============================================================
+   表格视觉强化(read view + editor 共用)
+   ============================================================ */
+.prose table,
+.tiptap table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 16px 0;
+    font-size: 14px;
+}
+.prose table th,
+.prose table td,
+.tiptap table th,
+.tiptap table td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    vertical-align: top;
+    min-width: 60px;
+    position: relative;
+}
+.prose table th,
+.tiptap table th {
+    background: var(--bg-subtle);
+    font-weight: 600;
+    color: var(--text-1);
+    text-align: left;
+}
+.prose table tbody tr:hover td,
+.tiptap table tbody tr:hover td {
+    background: var(--bg-subtle);
+}
+.prose table td.selectedCell,
+.prose table th.selectedCell,
+.tiptap table td.selectedCell,
+.tiptap table th.selectedCell {
+    background: var(--accent-soft);
+}
+.prose table .column-resize-handle,
+.tiptap table .column-resize-handle {
+    position: absolute;
+    right: -2px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--accent);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.prose table:hover .column-resize-handle,
+.tiptap table:hover .column-resize-handle,
+.prose table .column-resize-handle.visible,
+.tiptap table .column-resize-handle.visible {
+    opacity: 1;
 }

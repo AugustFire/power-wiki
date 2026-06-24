@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { RouterView } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
 const searchOpen = ref(false)
 
@@ -56,6 +57,7 @@ function closeSearch() {
     </main>
 
     <TopSearch :open="searchOpen" @close="closeSearch" />
+    <ConfirmDialog />
   </div>
 </template>
 

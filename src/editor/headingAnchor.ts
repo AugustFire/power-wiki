@@ -13,6 +13,7 @@ import HeadingView from '@/components/editor/HeadingView.vue'
 
 export const HeadingAnchor = Heading.extend({
   addNodeView() {
-    return VueNodeViewRenderer(HeadingView)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return VueNodeViewRenderer(HeadingView as any)
   },
 })
