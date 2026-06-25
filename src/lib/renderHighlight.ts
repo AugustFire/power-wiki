@@ -116,8 +116,26 @@ function injectCodeBlockHeader(pre: HTMLElement, lang: string): void {
   header.appendChild(copyBtn)
   wrapper.appendChild(header)
 
+  // 行号 gutter(跟编辑器 CodeBlockView 保持一致)
+  const body = document.createElement('div')
+  body.className = 'code-block-body'
+  const gutter = document.createElement('div')
+  gutter.className = 'code-block-gutter'
+  gutter.setAttribute('aria-hidden', 'true')
+  const codeEl = pre.querySelector('code')
+  const rawText = codeEl?.textContent || ''
+  const lineCount = rawText === '' ? 1 : rawText.split('\n').length
+  for (let i = 1; i <= lineCount; i++) {
+    const num = document.createElement('div')
+    num.className = 'cb-line-num'
+    num.textContent = String(i)
+    gutter.appendChild(num)
+  }
+  body.appendChild(gutter)
+  wrapper.appendChild(body)
+
   parent.insertBefore(wrapper, pre)
-  wrapper.appendChild(pre)
+  body.appendChild(pre)
   pre.dataset['headerApplied'] = '1'
 }
 

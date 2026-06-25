@@ -1640,6 +1640,36 @@ kbd {
     color: var(--hljs-string);
 }
 
+/* 行号 gutter(阅读模式与编辑器保持一致) */
+.prose .code-block-body {
+    display: flex;
+    align-items: stretch;
+}
+.prose .code-block-gutter {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 8px 16px 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: #4B5568;
+    user-select: none;
+    flex-shrink: 0;
+    min-width: 32px;
+}
+.prose .cb-line-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.prose .code-block-body pre {
+    padding: 16px 16px 16px 0;
+    flex: 1;
+    min-width: 0;
+    border-radius: 0;
+}
+
 .prose pre {
     position: relative;
     background: var(--bg-code);
@@ -1991,13 +2021,13 @@ button:active:not(:disabled):not(.btn) {
     line-height: 1.4;
     transition: background-color 0.12s ease;
 }
-.date-inline.now::before {
+.date-inline[data-date-mode="now"]::before {
     content: '⏱';
     margin-right: 3px;
     font-size: 0.85em;
     opacity: 0.85;
 }
-.date-inline.fixed::before {
+.date-inline[data-date-mode="fixed"]::before {
     content: '📅';
     margin-right: 3px;
     font-size: 0.85em;
