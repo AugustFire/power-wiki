@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 
@@ -180,8 +180,8 @@ const lineCount = computed(() => {
   text-transform: uppercase;
   font-family: var(--font-mono);
   cursor: pointer;
-  border-radius: 3px;
-  transition: background 0.1s, color 0.1s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast), color var(--duration-fast);
 }
 .cb-lang-btn:hover { background: rgba(255, 255, 255, 0.06); color: #E5E7EB; }
 .cb-lang-btn .chev {
@@ -217,7 +217,7 @@ const lineCount = computed(() => {
   background: transparent;
   color: var(--text-2);
   font-size: 13px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -244,8 +244,8 @@ const lineCount = computed(() => {
   color: #9CA3AF;
   font-size: 12px;
   cursor: pointer;
-  border-radius: 4px;
-  transition: background-color 0.15s, color 0.15s;
+  border-radius: var(--radius-md);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
   font-family: inherit;
 }
 .code-block-copy:hover {
@@ -298,3 +298,4 @@ const lineCount = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 </style>
+

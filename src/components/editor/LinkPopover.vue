@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 
 // eslint-disable-next-line @typescript-eslint/no-explicitany
@@ -103,7 +103,7 @@ function onKey(e: KeyboardEvent) {
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   font-size: 13px;
   font-family: inherit;
   background: var(--bg);
@@ -121,7 +121,7 @@ function onKey(e: KeyboardEvent) {
 .lp-btn {
   height: 28px;
   padding: 0 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-1);
@@ -135,10 +135,10 @@ function onKey(e: KeyboardEvent) {
   color: #fff;
   border-color: var(--accent);
 }
-.lp-btn.primary:hover { background: var(--accent-2); }
+.lp-btn.primary:hover { background: var(--accent-hover); }
 .lp-btn.danger {
   color: var(--danger);
   border-color: var(--danger);
 }
-.lp-btn.danger:hover { background: rgba(220, 38, 38, 0.05); }
+.lp-btn.danger:hover { background: var(--danger-soft); }
 </style>

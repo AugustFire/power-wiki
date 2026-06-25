@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -211,7 +211,7 @@ function insert(emoji: string) {
   background: transparent;
   font-size: 16px;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -226,7 +226,7 @@ function insert(emoji: string) {
   gap: 4px;
   padding: 4px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
 }
 .ep-search-icon {
@@ -259,7 +259,7 @@ function insert(emoji: string) {
   background: transparent;
   font-size: 18px;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -285,3 +285,4 @@ function insert(emoji: string) {
   margin-top: 2px;
 }
 </style>
+

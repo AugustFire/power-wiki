@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * DateTimePicker(日期选择器)
  *
@@ -115,10 +115,6 @@ function pickCell(cell: CalCell) {
   viewMonth.value = selectedDate.value.getMonth()
   // 选了日期就自动切到固定模式
   mode.value = 'fixed'
-}
-
-function pickToday() {
-  emit('insert', { mode: 'now', date: new Date() })
 }
 
 function pickConfirm() {
@@ -288,7 +284,7 @@ onBeforeUnmount(() => {
 .dp-mode-tabs {
   display: flex;
   background: var(--bg-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   padding: 2px;
   gap: 2px;
 }
@@ -301,7 +297,7 @@ onBeforeUnmount(() => {
   height: 26px;
   border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
   color: var(--text-2);
@@ -360,7 +356,7 @@ onBeforeUnmount(() => {
   height: 22px;
   border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--text-2);
   display: inline-flex;
@@ -391,7 +387,7 @@ onBeforeUnmount(() => {
   height: 26px;
   border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text-1);
   cursor: pointer;
@@ -424,7 +420,7 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text-2);
   cursor: pointer;
@@ -449,7 +445,7 @@ onBeforeUnmount(() => {
   padding: 0 12px;
   border: 1px solid var(--border);
   background: var(--bg);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text-1);
   cursor: pointer;
@@ -477,3 +473,4 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 </style>
+

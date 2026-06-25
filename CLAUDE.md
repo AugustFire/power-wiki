@@ -47,12 +47,10 @@ Tiptap 官方扩展(`src/editor/extensions.ts`):StarterKit 关闭 `heading` / `c
 - `DateInline` (`dateInlineExtension.ts` + `DateInlineView.vue` + `DateTimePicker.vue`) — 行内日期 atom 节点,`mode: 'now' | 'fixed'`,now 模式在 NodeView 中启动 setInterval 每 60s 重算显示文案;点击节点弹 DateTimePicker 编辑
 - `BlockBrowserSave` (`extensions.ts:42-67`) — ProseMirror 插件 `priority: 1000`,**只**拦截 Cmd/Ctrl+S 防浏览器「保存网页」对话框;其余格式快捷键(Cmd+B/I/U/Z/Y、Alt+1/2/3、Ctrl+Alt+C 等)全部放行给 Tiptap 默认 keymap
 
-**Popover 组件** — 都是 Vue SFC,定位逻辑靠 `<Teleport to="body">` + `getBoundingClientRect` 计算:
-- `EditorBubbleMenu.vue` — 选中文本后浮现的浮动菜单(粗/斜/链/代码)
-- `ColorPopover.vue` — 文字色 8 色面板
-- `EmojiPicker.vue` — 表情面板
-- `LinkPopover.vue` — 链接插入 / 编辑
-- `DateTimePicker.vue` — 日期选择器(动态 / 固定 tab + Calendar)
+**Popover 组件** — 都是 Vue SFC,定位方案分两类:
+- **Teleport 到 body**:只有 `EditorBubbleMenu`(Tiptap BubbleMenu + tippy 默认行为)。其他所有 popover 走第二种方式。
+- **position:absolute 锚定在 .tb-* 容器内**:`ColorPopover`、`LinkPopover`、`EmojiPicker`、`DateTimePicker`(工具栏唤起的)、`CalloutVariantMenu`、`TableMenu`、`CellColorPicker`、`BlockTypeMenu` 等。`DateInlineView` 的 `.di-popover` 是唯一用 `position:fixed` + 视口坐标的特例。
+  - 依赖契约:`src/styles/components.css` 里 `.editor-toolbar .tb-inner` 必须是 `overflow:visible`,不能加 `overflow:auto` / `overflow:hidden`,否则所有下拉被裁掉。这条契约在 CSS 注释里已正式标记。
 
 **阅读视图** — `src/views/ReadView.vue` 通过 `v-html`(在 `src/lib/sanitize.ts` 中预先 sanitize)渲染 `contentHTML`。`TocPanel.vue` 用 `IntersectionObserver` 做 scroll-spy,点击目录项滚动到锚点;锚点由 `src/lib/headingAnchors.ts` 在 `v-html` 渲染后注入(因为 `v-html` 不在 ProseMirror 管辖范围)。
 
@@ -72,7 +70,7 @@ Tiptap 官方扩展(`src/editor/extensions.ts`):StarterKit 关闭 `heading` / `c
 ## 约定
 
 - ID:`src/lib/id.ts` 的 `newId()` — `nanoid(10)`,字母表 31 字符(去掉了 0/o/1/i/l)。
-- 空页面默认值:`title: '无标题页面'`、`contentJSON: { type: 'doc', content: [{ type: 'paragraph' }] }`、`contentHTML: '<p></p>'`。
+- 空页面默认值集中在 `src/lib/constants.ts`:`emptyDoc()`、`EMPTY_HTML`、`DEFAULT_TITLE`、`normalizeTitle()`。**不要在页面 / store 里再硬编码这些字面量**。
 - `PageNode.authorId` 写死 `'me'`(单用户 MVP)。首次启动时把用户记录写入 `power-wiki:user`。
 - 页面切换:`App.vue` 里的 `<transition name="fade" mode="out-in">`(150ms)。
 - 焦点环:仅键盘聚焦时显示(`#4C9AFF`),鼠标点击不出现。

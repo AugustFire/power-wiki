@@ -1,18 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { RouterView } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { useUiStore } from '@/stores/ui'
 
-const searchOpen = ref(false)
-
-function openSearch() {
-  searchOpen.value = true
-}
-function closeSearch() {
-  searchOpen.value = false
-}
+const uiStore = useUiStore()
+const { topSearchOpen } = storeToRefs(uiStore)
 </script>
 
 <template>
@@ -25,12 +20,12 @@ function closeSearch() {
       <button
         type="button"
         class="global-search"
-        title="搜索页面 (Enter 打开)"
-        @click="openSearch"
+        title="搜索所有页面"
+        @click="uiStore.openTopSearch()"
       >
         <span class="material-symbols-outlined icon">search</span>
-        <span class="gs-placeholder">搜索页面、附件、人员…</span>
-        <kbd class="gs-kbd">/</kbd>
+        <span class="gs-placeholder">搜索所有页面…</span>
+        <kbd class="gs-kbd">⌘K</kbd>
       </button>
       <div class="topbar-right">
         <div class="me-av">
@@ -47,7 +42,7 @@ function closeSearch() {
       </RouterView>
     </main>
 
-    <TopSearch :open="searchOpen" @close="closeSearch" />
+    <TopSearch :open="topSearchOpen" @close="uiStore.closeTopSearch()" />
     <ConfirmDialog />
   </div>
 </template>

@@ -8,6 +8,7 @@ import {
   needsRemigrate,
   stampSchemaVersion,
 } from '@/editor/htmlToJson'
+import { emptyDoc, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import type { PageNode, TreeNode } from '@/types/page'
 
 const KEY_PAGES = 'power-wiki:pages'
@@ -16,11 +17,17 @@ const KEY_USER = 'power-wiki:user'
 export const usePagesStore = defineStore('pages', () => {
   const pages = ref<PageNode[]>(readJSON<PageNode[]>(KEY_PAGES, []))
   const ready = ref(false)
+  /** localStorage 写入失败(quota 超限 / 隐私模式)时被 set,UI 用来显示保存失败 */
+  const quotaExceeded = ref(false)
 
-  watch(pages, (val) => writeJSON(KEY_PAGES, val), { deep: true })
+  watch(pages, (val) => {
+    const ok = writeJSON(KEY_PAGES, val)
+    quotaExceeded.value = !ok
+  }, { deep: true })
 
   function persist(): void {
-    writeJSON(KEY_PAGES, pages.value)
+    const ok = writeJSON(KEY_PAGES, pages.value)
+    quotaExceeded.value = !ok
   }
 
   function init(): void {
@@ -110,8 +117,8 @@ export const usePagesStore = defineStore('pages', () => {
     const page: PageNode = {
       id: newId(),
       parentId,
-      title: opts.title ?? '无标题页面',
-      contentJSON: { type: 'doc', content: [{ type: 'paragraph' }] },
+      title: opts.title ?? DEFAULT_TITLE,
+      contentJSON: emptyDoc(),
       contentHTML: '<p></p>',
       order,
       createdAt: now,
@@ -141,7 +148,7 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   function renamePage(id: string, title: string): void {
-    updatePage(id, { title: title.trim() || '无标题页面' })
+    updatePage(id, { title: normalizeTitle(title) })
   }
 
   function collectDescendantIds(id: string): Set<string> {
@@ -207,6 +214,7 @@ export const usePagesStore = defineStore('pages', () => {
   return {
     pages,
     ready,
+    quotaExceeded,
     tree,
     init,
     persist,
@@ -370,7 +378,7 @@ function seedPages(): PageNode[] {
   <span class="material-symbols-outlined icon">warning</span>
   <div>
     <div class="callout-title">注意事项</div>
-    <p>当前仍是 <strong>MVP</strong>,移动端 / 暗色主题 / 图片功能 暂不支持;存储仅在单浏览器内有效,清缓存会丢数据,重要内容请定期导出。</p>
+    <p>当前仍是 <strong>MVP</strong>,移动端 / 暗色主题 / 图片功能 暂不支持;存储仅在单浏览器内有效,清缓存会丢数据,重要内容请自行复制到本地存档。</p>
   </div>
 </div>
 

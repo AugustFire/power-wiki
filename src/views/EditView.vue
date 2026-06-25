@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
@@ -7,6 +7,7 @@ import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -18,8 +19,8 @@ const { confirm } = useConfirm()
 
 const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
-const localJSON = ref<Record<string, unknown>>({ type: 'doc', content: [{ type: 'paragraph' }] })
-const localHTML = ref<string>('<p></p>')
+const localJSON = ref<Record<string, unknown>>(emptyDoc())
+const localHTML = ref<string>(EMPTY_HTML)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const editorRef = ref<any>(null)
 
@@ -32,9 +33,20 @@ const parentPage = computed(() => {
 })
 
 const isDirty = ref(false)
-const saveState = ref<'idle' | 'saving' | 'saved'>('idle')
+const saveState = ref<'idle' | 'pending' | 'saving' | 'saved'>('idle')
 let savedHideTimer: number | null = null
-const wordCount = ref<{ chars: number; words: number }>({ chars: 0, words: 0 })
+const wordCount = ref<{ words: number }>({ words: 0 })
+const titleInputRef = ref<HTMLInputElement | null>(null)
+
+/**
+ * byline 显示的"创建于 X":现有页用 page.createdAt,新建页用当前时间。
+ * 不再 hardcode new Date() (那是 P2-9 评价里指出的误导)。
+ */
+const bylineCreatedAt = computed(() => {
+  const ts = page.value?.createdAt
+  const d = typeof ts === 'number' ? new Date(ts) : new Date()
+  return d.toLocaleDateString('zh-CN')
+})
 
 onMounted(() => {
   if (props.id) {
@@ -42,9 +54,12 @@ onMounted(() => {
     if (p) {
       localId.value = p.id
       localTitle.value = p.title
-      localJSON.value = (p.contentJSON as Record<string, unknown>) ?? { type: 'doc', content: [{ type: 'paragraph' }] }
-      localHTML.value = p.contentHTML ?? '<p></p>'
+      localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+      localHTML.value = p.contentHTML ?? EMPTY_HTML
       isDirty.value = false
+      // 进入编辑页直接聚焦标题,用户不用先点一下
+      // 等下一帧让 Tiptap 完成挂载,避免抢焦点导致 editor blur
+      requestAnimationFrame(() => titleInputRef.value?.focus())
       return
     }
   }
@@ -52,25 +67,33 @@ onMounted(() => {
   localId.value = p.id
   localTitle.value = p.title
   router.replace(`/p/${p.id}/edit`)
+  // 新建页面同样聚焦标题
+  requestAnimationFrame(() => titleInputRef.value?.focus())
 })
 
 function onTitleInput(e: Event) {
   const v = (e.target as HTMLInputElement).value
   localTitle.value = v
   isDirty.value = true
-  saveState.value = 'saving'
+  // 进入"待保存"态:有改动但 500ms 防抖还没 fire
+  // 真正的 saving 态由 scheduleAutoSave 的 timer 回调里设置
+  if (saveState.value !== 'saving' && saveState.value !== 'saved') {
+    saveState.value = 'pending'
+  }
 }
 
 function onEditorJSON(v: Record<string, unknown>) {
   localJSON.value = v
   isDirty.value = true
-  saveState.value = 'saving'
+  if (saveState.value !== 'saving' && saveState.value !== 'saved') {
+    saveState.value = 'pending'
+  }
 }
 function onEditorHTML(html: string) {
   localHTML.value = html
 }
 
-function onEditorWordCount(v: { chars: number; words: number }) {
+function onEditorWordCount(v: { words: number }) {
   wordCount.value = v
 }
 
@@ -78,33 +101,33 @@ function onEditorReady(ed: AnyEditor) {
   editorRef.value = ed ?? null
 }
 
-function saveDraft() {
-  if (!localId.value) return
+function persistNow(): boolean {
+  if (!localId.value) return false
   // 直接从 editor 实例读最新内容 — 绕开 RichEditor 800ms 防抖,
   // 避免「编辑后立即保存」丢掉刚改的内容
   const ed = editorRef.value
   const json = ed ? ed.getJSON() : localJSON.value
   const html = ed ? ed.getHTML() : localHTML.value
   pagesStore.updatePage(localId.value, {
-    title: localTitle.value.trim() || '无标题页面',
+    title: normalizeTitle(localTitle.value),
     contentJSON: json as Record<string, unknown>,
     contentHTML: html,
   })
   isDirty.value = false
+  return true
+}
+
+function saveDraft() {
+  if (!localId.value) return
+  saveState.value = 'saving'
+  persistNow()
   flashSaved()
 }
 
 function publish() {
   if (!localId.value) return
-  const ed = editorRef.value
-  const json = ed ? ed.getJSON() : localJSON.value
-  const html = ed ? ed.getHTML() : localHTML.value
-  pagesStore.updatePage(localId.value, {
-    title: localTitle.value.trim() || '无标题页面',
-    contentJSON: json as Record<string, unknown>,
-    contentHTML: html,
-  })
-  isDirty.value = false
+  saveState.value = 'saving'
+  persistNow()
   flashSaved()
   router.push(`/p/${localId.value}`)
 }
@@ -159,8 +182,8 @@ watch(
       if (p) {
         localId.value = p.id
         localTitle.value = p.title
-        localJSON.value = (p.contentJSON as Record<string, unknown>) ?? { type: 'doc', content: [{ type: 'paragraph' }] }
-        localHTML.value = p.contentHTML ?? '<p></p>'
+        localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+        localHTML.value = p.contentHTML ?? EMPTY_HTML
         isDirty.value = false
         saveState.value = 'idle'
       }
@@ -173,16 +196,9 @@ function scheduleAutoSave() {
   if (!localId.value) return
   if (saveTimer) window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
-    // 直接从 editor 读 — 避免 RichEditor 800ms 防抖还没 emit、localJSON 还是上一次的
-    const ed = editorRef.value
-    const json = ed ? ed.getJSON() : localJSON.value
-    const html = ed ? ed.getHTML() : localHTML.value
-    pagesStore.updatePage(localId.value!, {
-      title: localTitle.value.trim() || '无标题页面',
-      contentJSON: json as Record<string, unknown>,
-      contentHTML: html,
-    })
-    isDirty.value = false
+    // 防抖 fire 时才设 'saving' 态,避免假反馈
+    saveState.value = 'saving'
+    persistNow()
     flashSaved()
   }, 500)
 }
@@ -212,29 +228,37 @@ onBeforeUnmount(() => {
           </a>
         </template>
         <span class="sep">/</span>
-        <span class="crumb-item current">{{ localTitle || '无标题页面' }}</span>
+        <span class="crumb-item current">{{ localTitle || DEFAULT_TITLE }}</span>
         <span class="edit-mode-badge">
-          <span class="material-symbols-outlined" style="font-size:14px">edit</span>
+          <span class="material-symbols-outlined icon-sm">edit</span>
           编辑中
         </span>
       </div>
       <div class="page-actions">
         <!-- 保存状态指示器 -->
-        <div v-if="saveState === 'saving'" class="save-indicator saving">
+        <div v-if="pagesStore.quotaExceeded" class="save-indicator danger" title="浏览器存储已满,无法保存">
+          <span class="material-symbols-outlined icon-sm">error</span>
+          存储已满
+        </div>
+        <div v-else-if="saveState === 'saving'" class="save-indicator saving">
           <span class="dot"></span>
           正在保存…
         </div>
         <div v-else-if="saveState === 'saved'" class="save-indicator saved">
-          <span class="material-symbols-outlined" style="font-size:14px">check_circle</span>
+          <span class="material-symbols-outlined icon-sm">check_circle</span>
           已自动保存
         </div>
+        <div v-else-if="saveState === 'pending'" class="save-indicator pending">
+          <span class="material-symbols-outlined icon-sm">edit_note</span>
+          有未保存的修改
+        </div>
         <div v-else-if="isExisting" class="save-indicator idle">
-          <span class="material-symbols-outlined" style="font-size:14px">cloud_done</span>
+          <span class="material-symbols-outlined icon-sm">cloud_done</span>
           已同步
         </div>
         <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
         <button class="btn primary" type="button" @click="publish">
-          <span class="material-symbols-outlined" style="font-size:16px">publish</span>
+          <span class="material-symbols-outlined icon-md">publish</span>
           发布
         </button>
       </div>
@@ -249,26 +273,27 @@ onBeforeUnmount(() => {
 
           <div class="edit-labels">
             <span class="label-chip">
-              <span class="material-symbols-outlined" style="font-size:13px">draft</span>
+              <span class="material-symbols-outlined icon-xs">draft</span>
               草稿
             </span>
             <span class="label-chip">
-              <span class="material-symbols-outlined" style="font-size:13px">person</span>
+              <span class="material-symbols-outlined icon-xs">person</span>
               仅我可见
             </span>
           </div>
 
           <input
+            ref="titleInputRef"
             class="edit-title-input"
             type="text"
             :value="localTitle"
             @input="onTitleInput"
-            placeholder="无标题页面"
+            :placeholder="DEFAULT_TITLE"
           />
 
           <div class="edit-byline">
             <UserAvatar :size="24" />
-            <span><strong>我</strong> · 创建于 {{ new Date().toLocaleDateString('zh-CN') }}</span>
+            <span><strong>我</strong> · 创建于 {{ bylineCreatedAt }}</span>
             <span class="byline-hint">·</span>
             <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>
           </div>
@@ -286,11 +311,11 @@ onBeforeUnmount(() => {
               <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-3)">info</span>
               <span>所有编辑自动保存到浏览器本地存储</span>
               <span class="footer-sep">·</span>
-              <span class="word-count">{{ wordCount.words }} 字 · {{ wordCount.chars }} 字符</span>
+              <span class="word-count">{{ wordCount.words }} 字</span>
             </div>
             <div class="spacer"></div>
             <button class="btn ghost" @click="saveDraft">
-              <span class="material-symbols-outlined" style="font-size:18px">save</span>
+              <span class="material-symbols-outlined icon-lg">save</span>
               保存草稿
             </button>
           </div>
@@ -332,6 +357,15 @@ onBeforeUnmount(() => {
 .save-indicator.idle {
   background: var(--bg-subtle);
   color: var(--text-3);
+}
+.save-indicator.pending {
+  background: var(--bg-subtle);
+  color: var(--text-2);
+}
+.save-indicator.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .edit-footer .footer-meta {

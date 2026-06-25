@@ -15,6 +15,8 @@ export const useUiStore = defineStore('ui', () => {
   const menuPos = ref<{ x: number; y: number }>({ x: 0, y: 0 })
   // 当前正在重命名的节点 id
   const renamingId = ref<string | null>(null)
+  // 顶栏搜索框开关 — 提到 store 让 HomeView / Sidebar / 任意位置都能唤起
+  const topSearchOpen = ref(false)
 
   function isExpanded(id: string): boolean {
     return expanded.value.includes(id)
@@ -52,11 +54,19 @@ export const useUiStore = defineStore('ui', () => {
     renamingId.value = null
   }
 
+  function openTopSearch(): void {
+    topSearchOpen.value = true
+  }
+  function closeTopSearch(): void {
+    topSearchOpen.value = false
+  }
+
   return {
     expanded,
     openMenuId,
     menuPos,
     renamingId,
+    topSearchOpen,
     isExpanded,
     toggle,
     expand,
@@ -65,5 +75,7 @@ export const useUiStore = defineStore('ui', () => {
     closeMenu,
     startRename,
     endRename,
+    openTopSearch,
+    closeTopSearch,
   }
 })

@@ -178,7 +178,8 @@ const extensions = [
     },
   }).configure({
     lowlight: createLowlight(common),
-    defaultLanguage: 'plaintext',
+    // lowlight 不识别 'plaintext'(highlight.js 的约定),默认 null 让无语言时代码块不挂 language class
+    defaultLanguage: null,
   }),
   DragHandle.configure({
     render: () => {

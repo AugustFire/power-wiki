@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 withDefaults(
   defineProps<{
     /** 头像里显示的文字(默认 "ME" = Me,后续接 user system 时换) */
@@ -41,3 +41,4 @@ withDefaults(
 .size-28 { width: 28px; height: 28px; font-size: 11px; letter-spacing: 0.03em; }
 .size-32 { width: 32px; height: 32px; font-size: 12px; letter-spacing: 0.04em; }
 </style>
+

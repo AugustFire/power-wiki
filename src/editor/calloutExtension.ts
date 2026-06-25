@@ -148,16 +148,11 @@ export const Callout = Node.create({
               const pos = $from.before(d)
               const nodeSize = n.nodeSize
               if (dispatch) {
-                const children: import('@tiptap/pm/model').Node[] = []
-                n.content.forEach((child) => {
-                  children.push(child)
-                })
-                tr = tr.delete(pos, pos + nodeSize)
-                let insertPos = pos
-                for (const child of children) {
-                  tr = tr.insert(insertPos, child)
-                  insertPos += child.nodeSize
-                }
+                // 单次 replaceWith 比 delete + 循环 insert 安全:
+                // - 不会让 open tr 的中间 listener 看到临时状态
+                // - 子节点 marks 完整保留(走同一 transaction 的 map 流程)
+                const fragment = n.content
+                tr = tr.replaceWith(pos, pos + nodeSize, fragment)
               }
               return true
             }

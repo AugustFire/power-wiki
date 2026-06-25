@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
@@ -29,8 +29,18 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 
 const menuStyle = computed(() => {
   const { x, y } = uiStore.menuPos
-  // 让菜单向左上偏移一点点对齐 ⋯ 按钮右下角
-  return { top: `${y + 4}px`, left: `${x + 8}px` }
+  // 视口边缘裁剪 —— 在右下角点击 ⋯ 时,菜单会溢出。
+  // 菜单宽 ~220px / 高 ~150px,留 8px 安全边距。
+  const MENU_W = 220
+  const MENU_H = 150
+  const SAFE = 8
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 0
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 0
+  let left = x + 8
+  let top = y + 4
+  if (left + MENU_W + SAFE > vw) left = Math.max(SAFE, vw - MENU_W - SAFE)
+  if (top + MENU_H + SAFE > vh) top = Math.max(SAFE, vh - MENU_H - SAFE)
+  return { top: `${top}px`, left: `${left}px` }
 })
 
 function toggleCaret(e: MouseEvent) {
@@ -160,7 +170,7 @@ watch(isRenaming, (val) => {
         :class="{ leaf: !hasChildren, open: isExpanded && hasChildren }"
         @click="toggleCaret"
       >
-        <span v-if="hasChildren" class="material-symbols-outlined" style="font-size:16px">chevron_right</span>
+        <span v-if="hasChildren" class="material-symbols-outlined icon-md">chevron_right</span>
       </span>
       <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
       <input
@@ -179,7 +189,7 @@ watch(isRenaming, (val) => {
         title="更多操作"
         @click="onMoreClick"
       >
-        <span class="material-symbols-outlined" style="font-size:16px">more_horiz</span>
+        <span class="material-symbols-outlined icon-md">more_horiz</span>
       </button>
     </div>
 
@@ -188,24 +198,24 @@ watch(isRenaming, (val) => {
       <div class="menu-backdrop" @click="uiStore.closeMenu()"></div>
       <div class="menu" :style="menuStyle" @click.stop>
         <button class="menu-item" @click="addSibling">
-          <span class="material-symbols-outlined" style="font-size:16px">add</span>
+          <span class="material-symbols-outlined icon-md">add</span>
           <span>添加同级页面</span>
         </button>
         <button class="menu-item" @click="addChild">
-          <span class="material-symbols-outlined" style="font-size:16px">subdirectory_arrow_right</span>
+          <span class="material-symbols-outlined icon-md">subdirectory_arrow_right</span>
           <span>在此页下添加子页面</span>
         </button>
         <button class="menu-item" v-if="node.parentId !== null" @click="promoteToRoot">
-          <span class="material-symbols-outlined" style="font-size:16px">format_indent_decrease</span>
+          <span class="material-symbols-outlined icon-md">format_indent_decrease</span>
           <span>提升为根级</span>
         </button>
         <div class="menu-sep"></div>
         <button class="menu-item" @click="startRename">
-          <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+          <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
         <button class="menu-item danger" @click="deletePage">
-          <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+          <span class="material-symbols-outlined icon-md">delete</span>
           <span>删除</span>
         </button>
       </div>
@@ -234,3 +244,5 @@ export default { name: 'PageTree' }
   background: transparent;
 }
 </style>
+
+

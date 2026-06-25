@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 import { CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
@@ -38,7 +38,7 @@ function remove() {
       @click="remove"
       @mousedown.stop
     >
-      <span class="material-symbols-outlined" style="font-size:16px">close</span>
+      <span class="material-symbols-outlined icon-md">close</span>
     </button>
   </NodeViewWrapper>
 </template>
@@ -59,12 +59,16 @@ function remove() {
   border: none;
   background: transparent;
   color: var(--text-3);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s, background-color 0.12s, color 0.12s;
+  /* 默认半透,鼠标进入或键盘聚焦时完全显出 —
+     修复 P2-3 评价里"键盘用户无法操作"的可达性问题 */
+  opacity: 0.35;
+  transition: opacity var(--duration-fast), background-color var(--duration-fast), color var(--duration-fast);
 }
 .callout:hover .callout-remove,
+.callout:focus-within .callout-remove,
+.callout-remove:hover,
 .callout-remove:focus-visible {
   opacity: 1;
 }
@@ -73,3 +77,6 @@ function remove() {
   color: var(--text-1);
 }
 </style>
+
+
+

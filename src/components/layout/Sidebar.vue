@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
@@ -51,7 +51,7 @@ function createRoot() {
         </div>
         <div class="tree-empty-text">还没有页面</div>
         <button class="tree-empty-cta" @click="createRoot">
-          <span class="material-symbols-outlined" style="font-size:14px">add</span>
+          <span class="material-symbols-outlined icon-sm">add</span>
           创建第一个
         </button>
       </div>
@@ -66,7 +66,7 @@ function createRoot() {
 
     <div class="sidebar-bottom">
       <button class="create-page-btn" @click="createRoot">
-        <span class="material-symbols-outlined" style="font-size:18px">add</span>
+        <span class="material-symbols-outlined icon-lg">add</span>
         创建页面
         <kbd>/</kbd>
       </button>
@@ -91,7 +91,7 @@ function createRoot() {
   color: var(--text-2);
   font-size: 14px;
   text-decoration: none;
-  transition: all 0.1s;
+  transition: all var(--duration-fast);
   position: relative;
 }
 .quick-nav-item:hover {
@@ -168,7 +168,7 @@ function createRoot() {
 }
 .create-page-btn kbd {
   margin-left: auto;
-  background: rgba(0, 82, 204, 0.08);
+  background: var(--accent-bg-soft);
   color: var(--accent);
   border-color: transparent;
 }
@@ -177,3 +177,5 @@ function createRoot() {
   color: white;
 }
 </style>
+
+

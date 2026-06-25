@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -97,7 +97,7 @@ onBeforeUnmount(() => {
 .confirm-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(9, 30, 66, 0.45);
+  background: var(--scrim-2);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 32px);
   background: var(--bg);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-md), 0 20px 60px rgba(9, 30, 66, 0.3);
+  box-shadow: var(--shadow-lg);
   padding: 24px;
   display: grid;
   grid-template-columns: 40px 1fr;
@@ -174,11 +174,11 @@ onBeforeUnmount(() => {
 /* 过渡动画 */
 .confirm-fade-enter-active,
 .confirm-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-fast) ease;
 }
 .confirm-fade-enter-active .confirm-dialog,
 .confirm-fade-leave-active .confirm-dialog {
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--duration-base) var(--ease-out);
 }
 .confirm-fade-enter-from,
 .confirm-fade-leave-to {
@@ -189,3 +189,4 @@ onBeforeUnmount(() => {
   transform: translateY(-8px) scale(0.97);
 }
 </style>
+

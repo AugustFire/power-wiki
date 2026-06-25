@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    Atlas Wiki Base Styles
    复制自 design/wiki-edit.html 与 design/wiki-read.html
    ============================================================ */
@@ -21,7 +21,7 @@ body {
     min-width: 1280px;
 }
 
-button { font-family: inherit; cursor: pointer; border: none; background: none; transition: all 0.1s ease; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; transition: all var(--duration-fast) ease; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 ul, ol { list-style: none; }

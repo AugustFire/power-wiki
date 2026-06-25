@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
@@ -168,7 +168,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 .top-search-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(9, 30, 66, 0.32);
+  background: var(--scrim-1);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -181,7 +181,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   max-height: calc(100vh - 140px);
   background: var(--bg);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-md), 0 12px 40px rgba(9, 30, 66, 0.18);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -210,7 +210,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   font-size: 10px;
   padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text-3);
 }
@@ -227,7 +227,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   padding: 8px 10px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
   font-family: inherit;
@@ -291,7 +291,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   font-size: 10px;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text-2);
   margin-right: 4px;
@@ -299,12 +299,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 .ts-count { margin-left: auto; }
 
 .search-fade-enter-active, .search-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-fast) ease;
 }
 .search-fade-enter-from, .search-fade-leave-to { opacity: 0; }
 .search-fade-enter-active .top-search,
 .search-fade-leave-active .top-search {
-  transition: transform 0.15s ease;
+  transition: transform var(--duration-fast) ease;
 }
 .search-fade-enter-from .top-search { transform: translateY(-8px); }
 </style>
+
+

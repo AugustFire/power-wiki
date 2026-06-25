@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 
@@ -26,7 +26,10 @@ function slugify(text: string, fallback: string): string {
 
 const headingId = computed(() => {
   const pos = props.getPos()
-  return slugify(props.node.textContent || '', `heading-${pos ?? 0}`)
+  // slug 可能因为 CJK 文本相同(两个 `<h2>引言</h2>`)而重复,
+  // 用节点位置做兜底,保证 id 唯一。
+  // 与阅读视图 headingAnchors.ts 的去重策略对齐。
+  return `${slugify(props.node.textContent || '', 'heading')}-${pos ?? 0}`
 })
 
 const copied = ref(false)

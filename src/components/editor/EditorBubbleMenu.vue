@@ -1,13 +1,11 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { BubbleMenu } from '@tiptap/vue-3'
+import type { Editor } from '@tiptap/core'
 import LinkPopover from './LinkPopover.vue'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
-
 const props = defineProps<{
-  editor: AnyEditor
+  editor: Editor | null
 }>()
 
 interface FormatBtn {
@@ -39,7 +37,7 @@ const formatBtns = computed<FormatBtn[]>(() => {
       run: () => e.chain().focus().toggleStrike().run(),
     },
     {
-      id: 'inlineCode', icon: 'code', title: '行内代码', shortcut: 'Ctrl+E',
+      id: 'inlineCode', icon: 'code', title: '行内代码',
       isActive: () => e.isActive('code'),
       run: () => e.chain().focus().toggleCode().run(),
     },
@@ -68,11 +66,14 @@ onMounted(() => document.addEventListener('mousedown', onDocMouseDown))
 onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
 
 // 只在非空选区 + 不在不可编辑节点内时显示
-function shouldShow({ editor }: { editor: AnyEditor }) {
+// 但 link popover 打开期间必须保持显示 —— 用户点链接按钮后焦点会跳到输入框,
+// 选区塌缩,shouldShow 默认会返回 false,把整个 BubbleMenu 连同 popover 一起卸载。
+function shouldShow({ editor }: { editor: Editor | null }) {
   if (!editor) return false
+  if (editor.isActive('codeBlock')) return false
+  if (linkOpen.value) return true
   const { from, to } = editor.state.selection
   if (from === to) return false
-  if (editor.isActive('codeBlock')) return false
   return true
 }
 </script>
@@ -138,7 +139,7 @@ function shouldShow({ editor }: { editor: AnyEditor }) {
 .bubble-btn {
   width: 30px;
   height: 30px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -162,3 +163,4 @@ function shouldShow({ editor }: { editor: AnyEditor }) {
 
 .bubble-link-wrap { position: relative; }
 </style>
+

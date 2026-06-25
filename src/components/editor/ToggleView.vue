@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 
@@ -92,3 +92,4 @@ watch(title, (val) => {
   margin: 8px 0;
 }
 </style>
+

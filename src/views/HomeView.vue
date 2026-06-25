@@ -1,12 +1,14 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { usePagesStore } from '@/stores/pages'
+import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 
 const pagesStore = usePagesStore()
+const uiStore = useUiStore()
 const router = useRouter()
 
 const rootPages = computed(() => pagesStore.getChildren(null))
@@ -55,6 +57,10 @@ function createRoot() {
   router.push(`/p/${p.id}/edit`)
 }
 
+function openTopSearch() {
+  uiStore.openTopSearch()
+}
+
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts
   const min = Math.floor(diff / 60000)
@@ -80,16 +86,16 @@ function excerpt(html: string): string {
         <span class="crumb-item current">我的知识库</span>
       </div>
       <div class="page-actions">
-        <button class="btn ghost" disabled title="即将上线">
-          <span class="material-symbols-outlined" style="font-size:18px">upload_file</span>
+        <button class="btn ghost" disabled title="导入 / 导出暂未支持(请手动复制到本地存档)">
+          <span class="material-symbols-outlined icon-lg">upload_file</span>
           导入
         </button>
-        <button class="btn ghost" disabled title="即将上线">
-          <span class="material-symbols-outlined" style="font-size:18px">file_export</span>
+        <button class="btn ghost" disabled title="导入 / 导出暂未支持(请手动复制到本地存档)">
+          <span class="material-symbols-outlined icon-lg">file_export</span>
           导出
         </button>
         <button class="btn primary" @click="createRoot">
-          <span class="material-symbols-outlined" style="font-size:18px">add</span>
+          <span class="material-symbols-outlined icon-lg">add</span>
           新建页面
         </button>
       </div>
@@ -120,7 +126,7 @@ function excerpt(html: string): string {
             <h2>知识库还是空的</h2>
             <p>创建第一个页面,开始记录团队的思考、决策和成果。</p>
             <button class="btn primary create-first" @click="createRoot">
-              <span class="material-symbols-outlined" style="font-size:18px">add</span>
+              <span class="material-symbols-outlined icon-lg">add</span>
               创建第一个页面
             </button>
           </div>
@@ -189,11 +195,11 @@ function excerpt(html: string): string {
                   <div class="qa-meta">{{ stats.roots }} 个主题</div>
                 </div>
               </button>
-              <button class="quick-action" disabled title="即将上线">
+              <button class="quick-action" @click="openTopSearch">
                 <span class="qa-icon"><span class="material-symbols-outlined">search</span></span>
                 <div>
-                  <div>全文搜索</div>
-                  <div class="qa-meta">即将上线</div>
+                  <div>搜索页面</div>
+                  <div class="qa-meta">按标题 · 已支持</div>
                 </div>
               </button>
             </div>
@@ -227,10 +233,10 @@ function excerpt(html: string): string {
                 <div class="pc-title">{{ p.title }}</div>
                 <div class="pc-excerpt">{{ excerpt(p.contentHTML) || '空白页面' }}</div>
                 <div class="pc-meta">
-                  <span class="material-symbols-outlined" style="font-size:13px">schedule</span>
+                  <span class="material-symbols-outlined icon-xs">schedule</span>
                   {{ relativeTime(p.updatedAt) }}
                   <span style="margin: 0 4px">·</span>
-                  <span class="material-symbols-outlined" style="font-size:13px">layers</span>
+                  <span class="material-symbols-outlined icon-xs">layers</span>
                   {{ pagesStore.getChildren(p.id).length }} 子页面
                 </div>
               </a>

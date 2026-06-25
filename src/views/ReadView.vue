@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
@@ -8,6 +8,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
+import { recomputeLiveDates, startLiveDateInterval } from '@/lib/recomputeLiveDates'
 import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
 
@@ -80,10 +81,24 @@ watch(
     if (root) {
       highlightCodeBlocks(root)
       addHeadingAnchors(root)
+      recomputeLiveDates(root)
     }
   },
   { flush: 'post', immediate: true },
 )
+
+// 每 60s 重算 now 模式的日期节点,跨日后会自动从"今天"切到绝对日期。
+let liveDateStop: (() => void) | null = null
+watch(
+  contentEl,
+  (root) => {
+    liveDateStop?.()
+    liveDateStop = null
+    if (root) liveDateStop = startLiveDateInterval(root)
+  },
+  { flush: 'post' },
+)
+onBeforeUnmount(() => liveDateStop?.())
 
 // read 视图下点击 task checkbox → 立即 toggle DOM + 写回 store,
 // 刷新或下次进入该页仍保留状态。
@@ -163,7 +178,7 @@ watch(
       </div>
       <div class="page-actions">
         <button class="btn primary" @click="goEdit">
-          <span class="material-symbols-outlined" style="font-size:18px">edit</span>
+          <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
         </button>
       </div>
@@ -178,15 +193,15 @@ watch(
             <!-- 标签条(紧凑版) — 只显示有真实数据支撑的状态 -->
             <div class="page-tags">
               <span class="status-pill success">
-                <span class="material-symbols-outlined" style="font-size:14px">check_circle</span>
+                <span class="material-symbols-outlined icon-sm">check_circle</span>
                 已发布
               </span>
               <span class="status-pill purple">
-                <span class="material-symbols-outlined" style="font-size:14px">account_circle</span>
+                <span class="material-symbols-outlined icon-sm">account_circle</span>
                 {{ page.authorId === 'me' ? '我' : page.authorId }}
               </span>
               <span class="status-pill">
-                <span class="material-symbols-outlined" style="font-size:14px">update</span>
+                <span class="material-symbols-outlined icon-sm">update</span>
                 {{ relativeTime(page.updatedAt) }} 编辑
               </span>
             </div>
@@ -233,7 +248,7 @@ watch(
                 <span>2</span>
               </button>
               <button class="reaction-pill add">
-                <span class="material-symbols-outlined" style="font-size:16px">add</span>
+                <span class="material-symbols-outlined icon-md">add</span>
                 <span>添加反应</span>
               </button>
             </div>
@@ -245,7 +260,7 @@ watch(
           </div>
           <div v-else class="empty">
             <div class="empty-icon">
-              <span class="material-symbols-outlined" style="font-size:40px">search_off</span>
+              <span class="material-symbols-outlined icon-4xl">search_off</span>
             </div>
             <h2>页面不存在</h2>
             <p>该页面已被删除,或链接错误。</p>

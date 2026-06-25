@@ -28,6 +28,7 @@
  */
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import { formatLiveDateStatic } from '@/lib/dateFormat'
 import DateInlineView from '@/components/editor/DateInlineView.vue'
 
 export type DateMode = 'now' | 'fixed'
@@ -47,10 +48,7 @@ declare module '@tiptap/core' {
 }
 
 function formatForReadView(attrs: DateAttrs): string {
-  if (!attrs.iso) return attrs.mode === 'now' ? '今天' : ''
-  const d = new Date(attrs.iso)
-  if (Number.isNaN(d.getTime())) return attrs.iso
-  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return formatLiveDateStatic(attrs)
 }
 
 export const DateInline = Node.create({

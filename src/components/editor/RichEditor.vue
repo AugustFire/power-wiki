@@ -1,13 +1,14 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
+import type { Editor } from '@tiptap/core'
 import extensions from '@/editor/extensions'
 import SlashMenu from './SlashMenu.vue'
 import EditorBubbleMenu from './EditorBubbleMenu.vue'
 
-// 避开 vue-3/core Editor 类型不兼容问题
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
+// @tiptap/vue-3 的 useEditor 返回 Ref<Editor> 但其 Editor 类型与 @tiptap/core 的
+// Editor 在 marks/props 上不完全一致(实际可互转),这里直接用 core 的 Editor,
+// 比 `any` 安全得多。
 
 const props = defineProps<{
   modelValue: Record<string, unknown>
@@ -16,16 +17,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', value: Record<string, unknown>): void
   (e: 'update:html', html: string): void
-  (e: 'ready', editor: AnyEditor): void
-  (e: 'word-count', value: { chars: number; words: number }): void
+  (e: 'ready', editor: Editor): void
+  (e: 'word-count', value: { words: number }): void
 }>()
 
-// 字数统计:中文按字符计,英文按词计
-function computeWordCount(html: string): { chars: number; words: number } {
-  // 去掉 HTML 标签和代码块内容(代码不算字数,行业惯例)
+// 字数统计:中文按字符计,英文按词计(行业惯例)
+function computeWordCount(html: string): { words: number } {
+  // 去掉 HTML 标签和代码块内容(代码不算字数)
   const noTags = html.replace(/<[^>]+>/g, '')
   const noCode = noTags.replace(/<pre[\s\S]*?<\/pre>/g, '').replace(/<code[\s\S]*?<\/code>/g, '')
-  // 还原常见转义
+  // 还原常见转义,用于正确切词
   const text = noCode
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -36,12 +37,12 @@ function computeWordCount(html: string): { chars: number; words: number } {
   const cjk = (text.match(/[一-龥㐀-䶿]/g) || []).length
   // 英文/数字/拼音词:连续 ASCII 字母或数字
   const en = (text.match(/[A-Za-z0-9]+/g) || []).length
-  return { chars: text.length, words: cjk + en }
+  return { words: cjk + en }
 }
 
 // 防抖:编辑后 800ms 同步到父组件 / store
 let saveTimer: number | null = null
-function scheduleSave(editor: AnyEditor) {
+function scheduleSave(editor: Editor) {
   if (saveTimer) window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
     const json = editor.getJSON()
@@ -59,19 +60,8 @@ const editor = useEditor({
     attributes: {
       class: 'tiptap',
     },
-    // editorProps.handleKeyDown 在所有 keymap 插件之前调用。
-    // 这里只拦截 Cmd/Ctrl+S,防止浏览器弹出"保存网页"对话框;
-    // 其余快捷键(Cmd+B/I/U/E/Z/Y 等)放行给 Tiptap 默认 keymap。
-    // 配合 extensions.ts 的 BlockBrowserSave plugin 形成双层防御。
-    handleKeyDown(_view, event) {
-      const mod = event.metaKey || event.ctrlKey
-      if (!mod) return false
-      if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        return true
-      }
-      return false
-    },
+    // Cmd/Ctrl+S 由 extensions.ts 的 BlockBrowserSave plugin 拦截(priority:1000),
+    // 这里不再重复实现。其余快捷键放行给 Tiptap 默认 keymap。
   },
   onUpdate({ editor }) {
     scheduleSave(editor)
@@ -135,3 +125,4 @@ onBeforeUnmount(() => {
   position: relative;
 }
 </style>
+

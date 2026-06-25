@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * DateInline NodeView
  *
@@ -8,9 +8,10 @@
  * 节点可编辑:点击节点弹 DateTimePicker 让用户改日期/模式。
  * 图标(.di-icon 前缀)交给 CSS ::before 统一处理,跟 read view 一致。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper } from '@tiptap/vue-3'
 import type { DateMode } from '@/editor/dateInlineExtension'
+import { formatLiveDate } from '@/lib/dateFormat'
 import DateTimePicker from './DateTimePicker.vue'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,20 +30,32 @@ const iso = computed<string>(() => props.node.attrs.iso || '')
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => {
-  if (mode.value === 'now') {
-    timer = setInterval(() => {
-      now.value = Date.now()
-    }, 60_000)
-  }
-})
+function startTimer() {
+  if (timer) return
+  timer = setInterval(() => {
+    now.value = Date.now()
+  }, 60_000)
+}
 
-onBeforeUnmount(() => {
+function stopTimer() {
   if (timer) {
     clearInterval(timer)
     timer = null
   }
+}
+
+onMounted(() => {
+  if (mode.value === 'now') startTimer()
 })
+
+// 节点 mode 在编辑器内可能被 updateAttributes 修改(fixed ↔ now 切换);
+// 切换到 now 时启动定时器,切到 fixed 时停掉,避免显示冻结。
+watch(mode, (m) => {
+  if (m === 'now') startTimer()
+  else stopTimer()
+})
+
+onBeforeUnmount(stopTimer)
 
 // ─── 节点编辑:点击节点 → 弹 DateTimePicker ─────────────────
 const editing = ref(false)
@@ -77,30 +90,10 @@ function onEditorUpdate(payload: { mode: DateMode; date: Date }) {
   }
 }
 
-// ─── 显示文案格式化 ───────────────────────────────
-function formatDate(d: Date): string {
-  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
-}
-
-const displayText = computed<string>(() => {
-  if (mode.value === 'fixed') {
-    if (!iso.value) return ''
-    const target = new Date(iso.value)
-    if (Number.isNaN(target.getTime())) return iso.value
-    return formatDate(target)
-  }
-  // now 模式:显示当前日期(同一天 → "今天",跨年/跨月 → "2026/06/25")
-  const d = new Date(now.value)
-  const nowD = new Date()
-  if (
-    d.getFullYear() === nowD.getFullYear() &&
-    d.getMonth() === nowD.getMonth() &&
-    d.getDate() === nowD.getDate()
-  ) {
-    return '今天'
-  }
-  return formatDate(d)
-})
+// ─── 显示文案格式化(共享函数) ────────────────────
+const displayText = computed<string>(() =>
+  formatLiveDate({ mode: mode.value, iso: iso.value }, new Date(now.value)),
+)
 </script>
 
 <template>
@@ -151,3 +144,4 @@ const displayText = computed<string>(() => {
   box-shadow: var(--shadow-md);
 }
 </style>
+

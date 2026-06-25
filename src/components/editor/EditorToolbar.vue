@@ -1,10 +1,11 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LinkPopover from './LinkPopover.vue'
 import ColorPopover from './ColorPopover.vue'
 import EmojiPicker from './EmojiPicker.vue'
 import DateTimePicker from './DateTimePicker.vue'
 import { CALLOUT_VARIANTS, CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
+import { BG_COLOR_PALETTE } from '@/lib/colorPalettes'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -127,10 +128,11 @@ const alignBtns = computed<Btn[]>(() => {
 })
 
 // ─── 缩进 / 反缩进 ─────────────────────────────────────────
-// 智能 indent:列表项用 sinkListItem;引用块再次 wrapIn;其他块包进 blockquote
-// outdent:列表项用 liftListItem;引用块 lift;其他 no-op
-// 不做 disabled 判断 — Tiptap 命令在最外层会自然 no-op,加 disabled 反而
-// 在状态切换时出现"按了 outdent 才显示禁用"的延迟。
+// 智能 indent:列表项用 sinkListItem;其他块包进 blockquote 形成引用嵌套。
+// outdent:列表项用 liftListItem;引用块 lift;其他 no-op。
+//
+// 注意:此按钮的点击行为 ≠ Tiptap 默认 Tab keymap(段落里 Tab 默认插入空格,
+// 列表里才是 sink)。所以 toolbar 上不挂 shortcut 标签,避免误导用户。
 function runIndent() {
   const e = props.editor
   if (!e) return
@@ -138,11 +140,7 @@ function runIndent() {
     e.chain().focus().sinkListItem('listItem').run()
     return
   }
-  if (e.isActive('blockquote')) {
-    e.chain().focus().wrapIn('blockquote').run()
-    return
-  }
-  // 段落/标题等不在 list/quote 里的:包进 blockquote
+  // 段落/标题/引用等都 wrap 进 blockquote,符合"缩进 → 引用"的中文排版直觉
   e.chain().focus().wrapIn('blockquote').run()
 }
 
@@ -163,12 +161,10 @@ const indentBtns = computed<Btn[]>(() => {
   return [
     {
       id: 'outdent', icon: 'format_indent_decrease', title: '减少缩进',
-      shortcut: 'Shift+Tab',
       run: () => runOutdent(),
     },
     {
       id: 'indent', icon: 'format_indent_increase', title: '增加缩进',
-      shortcut: 'Tab',
       run: () => runIndent(),
     },
   ]
@@ -310,7 +306,6 @@ function runTableAction(id: string) {
     alignLeft: () => e.chain().focus().setCellAttribute('textAlign', 'left').run(),
     alignCenter: () => e.chain().focus().setCellAttribute('textAlign', 'center').run(),
     alignRight: () => e.chain().focus().setCellAttribute('textAlign', 'right').run(),
-    clearAlign: () => e.chain().focus().setCellAttribute('textAlign', null).run(),
   }
   cmds[id]?.()
   tableMenuOpen.value = false
@@ -319,17 +314,9 @@ function runTableAction(id: string) {
 // ─── 单元格背景色 popover ────────────────────────
 const cellColorOpen = ref(false)
 
-// 单元格背景色 — 用稍饱和的颜色,在浅色弹窗里也能看清
-const CELL_COLORS = [
-  { name: '默认', value: null },
-  { name: '灰', value: '#DFE1E6' },
-  { name: '红', value: '#FF8B8B' },
-  { name: '橙', value: '#FFAB00' },
-  { name: '黄', value: '#FFE380' },
-  { name: '绿', value: '#79F2C0' },
-  { name: '蓝', value: '#79E2F2' },
-  { name: '紫', value: '#B3ACF5' },
-]
+// 单元格背景色 — 跟文字高亮共用 BG_COLOR_PALETTE,保证视觉一致。
+// (以前这里维护独立的 8 色 hex,跟 highlight 漂移;现在统一来源)
+const CELL_COLORS = BG_COLOR_PALETTE
 
 function applyCellColor(value: string | null) {
   const e = props.editor
@@ -789,6 +776,7 @@ function handleClick(btn: Btn) {
           <span>{{ blockTypeLabel }}</span>
           <span class="material-symbols-outlined chev">expand_more</span>
         </button>
+        <Transition name="popover-fade">
         <div v-if="blockTypeOpen" class="tb-block-type-menu">
           <button
             v-for="opt in blockTypeOptions"
@@ -801,6 +789,7 @@ function handleClick(btn: Btn) {
             <span>{{ opt.label }}</span>
           </button>
         </div>
+        </Transition>
       </div>
 
       <div class="tb-sep"></div>
@@ -832,12 +821,14 @@ function handleClick(btn: Btn) {
         >
           <span class="material-symbols-outlined">{{ linkBtn.icon }}</span>
         </button>
+        <Transition name="popover-fade">
         <LinkPopover
           v-if="linkPopoverOpen"
           :editor="editor"
           :open="linkPopoverOpen"
           @close="closeLinkPopover"
         />
+        </Transition>
       </div>
 
       <div class="tb-sep"></div>
@@ -868,12 +859,14 @@ function handleClick(btn: Btn) {
             :style="{ background: highlightSwatch() === 'transparent' ? 'var(--bg-subtle)' : highlightSwatch() }"
           ></span>
         </button>
+        <Transition name="popover-fade">
         <ColorPopover
           v-if="colorPopoverMode"
           :editor="editor"
           :mode="colorPopoverMode"
           @close="closeColorPopover"
         />
+        </Transition>
       </div>
 
       <div class="tb-sep"></div>
@@ -935,10 +928,11 @@ function handleClick(btn: Btn) {
           aria-haspopup="menu"
           @click="toggleTableMenu"
         >
-          <span class="material-symbols-outlined" style="font-size:18px">table_chart</span>
+          <span class="material-symbols-outlined icon-lg">table_chart</span>
           <span>表格</span>
           <span class="material-symbols-outlined chev">expand_more</span>
         </button>
+        <Transition name="popover-fade">
         <div v-if="tableMenuOpen" class="tb-block-type-menu tb-table-menu">
           <template v-for="(opt, idx) in tableMenuOptions" :key="idx">
             <div v-if="opt.kind === 'separator'" class="tb-block-type-sep"></div>
@@ -962,6 +956,7 @@ function handleClick(btn: Btn) {
                 ></span>
                 <span class="material-symbols-outlined chev" style="font-size:14px;margin-left:auto">expand_more</span>
               </button>
+              <Transition name="popover-fade">
               <div v-if="cellColorOpen" class="tb-cell-color-popover">
                 <div class="tb-cell-color-grid">
                   <button
@@ -983,10 +978,11 @@ function handleClick(btn: Btn) {
                   style="height: 26px; font-size: 12px;"
                   @mousedown.prevent="clearCellColor"
                 >
-                  <span class="material-symbols-outlined" style="font-size:14px">format_color_reset</span>
+                  <span class="material-symbols-outlined icon-sm">format_color_reset</span>
                   <span>清除背景</span>
                 </button>
               </div>
+              </Transition>
             </div>
             <button
               v-else
@@ -999,6 +995,7 @@ function handleClick(btn: Btn) {
             </button>
           </template>
         </div>
+        </Transition>
       </div>
 
       <div v-if="isInTable" class="tb-sep"></div>
@@ -1033,9 +1030,11 @@ function handleClick(btn: Btn) {
         >
           <span class="material-symbols-outlined">add_reaction</span>
         </button>
+        <Transition name="popover-fade">
         <div v-if="emojiOpen" class="tb-emoji-popover">
           <EmojiPicker :editor="editor" @close="closeEmoji" />
         </div>
+        </Transition>
       </div>
 
       <div class="tb-sep"></div>
@@ -1054,6 +1053,7 @@ function handleClick(btn: Btn) {
           <span class="material-symbols-outlined">schedule</span>
         </button>
         <!-- 快速选项下拉 -->
+        <Transition name="popover-fade">
         <div v-if="datePickerOpen" class="tb-date-menu tb-block-type-menu">
           <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="insertDateNow">
             <span class="material-symbols-outlined">schedule</span>
@@ -1069,10 +1069,13 @@ function handleClick(btn: Btn) {
             <span>指定日期…</span>
           </button>
         </div>
+        </Transition>
         <!-- 完整 picker 弹层 -->
+        <Transition name="popover-fade">
         <div v-if="datePopoverOpen" class="tb-date-popover" @mousedown.stop>
           <DateTimePicker @insert="onDateInsert" @cancel="onDateCancel" />
         </div>
+        </Transition>
       </div>
 
       <div v-if="currentCalloutVariant" class="tb-sep"></div>
@@ -1086,10 +1089,11 @@ function handleClick(btn: Btn) {
           aria-haspopup="menu"
           @click="toggleCalloutMenu"
         >
-          <span class="material-symbols-outlined" style="font-size:18px">{{ CALLOUT_ICON_MAP[currentCalloutVariant] }}</span>
+          <span class="material-symbols-outlined icon-lg">{{ CALLOUT_ICON_MAP[currentCalloutVariant] }}</span>
           <span>{{ ({ info: '信息', success: '成功', warning: '警告', danger: '危险' } as Record<string, string>)[currentCalloutVariant] }}</span>
           <span class="material-symbols-outlined chev">expand_more</span>
         </button>
+        <Transition name="popover-fade">
         <div v-if="calloutMenuOpen" class="tb-block-type-menu">
           <button
             v-for="v in CALLOUT_VARIANTS"
@@ -1107,6 +1111,7 @@ function handleClick(btn: Btn) {
             <span>移除提示框</span>
           </button>
         </div>
+        </Transition>
       </div>
 
     </div>
@@ -1114,6 +1119,17 @@ function handleClick(btn: Btn) {
 </template>
 
 <style scoped>
+/* 统一所有工具栏 popover / menu / 下拉的入场退场动画 */
+.popover-fade-enter-active,
+.popover-fade-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.popover-fade-enter-from,
+.popover-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 .tb-block-type-wrap {
   position: relative;
 }
@@ -1123,7 +1139,7 @@ function handleClick(btn: Btn) {
   gap: 4px;
   height: 30px;
   padding: 0 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   border: none;
   background: transparent;
   color: var(--text-1);
@@ -1167,7 +1183,7 @@ function handleClick(btn: Btn) {
   background: transparent;
   color: var(--text-2);
   font-size: 13px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -1176,7 +1192,7 @@ function handleClick(btn: Btn) {
 .tb-block-type-opt:hover { background: var(--bg-subtle); color: var(--text-1); }
 .tb-block-type-opt.active { background: var(--accent-soft); color: var(--accent); }
 .tb-block-type-opt.danger { color: var(--danger); }
-.tb-block-type-opt.danger:hover { background: rgba(220, 38, 38, 0.05); color: var(--danger); }
+.tb-block-type-opt.danger:hover { background: var(--danger-soft); color: var(--danger); }
 .tb-block-type-opt .material-symbols-outlined { font-size: 18px; }
 
 .tb-block-type-sep {
@@ -1212,3 +1228,4 @@ function handleClick(btn: Btn) {
   border-radius: 1px;
 }
 </style>
+

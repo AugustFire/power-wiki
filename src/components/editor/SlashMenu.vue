@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import type { PageNode } from '@/types/page'
@@ -625,7 +625,7 @@ function onDatePickerKey(e: KeyboardEvent) {
   padding: 0 8px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
   font-family: inherit;
@@ -657,3 +657,4 @@ function onDatePickerKey(e: KeyboardEvent) {
   color: var(--text-3);
 }
 </style>
+

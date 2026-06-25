@@ -10,11 +10,19 @@ export function readJSON<T>(key: string, fallback: T): T {
   }
 }
 
-export function writeJSON(key: string, value: unknown): void {
+/**
+ * 写入 localStorage,返回是否成功。
+ *
+ * 失败时不再静默吞错 —— 调用方应该感知 quota 超限 / 隐私模式 / 序列化失败等场景,
+ * 给用户提示(参见 pagesStore 的 watch → EditView 的 saveState)。
+ */
+export function writeJSON(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value))
+    return true
   } catch (err) {
     console.warn(`[storage] failed to write key "${key}"`, err)
+    return false
   }
 }
 

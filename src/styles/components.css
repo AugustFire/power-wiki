@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    Atlas Wiki Components
    复制自 design/wiki-edit.html 与 design/wiki-read.html
    本文件提前备好所有组件样式,各 Phase 直接用 class 即可
@@ -7,6 +7,20 @@
 /* =========================
    Top bar
    ========================= */
+/* Icon 字号 utility — 替代散落的 inline style="font-size:14px/16px/..."
+   .icon-xs  → 13px,  .icon-sm  → 14px, .icon-md  → 16px,
+   .icon-lg  → 18px, .icon-xl  → 20px, .icon-2xl → 22px,
+   .icon-3xl → 32px, .icon-4xl → 40px
+   对应 tokens.css 的 --icon-{xs,sm,md,lg,xl,2xl,3xl,4xl} */
+.icon-xs  { font-size: var(--icon-xs) !important; }
+.icon-sm  { font-size: var(--icon-sm) !important; }
+.icon-md  { font-size: var(--icon-md) !important; }
+.icon-lg  { font-size: var(--icon-lg) !important; }
+.icon-xl  { font-size: var(--icon-xl) !important; }
+.icon-2xl { font-size: var(--icon-2xl) !important; }
+.icon-3xl { font-size: var(--icon-3xl) !important; }
+.icon-4xl { font-size: var(--icon-4xl) !important; }
+
 .topbar {
     height: var(--topbar-h);
     background: var(--bg);
@@ -57,10 +71,10 @@
     font-family: inherit;
     color: var(--text-3);
     cursor: pointer;
-    transition: border-color 0.1s, background 0.1s;
+    transition: border-color var(--duration-fast), background var(--duration-fast);
 }
 .global-search:hover { border-color: var(--border-strong); background: var(--bg); }
-.global-search:focus { outline: none; border-color: #4C9AFF; background: var(--bg); }
+.global-search:focus { outline: none; border-color: var(--focus-ring); background: var(--bg); }
 .global-search .icon { font-size: 16px; color: var(--text-3); }
 .global-search .gs-placeholder {
     flex: 1;
@@ -73,7 +87,7 @@
     font-size: 10px;
     padding: 1px 5px;
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     background: var(--bg);
     color: var(--text-3);
 }
@@ -163,7 +177,7 @@
 .btn.ghost { background: transparent; color: var(--text-2); }
 .btn.ghost:hover { background: var(--bg-subtle); color: var(--text-1); }
 .btn.danger { background: var(--danger); color: white; }
-.btn.danger:hover { background: #C9371F; }
+.btn.danger:hover { background: var(--danger-hover); }
 
 /* 焦点环:仅键盘聚焦时显示,鼠标点击不出现 */
 .btn:focus-visible,
@@ -173,7 +187,7 @@
 .menu-item:focus-visible,
 .create-page-btn:focus-visible,
 .icon-focusable:focus-visible {
-    outline: 2px solid #4C9AFF;
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
 }
 
@@ -191,7 +205,9 @@
 }
 
 .layout.no-toc {
-    grid-template-columns: var(--sidebar-w) 1fr;
+    /* 编辑视图没有 TocPanel,但仍占住 var(--toc-w) 列宽,
+       保证跟 ReadView 的内容列宽度一致 — 切换视图时内容不跳动 */
+    grid-template-columns: var(--sidebar-w) 1fr var(--toc-w);
 }
 
 /* =========================
@@ -289,7 +305,7 @@
     display: flex; align-items: center; justify-content: center;
     color: var(--text-3);
     flex-shrink: 0;
-    transition: transform 0.1s ease, background-color 0.15s ease, color 0.15s ease;
+    transition: transform var(--duration-fast) ease, background-color var(--duration-fast) ease, color var(--duration-fast) ease;
     border-radius: var(--radius);
     cursor: pointer;
     margin: 0 -4px 0 -4px;
@@ -317,7 +333,7 @@
     color: var(--text-3);
     opacity: 0.35;
     flex-shrink: 0;
-    transition: opacity 0.1s, background 0.1s;
+    transition: opacity var(--duration-fast), background var(--duration-fast);
 }
 .tree-row:hover .menu-btn,
 .tree-row .menu-btn:focus-visible { opacity: 1; }
@@ -777,7 +793,7 @@
     align-items: center;
     height: 22px;
     padding: 0 8px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     background: var(--bg-subtle);
     color: var(--text-2);
     font-size: 12px;
@@ -830,7 +846,11 @@
     gap: 2px;
     flex-wrap: wrap;
     row-gap: 4px;
-    /* 不要 overflow:auto,会裁掉 .tb-block-type-menu / .color-popover 等下拉 */
+    /* CONTRACT: do NOT change to overflow:auto / overflow:hidden.
+   It would clip all popovers mounted inside .tb-* containers
+   (ColorPopover / LinkPopover / EmojiPicker / DateTimePicker / CalloutVariant etc).
+   These popovers use position:absolute anchored to .tb-* and depend on
+   the ancestor staying overflow:visible. See CLAUDE.md "Popover 组件". */
 }
 .editor-toolbar .tb-sep {
     width: 1px;
@@ -843,18 +863,9 @@
     flex: 1 1 auto;
     min-width: 8px;
 }
-.tb-block-type {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 26px;
-    padding: 0 8px;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--text-1);
-    font-size: 13px;
-    font-weight: 500;
-    flex-shrink: 0;
+.tb-block-type-wrap {
+    /* .tb-block-type 的实际样式在 EditorToolbar.vue (height: 30px, border-radius: 4px)。
+       这里不重复定义以避免覆盖差异。 */
 }
 .tb-block-type:hover { background: var(--bg-subtle); }
 .tb-block-type .material-symbols-outlined { font-size: 16px; color: var(--text-3); }
@@ -930,12 +941,12 @@
     justify-content: center;
     width: 22px;
     height: 22px;
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     color: var(--text-3);
     cursor: grab;
     user-select: none;
     background: transparent;
-    transition: background-color 0.12s, color 0.12s, opacity 0.12s;
+    transition: background-color var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
 }
 /* 默认隐藏 — 仅在鼠标进入编辑区(.editor-hover)时显示 */
 body:not(.editor-hover) .drag-handle {
@@ -1046,7 +1057,7 @@ body:not(.editor-hover) .drag-handle {
 .slash-item:hover .icon, .slash-item.active .icon { color: var(--accent); }
 
 /* Page transition */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
+.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast) ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 /* ============================================================
@@ -1078,7 +1089,7 @@ body:not(.editor-hover) .drag-handle {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     vertical-align: -2px;
     margin-right: 8px;
     box-shadow: inset 0 0 0 1px rgba(9, 30, 66, 0.08);
@@ -1121,7 +1132,7 @@ body:not(.editor-hover) .drag-handle {
     border-radius: var(--radius);
     border: 1px solid var(--border);
     background: var(--bg);
-    transition: background-color 0.15s ease, border-color 0.15s ease;
+    transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease;
 }
 .tiptap .toggle-wrapper:hover,
 .prose .toggle:hover {
@@ -1219,7 +1230,7 @@ body:not(.editor-hover) .drag-handle {
 .tiptap .toggle-chev {
     font-size: 18px;
     color: var(--text-2);
-    transition: transform 0.15s ease, color 0.15s ease;
+    transition: transform var(--duration-fast) ease, color var(--duration-fast) ease;
     line-height: 1;
 }
 .prose .toggle > summary::before {
@@ -1228,7 +1239,7 @@ body:not(.editor-hover) .drag-handle {
     font-size: 18px;
     color: var(--text-2);
     margin-right: 4px;
-    transition: transform 0.15s ease;
+    transition: transform var(--duration-fast) ease;
     display: inline-block;
 }
 .prose .toggle[open] > summary::before {
@@ -1275,7 +1286,7 @@ body:not(.editor-hover) .drag-handle {
     text-decoration: none;
     color: var(--text-1);
     font-size: 14px;
-    transition: background-color 0.15s ease, transform 0.1s ease;
+    transition: background-color var(--duration-fast) ease, transform var(--duration-fast) ease;
     cursor: pointer;
 }
 .tiptap .page-ref-card:hover,
@@ -1320,7 +1331,7 @@ body:not(.editor-hover) .drag-handle {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 16px 18px;
-    transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast), transform var(--duration-fast);
     position: relative;
     overflow: hidden;
 }
@@ -1331,7 +1342,7 @@ body:not(.editor-hover) .drag-handle {
     width: 3px;
     background: var(--accent);
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity var(--duration-fast);
 }
 .stat-card:hover {
     border-color: var(--accent);
@@ -1394,7 +1405,7 @@ body:not(.editor-hover) .drag-handle {
     color: var(--text-1);
     font-size: 14px;
     font-weight: 500;
-    transition: all 0.12s;
+    transition: all var(--duration-fast);
     text-align: left;
 }
 .quick-action:hover {
@@ -1434,7 +1445,7 @@ body:not(.editor-hover) .drag-handle {
     border-radius: var(--radius);
     color: var(--text-1);
     text-decoration: none;
-    transition: all 0.12s;
+    transition: all var(--duration-fast);
     cursor: pointer;
 }
 .page-card:hover {
@@ -1486,7 +1497,7 @@ body:not(.editor-hover) .drag-handle {
     padding: 10px 12px;
     border-radius: var(--radius);
     border: 1px solid transparent;
-    transition: all 0.1s;
+    transition: all var(--duration-fast);
     cursor: pointer;
 }
 .recent-list li:hover {
@@ -1547,7 +1558,7 @@ body:not(.editor-hover) .drag-handle {
     font-weight: 500;
     background: var(--success-soft);
     color: var(--success);
-    transition: all 0.2s;
+    transition: all var(--duration-base);
 }
 .save-indicator.saving {
     background: var(--warning-soft);
@@ -1577,7 +1588,7 @@ kbd {
     padding: 0 5px;
     background: var(--bg);
     border: 1px solid var(--border-strong);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-2);
@@ -1628,8 +1639,8 @@ kbd {
     color: var(--code-chrome-fg);
     font-size: 12px;
     cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.15s, color 0.15s;
+    border-radius: var(--radius-md);
+    transition: background-color var(--duration-fast), color var(--duration-fast);
     font-family: inherit;
 }
 .prose .code-block-copy:hover {
@@ -1745,7 +1756,7 @@ kbd {
     letter-spacing: 0.04em;
 }
 .prose tbody tr {
-    transition: background 0.1s;
+    transition: background var(--duration-fast);
 }
 .prose tbody tr:hover {
     background: var(--accent-softer);
@@ -1794,7 +1805,7 @@ kbd {
     margin-bottom: 8px;
     letter-spacing: -0.01em;
     /* 渐入 + 呼吸 */
-    animation: titleIn 0.3s ease-out;
+    animation: titleIn var(--duration-slow) ease-out;
 }
 @keyframes titleIn {
     from { opacity: 0; transform: translateY(-4px); }
@@ -1807,7 +1818,7 @@ kbd {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-    background: rgba(9, 30, 66, 0.15);
+    background: var(--scrim-thin);
     border-radius: 5px;
     border: 2px solid transparent;
     background-clip: padding-box;
@@ -1834,12 +1845,12 @@ kbd {
     transform: translateY(-50%);
     opacity: 0;
     color: var(--text-3);
-    transition: opacity 0.12s, color 0.12s;
+    transition: opacity var(--duration-fast), color var(--duration-fast);
     font-size: 20px;
     font-weight: 400;
     text-decoration: none;
     padding: 0 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     line-height: 1;
     user-select: none;
 }
@@ -1891,7 +1902,7 @@ button:active:not(:disabled):not(.btn) {
     height: 14px;
     margin-left: auto;
     margin-right: 4px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     flex-shrink: 0;
 }
@@ -1925,7 +1936,7 @@ button:active:not(:disabled):not(.btn) {
     border: none;
     background: transparent;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-md);
 }
 .tb-cell-color-swatch:hover { background: var(--bg-subtle); }
 .tb-cell-color-swatch.active { background: var(--accent-soft); }
@@ -1933,7 +1944,7 @@ button:active:not(:disabled):not(.btn) {
     display: inline-block;
     width: 18px;
     height: 18px;
-    border-radius: 4px;
+    border-radius: var(--radius-md);
     box-sizing: border-box;
     border: 1px solid rgba(9, 30, 66, 0.16);
 }
@@ -1990,7 +2001,7 @@ button:active:not(:disabled):not(.btn) {
     background: var(--accent);
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transition: opacity var(--duration-fast) ease;
 }
 .prose table:hover .column-resize-handle,
 .tiptap table:hover .column-resize-handle,
@@ -2010,7 +2021,7 @@ button:active:not(:disabled):not(.btn) {
     display: inline;
     padding: 0 4px;
     margin: 0 1px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     background: var(--accent-soft);
     color: var(--accent);
     font-weight: 500;
@@ -2019,7 +2030,7 @@ button:active:not(:disabled):not(.btn) {
     user-select: all;
     cursor: default;
     line-height: 1.4;
-    transition: background-color 0.12s ease;
+    transition: background-color var(--duration-fast) ease;
 }
 .date-inline[data-date-mode="now"]::before {
     content: '⏱';
@@ -2063,3 +2074,4 @@ button:active:not(:disabled):not(.btn) {
     justify-content: center;
 }
 }
+
