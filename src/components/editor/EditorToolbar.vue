@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LinkPopover from './LinkPopover.vue'
 import ColorPopover from './ColorPopover.vue'
 import EmojiPicker from './EmojiPicker.vue'
+import DateTimePicker from './DateTimePicker.vue'
 import { CALLOUT_VARIANTS, CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -341,6 +342,63 @@ function clearCellColor() {
   applyCellColor(null)
 }
 
+// ─── 日期(独立 popover) ──────────────────────────────────
+const dateWrap = ref<HTMLElement | null>(null)
+const datePickerOpen = ref(false)
+const datePopoverOpen = ref(false)
+
+function toggleDateDropdown() {
+  datePickerOpen.value = !datePickerOpen.value
+  datePopoverOpen.value = false
+}
+
+function isOnDateInline(): boolean {
+  const e = props.editor
+  if (!e) return false
+  return e.isActive('dateInline')
+}
+
+function insertDateNow() {
+  const e = props.editor
+  if (!e) return
+  e.chain().focus().insertDate({ mode: 'now' }).run()
+  closeAllDate()
+}
+
+function insertDateTodayOnly() {
+  const e = props.editor
+  if (!e) return
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  e.chain().focus().insertDate({ mode: 'fixed', date: d }).run()
+  closeAllDate()
+}
+
+function openDatePopover() {
+  datePopoverOpen.value = true
+  // 主菜单关掉,只剩 picker
+  datePickerOpen.value = false
+}
+
+function onDateInsert(payload: { mode: 'now' | 'fixed'; date: Date }) {
+  const e = props.editor
+  if (!e) return
+  e.chain()
+    .focus()
+    .insertDate({ mode: payload.mode, date: payload.date })
+    .run()
+  closeAllDate()
+}
+
+function onDateCancel() {
+  datePopoverOpen.value = false
+}
+
+function closeAllDate() {
+  datePickerOpen.value = false
+  datePopoverOpen.value = false
+}
+
 const historyBtns = computed<Btn[]>(() => {
   if (!props.editor) return []
   const e = props.editor
@@ -660,12 +718,27 @@ function onDocMouseDown(e: MouseEvent) {
   if (emojiOpen.value && emojiWrap.value && !emojiWrap.value.contains(target)) {
     emojiOpen.value = false
   }
+  if (datePickerOpen.value && dateWrap.value && !dateWrap.value.contains(target)) {
+    datePickerOpen.value = false
+  }
+  if (datePopoverOpen.value && dateWrap.value && !dateWrap.value.contains(target)) {
+    datePopoverOpen.value = false
+  }
 }
 
 function onKeyDown(e: KeyboardEvent) {
   if (emojiOpen.value && e.key === 'Escape') {
     e.preventDefault()
     emojiOpen.value = false
+  }
+  if (datePopoverOpen.value && e.key === 'Escape') {
+    e.preventDefault()
+    datePopoverOpen.value = false
+    return
+  }
+  if (datePickerOpen.value && e.key === 'Escape') {
+    e.preventDefault()
+    datePickerOpen.value = false
   }
 }
 
@@ -962,6 +1035,43 @@ function handleClick(btn: Btn) {
         </button>
         <div v-if="emojiOpen" class="tb-emoji-popover">
           <EmojiPicker :editor="editor" @close="closeEmoji" />
+        </div>
+      </div>
+
+      <div class="tb-sep"></div>
+
+      <!-- 日期/时间(独立 popover:下拉 3 选 1,或弹 picker 自定义) -->
+      <div ref="dateWrap" class="tb-date-wrap" :class="{ open: datePickerOpen || datePopoverOpen }">
+        <button
+          type="button"
+          class="tb-btn"
+          :class="{ active: datePickerOpen || datePopoverOpen || isOnDateInline() }"
+          title="插入日期/时间"
+          aria-haspopup="menu"
+          :aria-expanded="datePickerOpen"
+          @click.stop="toggleDateDropdown"
+        >
+          <span class="material-symbols-outlined">schedule</span>
+        </button>
+        <!-- 快速选项下拉 -->
+        <div v-if="datePickerOpen" class="tb-date-menu tb-block-type-menu">
+          <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="insertDateNow">
+            <span class="material-symbols-outlined">schedule</span>
+            <span>今天(自动)</span>
+          </button>
+          <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="insertDateTodayOnly">
+            <span class="material-symbols-outlined">today</span>
+            <span>今天日期</span>
+          </button>
+          <div class="tb-block-type-sep"></div>
+          <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="openDatePopover">
+            <span class="material-symbols-outlined">event</span>
+            <span>指定日期…</span>
+          </button>
+        </div>
+        <!-- 完整 picker 弹层 -->
+        <div v-if="datePopoverOpen" class="tb-date-popover" @mousedown.stop>
+          <DateTimePicker @insert="onDateInsert" @cancel="onDateCancel" />
         </div>
       </div>
 

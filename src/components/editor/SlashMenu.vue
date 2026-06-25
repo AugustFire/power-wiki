@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import type { PageNode } from '@/types/page'
+import DateTimePicker from './DateTimePicker.vue'
+import type { DateMode } from '@/editor/dateInlineExtension'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -118,6 +120,16 @@ const items: SlashItem[] = [
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openPagePicker
     },
   },
+  {
+    id: 'date',
+    label: '日期',
+    description: '插入当前或指定日期/时间',
+    icon: 'schedule',
+    kind: 'needsPicker',
+    run: () => {
+      // 由 onSelectIndex 打开 date picker
+    },
+  },
 ]
 
 const open = ref(false)
@@ -174,6 +186,7 @@ function hideMenu() {
   filterText.value = ''
   activeIndex.value = 0
   closePagePicker()
+  closeDatePicker()
 }
 
 // 检测编辑器文本中最后一个 "/" 触发菜单
@@ -231,6 +244,10 @@ function onSelectIndex(idx: number) {
     openPagePicker()
     return
   }
+  if (item.kind === 'needsPicker' && item.id === 'date') {
+    openDatePicker()
+    return
+  }
 
   item.run(props.editor)
   hideMenu()
@@ -260,6 +277,10 @@ function moveActive(delta: number) {
 function onEditorKey(e: KeyboardEvent) {
   if (pickerOpen.value) {
     onPickerKey(e)
+    return
+  }
+  if (datePickerOpen.value) {
+    onDatePickerKey(e)
     return
   }
   if (!open.value) return
@@ -413,6 +434,46 @@ function onPickerKey(e: KeyboardEvent) {
     hideMenu()
   }
 }
+
+// ============================================================
+//  日期 Picker(DateTimePicker 内部已处理 Enter/Esc)
+// ============================================================
+const datePickerOpen = ref(false)
+
+function openDatePicker() {
+  datePickerOpen.value = true
+}
+
+function closeDatePicker() {
+  datePickerOpen.value = false
+}
+
+function onPickDate(payload: { mode: DateMode; date: Date }) {
+  if (!props.editor) return
+  props.editor
+    .chain()
+    .focus()
+    .insertContent({
+      type: 'dateInline',
+      attrs: {
+        mode: payload.mode,
+        iso: payload.date.toISOString(),
+      },
+    })
+    .run()
+  hideMenu()
+}
+
+function onDatePickerKey(e: KeyboardEvent) {
+  if (!datePickerOpen.value) return
+  // DateTimePicker 自己处理 Enter(确认)/ Esc(取消),
+  // 这里只挡住这些键不让它冒泡触发其它逻辑;其它键放行给 DateTimePicker 的 input
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    hideMenu()
+  }
+}
 </script>
 
 <template>
@@ -451,6 +512,17 @@ function onPickerKey(e: KeyboardEvent) {
           <span class="pp-title">{{ p.title }}</span>
         </button>
         <div v-if="pickerResults.length === 0" class="pp-empty">没有匹配页面</div>
+      </div>
+    </div>
+
+    <!-- 日期 picker 模式:用户在 /日期 后看到的日期时间选择器 -->
+    <div v-else-if="datePickerOpen" class="slash-picker">
+      <div class="slash-title">
+        <span>插入日期/时间</span>
+        <span class="slash-hint">选日期 · 输时间 · 点确定</span>
+      </div>
+      <div class="date-picker-wrap">
+        <DateTimePicker @insert="onPickDate" @cancel="hideMenu" />
       </div>
     </div>
 

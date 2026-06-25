@@ -26,6 +26,8 @@ const ALLOWED_TAGS = [
   'details', 'summary',
   // 颜色 / 高亮(textStyle 用 span style,highlight 用 mark)
   'mark',
+  // 行内日期(DateInline 扩展):<time> 是语义化标签,无 XSS 风险
+  'time',
 ]
 
 const ALLOWED_ATTR = [
@@ -39,6 +41,9 @@ const ALLOWED_ATTR = [
   'colwidth', 'data-colwidth', // 表格列宽(prosemirror-tables / 我们的扩展)
   'id',
   'open', // <details open> 折叠块默认展开标记
+  'datetime', // <time datetime="..."> 行内日期扩展用
+  'data-date-mode', // DateInline:now / fixed 模式标记
+  'data-date', // DateInline:ISO 时间冗余存储(DOMPurify 友好)
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等

@@ -1968,3 +1968,68 @@ button:active:not(:disabled):not(.btn) {
 .tiptap table .column-resize-handle.visible {
     opacity: 1;
 }
+
+/* ============================================================
+   行内日期(DateInline 扩展)
+   - 编辑器内 + 读视图共用样式
+   - 节点是 inline atom,在文本流里嵌一个柔和的"芯片"
+   - 图标用 ::before 统一处理,mode='now' → ⏱,mode='fixed' → 📅
+   - 编辑器内 cursor:pointer 表示可点击编辑
+   ============================================================ */
+.date-inline {
+    display: inline;
+    padding: 0 4px;
+    margin: 0 1px;
+    border-radius: 3px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+    font-size: 0.95em;
+    white-space: nowrap;
+    user-select: all;
+    cursor: default;
+    line-height: 1.4;
+    transition: background-color 0.12s ease;
+}
+.date-inline.now::before {
+    content: '⏱';
+    margin-right: 3px;
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+.date-inline.fixed::before {
+    content: '📅';
+    margin-right: 3px;
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+.date-inline:hover { background: var(--accent); color: white; }
+
+/* 编辑器内:可点击编辑 */
+.ProseMirror .date-inline { cursor: pointer; }
+
+/* 选中状态(ProseMirror 的 selected atom 加 ProseMirror-selectedNode class) */
+.ProseMirror .ProseMirror-selectednode.date-inline {
+    background: var(--accent);
+    color: white;
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* 工具栏日期按钮组 */
+.tb-date-wrap { position: relative; }
+.tb-date-menu { min-width: 180px; }
+.tb-date-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 100;
+}
+
+/* slash 菜单里的日期 picker 容器 */
+.date-picker-wrap {
+    padding: 0;
+    display: flex;
+    justify-content: center;
+}
+}

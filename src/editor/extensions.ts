@@ -22,6 +22,7 @@ import { HeadingAnchor } from './headingAnchor'
 import { Callout } from './calloutExtension'
 import { Toggle } from './toggleExtension'
 import { PageRef } from './pageRefExtension'
+import { DateInline } from './dateInlineExtension'
 
 /**
  * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
@@ -231,6 +232,8 @@ const extensions = [
   Toggle,
   // 页面引用:块级卡片,Notion 风格,点击跳转到对应页面
   PageRef,
+  // 行内日期/时间:in-text 节点,now 模式每分钟重算,fixed 模式显示固定日期
+  DateInline,
 ]
 
 export default extensions
