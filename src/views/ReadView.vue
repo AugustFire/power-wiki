@@ -162,18 +162,6 @@ watch(
         </template>
       </div>
       <div class="page-actions">
-        <button class="btn ghost" disabled title="即将上线">
-          <span class="material-symbols-outlined" style="font-size:18px">history</span>
-          历史
-        </button>
-        <button class="btn ghost" disabled title="即将上线">
-          <span class="material-symbols-outlined" style="font-size:18px">star</span>
-          关注
-        </button>
-        <button class="btn ghost" disabled title="即将上线">
-          <span class="material-symbols-outlined" style="font-size:18px">share</span>
-          分享
-        </button>
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined" style="font-size:18px">edit</span>
           编辑

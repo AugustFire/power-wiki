@@ -88,21 +88,6 @@
     position: relative;
 }
 .icon-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
-.icon-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
-.icon-btn[disabled]:hover { background: transparent; color: var(--text-2); }
-/* "即将上线" 角标:右上角一个 warning 色小圆点,白环分割图标边缘 */
-.icon-btn[disabled]::after {
-    content: '';
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--warning);
-    box-shadow: 0 0 0 1.5px var(--bg);
-    pointer-events: none;
-}
 
 .me-av {
     margin-left: 8px;
@@ -172,7 +157,7 @@
     color: var(--text-1);
     white-space: nowrap;
 }
-.btn:hover { background: #DFE1E6; }
+.btn:hover { background: var(--border); }
 .btn.primary { background: var(--accent); color: white; font-weight: 600; }
 .btn.primary:hover { background: var(--accent-hover); }
 .btn.ghost { background: transparent; color: var(--text-2); }
@@ -304,12 +289,12 @@
     display: flex; align-items: center; justify-content: center;
     color: var(--text-3);
     flex-shrink: 0;
-    transition: transform 0.1s ease;
+    transition: transform 0.1s ease, background-color 0.15s ease, color 0.15s ease;
     border-radius: var(--radius);
     cursor: pointer;
     margin: 0 -4px 0 -4px;
 }
-.tree-row .caret:hover { background: var(--bg); color: var(--text-1); }
+.tree-row .caret:hover { background: var(--bg-subtle); color: var(--text-2); }
 .tree-row .caret.leaf { visibility: hidden; }
 .tree-row .caret.open { transform: rotate(90deg); }
 .tree-row .doc-icon {
@@ -529,7 +514,7 @@
 }
 .prose pre {
     background: var(--bg-code);
-    color: #B3BAC5;
+    color: var(--code-fg);
     padding: 16px;
     border-radius: var(--radius);
     overflow-x: auto;
@@ -799,27 +784,7 @@
     font-weight: 500;
 }
 
-/* 封面 / 图标:小尺寸 hover-only 按钮(替代之前的大封面区) */
-.edit-meta-actions {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 4px;
-    opacity: 0.55;
-    transition: opacity 0.15s;
-}
-.edit-meta-actions:hover { opacity: 1; }
-.meta-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 13px;
-    color: var(--text-3);
-    font-weight: 500;
-    padding: 0;
-    background: transparent;
-}
-.meta-btn:hover { color: var(--text-1); }
-.meta-btn .material-symbols-outlined { color: inherit; }
+/* 封面 / 图标按钮已下线,此处不再保留旧 hover-only 样式 */
 
 .edit-byline {
     display: flex;
@@ -845,36 +810,33 @@
     position: sticky;
     top: 0;
     z-index: 50;
-    height: 40px;
+    min-height: 40px;
     background: var(--bg);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     border-radius: 0;
-    padding: 0 32px;
+    padding: 4px 0;
     display: flex;
     align-items: center;
-    gap: 4px;
-    /* 突破 .content 的 32px 横向 padding,实现全宽;
-       toolbar 内边距 32px 跟 .content 的 padding 一致,
-       tb-inner 左右边缘跟 .content-inner 边缘齐平 */
-    margin: 0 -32px 24px -32px;
-    flex-wrap: nowrap;
+    /* 放在 .content-inner 里面,跟内容等宽;不再有 -32px 负 margin 全宽 */
+    margin: 0 0 24px 0;
+    flex-wrap: wrap;
+    row-gap: 4px;
 }
 .editor-toolbar .tb-inner {
-    max-width: 1680px;
-    margin: 0 auto;
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 4px;
-    flex-wrap: nowrap;
+    gap: 2px;
+    flex-wrap: wrap;
+    row-gap: 4px;
     /* 不要 overflow:auto,会裁掉 .tb-block-type-menu / .color-popover 等下拉 */
 }
 .editor-toolbar .tb-sep {
     width: 1px;
     height: 16px;
     background: var(--border);
-    margin: 0 10px;
+    margin: 0 6px;
     flex-shrink: 0;
 }
 .editor-toolbar .tb-spacer {
@@ -885,7 +847,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    height: 28px;
+    height: 26px;
     padding: 0 8px;
     border-radius: var(--radius);
     background: transparent;
@@ -903,7 +865,7 @@
     flex-shrink: 0;
 }
 .tb-btn {
-    width: 26px; height: 26px;
+    width: 24px; height: 24px;
     border-radius: var(--radius);
     display: flex; align-items: center; justify-content: center;
     color: var(--text-2);
@@ -1010,7 +972,7 @@ body:not(.editor-hover) .drag-handle {
 }
 .tiptap pre {
     background: var(--bg-code);
-    color: #B3BAC5;
+    color: var(--code-fg);
     padding: 16px;
     border-radius: var(--radius);
     overflow-x: auto;
@@ -1020,36 +982,6 @@ body:not(.editor-hover) .drag-handle {
 }
 .tiptap pre code { background: transparent; padding: 0; color: inherit; }
 
-/* 编辑器内的 hljs-* 着色 — 和 read 端共用一套主题 */
-.tiptap .hljs-keyword,
-.tiptap .hljs-selector-tag,
-.tiptap .hljs-literal,
-.tiptap .hljs-section,
-.tiptap .hljs-link { color: #C792EA; }
-.tiptap .hljs-string,
-.tiptap .hljs-attr,
-.tiptap .hljs-symbol,
-.tiptap .hljs-bullet,
-.tiptap .hljs-addition { color: #C3E88D; }
-.tiptap .hljs-number,
-.tiptap .hljs-meta .hljs-string,
-.tiptap .hljs-regexp { color: #F78C6C; }
-.tiptap .hljs-comment,
-.tiptap .hljs-quote,
-.tiptap .hljs-deletion { color: #6B778C; font-style: italic; }
-.tiptap .hljs-function .hljs-title,
-.tiptap .hljs-title.function_,
-.tiptap .hljs-title,
-.tiptap .hljs-name,
-.tiptap .hljs-attribute,
-.tiptap .hljs-variable,
-.tiptap .hljs-template-variable,
-.tiptap .hljs-class .hljs-title { color: #82AAFF; }
-.tiptap .hljs-built_in,
-.tiptap .hljs-type,
-.tiptap .hljs-builtin-name { color: #FFCB6B; }
-.tiptap .hljs-tag,
-.tiptap .hljs-meta { color: #F07178; }
 .tiptap blockquote {
     border-left: 3px solid var(--accent);
     background: var(--accent-softer);
@@ -1113,21 +1045,6 @@ body:not(.editor-hover) .drag-handle {
 .slash-item .icon { color: var(--text-3); flex-shrink: 0; }
 .slash-item:hover .icon, .slash-item.active .icon { color: var(--accent); }
 
-/* Toast */
-.toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--text-1);
-    color: white;
-    padding: 10px 16px;
-    border-radius: var(--radius);
-    font-size: 14px;
-    z-index: 500;
-    box-shadow: var(--shadow-md);
-}
-
 /* Page transition */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
@@ -1151,7 +1068,7 @@ body:not(.editor-hover) .drag-handle {
     color: var(--text-2);
 }
 .badge.badge-success { background: var(--success-soft); color: var(--success); }
-.badge.badge-warning { background: var(--warning-soft); color: #B86E00; }
+.badge.badge-warning { background: var(--warning-soft); color: var(--warning-text); }
 .badge.badge-danger  { background: var(--danger-soft);  color: var(--danger); }
 .badge.badge-info    { background: var(--accent-soft);  color: var(--accent); }
 .badge.badge-purple  { background: var(--purple-soft);  color: var(--purple); }
@@ -1216,8 +1133,17 @@ body:not(.editor-hover) .drag-handle {
     box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* summary 行 — 编辑器中是 button,read view 中是原生 <summary> */
-.tiptap .toggle-summary,
+/* summary 行容器 — 编辑器中是 div(chev + title input),read view 是原生 <summary> */
+.tiptap .toggle-summary {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 36px;
+    padding: 0 4px;
+    background: transparent;
+    border-radius: var(--radius);
+    font-family: inherit;
+}
 .prose .toggle > summary {
     display: flex;
     align-items: center;
@@ -1244,17 +1170,57 @@ body:not(.editor-hover) .drag-handle {
     content: '';
 }
 
-/* chevron icon */
-.tiptap .toggle-chev {
+/* 编辑器内的 chevron 按钮 — 点击切换 open/close */
+.tiptap .toggle-chev-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+    flex-shrink: 0;
+    border-radius: var(--radius);
+    color: var(--text-2);
+}
+.tiptap .toggle-chev-btn:hover {
+    background: var(--bg);
+    color: var(--accent);
+}
+
+/* 编辑器内的 title input — summary 文字在这里编辑 */
+.tiptap .toggle-title-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-1);
+    padding: 0 8px;
+    cursor: text;
+    user-select: text;
+    min-width: 0;
+    height: 32px;
+    line-height: 32px;
+}
+.tiptap .toggle-title-input::placeholder {
+    color: var(--text-3);
+    font-weight: 400;
+}
+.tiptap .toggle-title-input:focus {
+    outline: none;
+}
+
+/* chevron icon — 编辑器内 <span class="toggle-chev"> 和 read view <summary>::before */
+.tiptap .toggle-chev {
     font-size: 18px;
     color: var(--text-2);
-    flex-shrink: 0;
     transition: transform 0.15s ease, color 0.15s ease;
+    line-height: 1;
 }
 .prose .toggle > summary::before {
     content: 'chevron_right';
@@ -1585,7 +1551,7 @@ body:not(.editor-hover) .drag-handle {
 }
 .save-indicator.saving {
     background: var(--warning-soft);
-    color: #B86E00;
+    color: var(--warning-text);
 }
 .save-indicator .dot {
     width: 6px; height: 6px;
@@ -1649,7 +1615,7 @@ kbd {
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    color: #9CA3AF;
+    color: var(--code-chrome-fg);
     font-family: var(--font-mono);
 }
 .prose .code-block-copy {
@@ -1659,7 +1625,7 @@ kbd {
     padding: 3px 8px;
     border: none;
     background: transparent;
-    color: #9CA3AF;
+    color: var(--code-chrome-fg);
     font-size: 12px;
     cursor: pointer;
     border-radius: 4px;
@@ -1668,16 +1634,16 @@ kbd {
 }
 .prose .code-block-copy:hover {
     background: rgba(255, 255, 255, 0.06);
-    color: #E5E7EB;
+    color: var(--code-chrome-fg-hover);
 }
 .prose .code-block-copy.copied {
-    color: #C3E88D;
+    color: var(--hljs-string);
 }
 
 .prose pre {
     position: relative;
     background: var(--bg-code);
-    color: #B3BAC5;
+    color: var(--code-fg);
     padding: 16px;
     border-radius: var(--radius);
     overflow-x: auto;
@@ -1688,23 +1654,23 @@ kbd {
 }
 .prose pre code { background: transparent; padding: 0; color: inherit; }
 
-/* 关键字 / 字符串 / 数字 / 注释 / 函数名 / 类型 / 标点 — 在深色背景上配柔和的对比 */
+/* hljs 配色 — 编辑器与 read 端共用一组 token(.tiptap 后代选择器也被这条规则命中) */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-literal,
 .hljs-section,
-.hljs-link { color: #C792EA; }
+.hljs-link { color: var(--hljs-keyword); }
 .hljs-string,
 .hljs-attr,
 .hljs-symbol,
 .hljs-bullet,
-.hljs-addition { color: #C3E88D; }
+.hljs-addition { color: var(--hljs-string); }
 .hljs-number,
 .hljs-meta .hljs-string,
-.hljs-regexp { color: #F78C6C; }
+.hljs-regexp { color: var(--hljs-number); }
 .hljs-comment,
 .hljs-quote,
-.hljs-deletion { color: #6B778C; font-style: italic; }
+.hljs-deletion { color: var(--hljs-comment); font-style: italic; }
 .hljs-function .hljs-title,
 .hljs-title.function_,
 .hljs-title,
@@ -1712,12 +1678,12 @@ kbd {
 .hljs-attribute,
 .hljs-variable,
 .hljs-template-variable,
-.hljs-class .hljs-title { color: #82AAFF; }
+.hljs-class .hljs-title { color: var(--hljs-function); }
 .hljs-built_in,
 .hljs-type,
-.hljs-builtin-name { color: #FFCB6B; }
+.hljs-builtin-name { color: var(--hljs-type); }
 .hljs-tag,
-.hljs-meta { color: #F07178; }
+.hljs-meta { color: var(--hljs-tag); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 
@@ -1908,11 +1874,16 @@ button:active:not(:disabled):not(.btn) {
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
     padding: 6px;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     z-index: 110;
     min-width: 160px;
+}
+.tb-cell-color-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 28px);
+    gap: 4px;
 }
 .tb-cell-color-swatch {
     display: flex;

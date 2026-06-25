@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LinkPopover from './LinkPopover.vue'
 import ColorPopover from './ColorPopover.vue'
+import EmojiPicker from './EmojiPicker.vue'
 import { CALLOUT_VARIANTS, CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,11 +10,6 @@ type AnyEditor = any
 
 const props = defineProps<{
   editor: AnyEditor
-}>()
-
-const emit = defineEmits<{
-  (e: 'close'): void
-  (e: 'publish'): void
 }>()
 
 interface Btn {
@@ -96,6 +92,83 @@ const insertBtns = computed<Btn[]>(() => {
       id: 'callout', icon: 'lightbulb', title: '提示框',
       isActive: () => e.isActive('callout'),
       run: () => e.chain().focus().toggleCallout('info').run(),
+    },
+  ]
+})
+
+// ─── 文字对齐 ────────────────────────────────────────────────
+const alignBtns = computed<Btn[]>(() => {
+  if (!props.editor) return []
+  const e = props.editor
+  const isAligned = (a: 'left' | 'center' | 'right') =>
+    e.isActive({ textAlign: a }) ||
+    // 没设过对齐时,默认是 left;如果当前 active 的是 left,高亮左对齐
+    (!e.isActive({ textAlign: 'center' }) &&
+      !e.isActive({ textAlign: 'right' }) &&
+      a === 'left')
+  return [
+    {
+      id: 'alignLeft', icon: 'format_align_left', title: '左对齐',
+      isActive: () => isAligned('left'),
+      run: () => e.chain().focus().setTextAlign('left').run(),
+    },
+    {
+      id: 'alignCenter', icon: 'format_align_center', title: '居中',
+      isActive: () => isAligned('center'),
+      run: () => e.chain().focus().setTextAlign('center').run(),
+    },
+    {
+      id: 'alignRight', icon: 'format_align_right', title: '右对齐',
+      isActive: () => isAligned('right'),
+      run: () => e.chain().focus().setTextAlign('right').run(),
+    },
+  ]
+})
+
+// ─── 缩进 / 反缩进 ─────────────────────────────────────────
+// 智能 indent:列表项用 sinkListItem;引用块再次 wrapIn;其他块包进 blockquote
+// outdent:列表项用 liftListItem;引用块 lift;其他 no-op
+// 不做 disabled 判断 — Tiptap 命令在最外层会自然 no-op,加 disabled 反而
+// 在状态切换时出现"按了 outdent 才显示禁用"的延迟。
+function runIndent() {
+  const e = props.editor
+  if (!e) return
+  if (e.isActive('listItem') || e.isActive('taskItem')) {
+    e.chain().focus().sinkListItem('listItem').run()
+    return
+  }
+  if (e.isActive('blockquote')) {
+    e.chain().focus().wrapIn('blockquote').run()
+    return
+  }
+  // 段落/标题等不在 list/quote 里的:包进 blockquote
+  e.chain().focus().wrapIn('blockquote').run()
+}
+
+function runOutdent() {
+  const e = props.editor
+  if (!e) return
+  if (e.isActive('listItem') || e.isActive('taskItem')) {
+    e.chain().focus().liftListItem('listItem').run()
+    return
+  }
+  if (e.isActive('blockquote')) {
+    e.chain().focus().lift().run()
+  }
+}
+
+const indentBtns = computed<Btn[]>(() => {
+  if (!props.editor) return []
+  return [
+    {
+      id: 'outdent', icon: 'format_indent_decrease', title: '减少缩进',
+      shortcut: 'Shift+Tab',
+      run: () => runOutdent(),
+    },
+    {
+      id: 'indent', icon: 'format_indent_increase', title: '增加缩进',
+      shortcut: 'Tab',
+      run: () => runIndent(),
     },
   ]
 })
@@ -356,6 +429,18 @@ function closeColorPopover() {
   colorPopoverMode.value = null
 }
 
+// ─── 表情选择器 ───────────────────────────────────────────
+const emojiOpen = ref(false)
+const emojiWrap = ref<HTMLElement | null>(null)
+
+function toggleEmoji() {
+  emojiOpen.value = !emojiOpen.value
+}
+
+function closeEmoji() {
+  emojiOpen.value = false
+}
+
 // ─── 块类型下拉 ───────────────────────────────────────────────
 interface BlockTypeOpt {
   id: 'p' | 'h1' | 'h2' | 'h3' | 'quote' | 'code'
@@ -572,10 +657,26 @@ function onDocMouseDown(e: MouseEvent) {
   if (calloutMenuOpen.value && calloutMenuWrap.value && !calloutMenuWrap.value.contains(target)) {
     calloutMenuOpen.value = false
   }
+  if (emojiOpen.value && emojiWrap.value && !emojiWrap.value.contains(target)) {
+    emojiOpen.value = false
+  }
 }
 
-onMounted(() => document.addEventListener('mousedown', onDocMouseDown))
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
+function onKeyDown(e: KeyboardEvent) {
+  if (emojiOpen.value && e.key === 'Escape') {
+    e.preventDefault()
+    emojiOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocMouseDown)
+  document.addEventListener('keydown', onKeyDown)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocMouseDown)
+  document.removeEventListener('keydown', onKeyDown)
+})
 
 function handleClick(btn: Btn) {
   if (!props.editor) return
@@ -720,6 +821,38 @@ function handleClick(btn: Btn) {
 
       <div class="tb-sep"></div>
 
+      <!-- 缩进/反缩进 -->
+      <div class="tb-group">
+        <button
+          v-for="btn in indentBtns"
+          :key="btn.id"
+          class="tb-btn"
+          :disabled="btn.disabled?.()"
+          :title="btn.shortcut ? `${btn.title} (${btn.shortcut})` : btn.title"
+          @click="handleClick(btn)"
+        >
+          <span class="material-symbols-outlined">{{ btn.icon }}</span>
+        </button>
+      </div>
+
+      <div class="tb-sep"></div>
+
+      <!-- 文字对齐 -->
+      <div class="tb-group">
+        <button
+          v-for="btn in alignBtns"
+          :key="btn.id"
+          class="tb-btn"
+          :class="{ active: btn.isActive?.() }"
+          :title="btn.title"
+          @click="handleClick(btn)"
+        >
+          <span class="material-symbols-outlined">{{ btn.icon }}</span>
+        </button>
+      </div>
+
+      <div class="tb-sep"></div>
+
       <!-- 表格操作(仅在光标处于表格内时显示):单个下拉入口,避免挤工具栏 -->
       <div v-if="isInTable" ref="tableMenuWrap" class="tb-block-type-wrap" :class="{ open: tableMenuOpen }">
         <button
@@ -757,18 +890,20 @@ function handleClick(btn: Btn) {
                 <span class="material-symbols-outlined chev" style="font-size:14px;margin-left:auto">expand_more</span>
               </button>
               <div v-if="cellColorOpen" class="tb-cell-color-popover">
-                <button
-                  v-for="c in CELL_COLORS"
-                  :key="c.value || 'none'"
-                  type="button"
-                  class="tb-cell-color-swatch"
-                  :class="{ active: currentCellBg() === c.value }"
-                  :title="c.name"
-                  @mousedown.prevent="applyCellColor(c.value)"
-                >
-                  <span v-if="c.value" class="tb-cell-color-dot" :style="{ background: c.value }"></span>
-                  <span v-else class="material-symbols-outlined tb-cell-color-none">format_color_reset</span>
-                </button>
+                <div class="tb-cell-color-grid">
+                  <button
+                    v-for="c in CELL_COLORS"
+                    :key="c.value || 'none'"
+                    type="button"
+                    class="tb-cell-color-swatch"
+                    :class="{ active: currentCellBg() === c.value }"
+                    :title="c.name"
+                    @mousedown.prevent="applyCellColor(c.value)"
+                  >
+                    <span v-if="c.value" class="tb-cell-color-dot" :style="{ background: c.value }"></span>
+                    <span v-else class="material-symbols-outlined tb-cell-color-none">format_color_reset</span>
+                  </button>
+                </div>
                 <div class="tb-block-type-sep" style="margin: 4px 2px"></div>
                 <button
                   class="tb-block-type-opt danger"
@@ -810,6 +945,26 @@ function handleClick(btn: Btn) {
         </button>
       </div>
 
+      <div class="tb-sep"></div>
+
+      <!-- 表情(独立 popover) -->
+      <div ref="emojiWrap" class="tb-emoji-wrap" :class="{ open: emojiOpen }">
+        <button
+          type="button"
+          class="tb-btn"
+          :class="{ active: emojiOpen }"
+          title="插入表情"
+          aria-haspopup="menu"
+          :aria-expanded="emojiOpen"
+          @click="toggleEmoji"
+        >
+          <span class="material-symbols-outlined">add_reaction</span>
+        </button>
+        <div v-if="emojiOpen" class="tb-emoji-popover">
+          <EmojiPicker :editor="editor" @close="closeEmoji" />
+        </div>
+      </div>
+
       <div v-if="currentCalloutVariant" class="tb-sep"></div>
 
       <!-- 提示框变体(仅在光标处于 callout 内时显示) -->
@@ -844,16 +999,6 @@ function handleClick(btn: Btn) {
         </div>
       </div>
 
-      <div class="tb-spacer"></div>
-
-      <!-- 右侧操作(对齐设计里的"关闭 / 发布") -->
-      <button class="btn ghost tb-action" type="button" @click="emit('close')">
-        关闭
-      </button>
-      <button class="btn primary tb-action" type="button" @click="emit('publish')">
-        <span class="material-symbols-outlined" style="font-size:18px">publish</span>
-        发布
-      </button>
     </div>
   </div>
 </template>
@@ -932,6 +1077,15 @@ function handleClick(btn: Btn) {
 }
 
 .tb-link-wrap { position: relative; }
+
+/* 表情 popover 容器 */
+.tb-emoji-wrap { position: relative; }
+.tb-emoji-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 110;
+}
 
 /* 颜色按钮 — 底部带一根小色条显示当前颜色 */
 .tb-color-wrap { position: relative; display: inline-flex; gap: 0; }

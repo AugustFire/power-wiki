@@ -33,10 +33,16 @@
     --success-soft:  #E3FCEF;
     --warning:       #FFAB00;
     --warning-soft:  #FFF7E6;
+    --warning-text:  #B86E00;
     --danger:        #FF5630;
     --danger-soft:   #FFEBE6;
     --purple:        #403294;
     --purple-soft:   #EAE6FF;
+
+    /* Code surface — 深色代码块上的文字色 */
+    --code-fg:           #B3BAC5;
+    --code-chrome-fg:    #9CA3AF;
+    --code-chrome-fg-hover: #E5E7EB;
 
     /* Shadows & Radius */
     --shadow-sm: 0 1px 1px rgba(9,30,66,0.13), 0 0 1px rgba(9,30,66,0.13);
@@ -50,9 +56,18 @@
     /* Layout */
     --topbar-h:     56px;
     --sub-h:        48px;
-    --sidebar-w:    240px;
-    --toc-w:        200px;
+    --sidebar-w:    280px;
+    --toc-w:        240px;
     --content-max:  1100px;
+
+    /* Code highlight — 配 --bg-code 深底,Material 暗主题调色板 */
+    --hljs-keyword:  #C792EA;
+    --hljs-string:   #C3E88D;
+    --hljs-number:   #F78C6C;
+    --hljs-comment:  #6B778C;
+    --hljs-function: #82AAFF;
+    --hljs-type:     #FFCB6B;
+    --hljs-tag:      #F07178;
 }
 
 /* 硬约束标记 — 禁止修改或删除 */

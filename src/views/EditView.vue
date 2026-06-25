@@ -34,6 +34,7 @@ const parentPage = computed(() => {
 const isDirty = ref(false)
 const saveState = ref<'idle' | 'saving' | 'saved'>('idle')
 let savedHideTimer: number | null = null
+const wordCount = ref<{ chars: number; words: number }>({ chars: 0, words: 0 })
 
 onMounted(() => {
   if (props.id) {
@@ -69,16 +70,25 @@ function onEditorHTML(html: string) {
   localHTML.value = html
 }
 
+function onEditorWordCount(v: { chars: number; words: number }) {
+  wordCount.value = v
+}
+
 function onEditorReady(ed: AnyEditor) {
   editorRef.value = ed ?? null
 }
 
 function saveDraft() {
   if (!localId.value) return
+  // 直接从 editor 实例读最新内容 — 绕开 RichEditor 800ms 防抖,
+  // 避免「编辑后立即保存」丢掉刚改的内容
+  const ed = editorRef.value
+  const json = ed ? ed.getJSON() : localJSON.value
+  const html = ed ? ed.getHTML() : localHTML.value
   pagesStore.updatePage(localId.value, {
     title: localTitle.value.trim() || '无标题页面',
-    contentJSON: localJSON.value,
-    contentHTML: localHTML.value,
+    contentJSON: json as Record<string, unknown>,
+    contentHTML: html,
   })
   isDirty.value = false
   flashSaved()
@@ -86,10 +96,13 @@ function saveDraft() {
 
 function publish() {
   if (!localId.value) return
+  const ed = editorRef.value
+  const json = ed ? ed.getJSON() : localJSON.value
+  const html = ed ? ed.getHTML() : localHTML.value
   pagesStore.updatePage(localId.value, {
     title: localTitle.value.trim() || '无标题页面',
-    contentJSON: localJSON.value,
-    contentHTML: localHTML.value,
+    contentJSON: json as Record<string, unknown>,
+    contentHTML: html,
   })
   isDirty.value = false
   flashSaved()
@@ -138,14 +151,6 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
-const showToast = ref<string | null>(null)
-let toastTimer: number | null = null
-function toast(msg: string) {
-  showToast.value = msg
-  if (toastTimer) window.clearTimeout(toastTimer)
-  toastTimer = window.setTimeout(() => (showToast.value = null), 1800)
-}
-
 watch(
   () => props.id,
   (newId) => {
@@ -168,10 +173,14 @@ function scheduleAutoSave() {
   if (!localId.value) return
   if (saveTimer) window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
+    // 直接从 editor 读 — 避免 RichEditor 800ms 防抖还没 emit、localJSON 还是上一次的
+    const ed = editorRef.value
+    const json = ed ? ed.getJSON() : localJSON.value
+    const html = ed ? ed.getHTML() : localHTML.value
     pagesStore.updatePage(localId.value!, {
       title: localTitle.value.trim() || '无标题页面',
-      contentJSON: localJSON.value,
-      contentHTML: localHTML.value,
+      contentJSON: json as Record<string, unknown>,
+      contentHTML: html,
     })
     isDirty.value = false
     flashSaved()
@@ -223,6 +232,11 @@ onBeforeUnmount(() => {
           <span class="material-symbols-outlined" style="font-size:14px">cloud_done</span>
           已同步
         </div>
+        <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
+        <button class="btn primary" type="button" @click="publish">
+          <span class="material-symbols-outlined" style="font-size:16px">publish</span>
+          发布
+        </button>
       </div>
     </div>
 
@@ -230,9 +244,9 @@ onBeforeUnmount(() => {
       <Sidebar />
 
       <div class="content">
-        <EditorToolbar :editor="editorRef" @close="closeEditor" @publish="publish" />
-
         <div class="content-inner edit-page">
+          <EditorToolbar :editor="editorRef" @close="closeEditor" @publish="publish" />
+
           <div class="edit-labels">
             <span class="label-chip">
               <span class="material-symbols-outlined" style="font-size:13px">draft</span>
@@ -242,17 +256,6 @@ onBeforeUnmount(() => {
               <span class="material-symbols-outlined" style="font-size:13px">person</span>
               仅我可见
             </span>
-          </div>
-
-          <div class="edit-meta-actions">
-            <button class="meta-btn" @click="toast('封面功能即将上线')">
-              <span class="material-symbols-outlined" style="font-size:18px">add_photo_alternate</span>
-              <span>添加封面</span>
-            </button>
-            <button class="meta-btn" @click="toast('图标功能即将上线')">
-              <span class="material-symbols-outlined" style="font-size:18px">add_reaction</span>
-              <span>添加图标</span>
-            </button>
           </div>
 
           <input
@@ -274,6 +277,7 @@ onBeforeUnmount(() => {
             :model-value="localJSON"
             @update:model-value="onEditorJSON"
             @update:html="onEditorHTML"
+            @word-count="onEditorWordCount"
             @ready="onEditorReady"
           />
 
@@ -281,25 +285,19 @@ onBeforeUnmount(() => {
             <div class="footer-meta">
               <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-3)">info</span>
               <span>所有编辑自动保存到浏览器本地存储</span>
+              <span class="footer-sep">·</span>
+              <span class="word-count">{{ wordCount.words }} 字 · {{ wordCount.chars }} 字符</span>
             </div>
             <div class="spacer"></div>
-            <button class="btn ghost" @click="closeEditor">关闭</button>
-            <button class="btn" @click="saveDraft">
+            <button class="btn ghost" @click="saveDraft">
               <span class="material-symbols-outlined" style="font-size:18px">save</span>
               保存草稿
-            </button>
-            <button class="btn primary" @click="publish">
-              <span class="material-symbols-outlined" style="font-size:18px">publish</span>
-              发布
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <transition name="fade">
-      <div v-if="showToast" class="toast">{{ showToast }}</div>
-    </transition>
   </div>
 </template>
 
@@ -342,5 +340,14 @@ onBeforeUnmount(() => {
   gap: 6px;
   font-size: 12px;
   color: var(--text-3);
+}
+.edit-footer .footer-sep {
+  color: var(--border);
+  user-select: none;
+}
+.edit-footer .word-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
 }
 </style>

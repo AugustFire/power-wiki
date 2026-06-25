@@ -33,15 +33,6 @@ function closeSearch() {
         <kbd class="gs-kbd">/</kbd>
       </button>
       <div class="topbar-right">
-        <button class="icon-btn" title="通知 (即将上线)" disabled>
-          <span class="material-symbols-outlined">notifications</span>
-        </button>
-        <button class="icon-btn" title="帮助 (即将上线)" disabled>
-          <span class="material-symbols-outlined">help</span>
-        </button>
-        <button class="icon-btn" title="更多 (即将上线)" disabled>
-          <span class="material-symbols-outlined">more_horiz</span>
-        </button>
         <div class="me-av">
           <UserAvatar :size="28" />
         </div>

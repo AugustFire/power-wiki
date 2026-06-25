@@ -12,6 +12,7 @@ import Link from '@tiptap/extension-link'
 import Color from '@tiptap/extension-color'
 import Highlight from '@tiptap/extension-highlight'
 import TextStyle from '@tiptap/extension-text-style'
+import TextAlign from '@tiptap/extension-text-align'
 import { common, createLowlight } from 'lowlight'
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -86,10 +87,25 @@ const extensions = [
   TableCell.extend({
     // 给 td 加 backgroundColor / textAlign / verticalAlign 三个属性,
     // 让 setCellAttribute 命令能改背景、对齐。Tiptap 通过 style 序列化。
+    // 同时把 colwidth 写出到 HTML,让编辑时的列宽在发布/读取后保留
+    // (Tiptap 自带的 colwidth 只有 parseHTML、没有 renderHTML,导致重设的列宽
+    //  保存到 contentHTML 后丢失,read 视图总是回到默认 min-width)
     addAttributes() {
       return {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...(this.parent?.() as any),
+        colwidth: {
+          default: null,
+          parseHTML: (el: HTMLElement) => {
+            const attr = el.getAttribute('colwidth') || el.getAttribute('data-colwidth')
+            return attr ? attr.split(',').map((w) => parseInt(w, 10)) : null
+          },
+          renderHTML: (attrs: Record<string, unknown>) => {
+            const w = attrs.colwidth as number[] | null | undefined
+            if (!w || w.length === 0) return {}
+            return { colwidth: w.join(','), 'data-colwidth': w.join(',') }
+          },
+        },
         backgroundColor: {
           default: null,
           parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
@@ -118,11 +134,23 @@ const extensions = [
     },
   }),
   TableHeader.extend({
-    // 表头同样支持上述属性
+    // 表头同样支持上述属性 + colwidth
     addAttributes() {
       return {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...(this.parent?.() as any),
+        colwidth: {
+          default: null,
+          parseHTML: (el: HTMLElement) => {
+            const attr = el.getAttribute('colwidth') || el.getAttribute('data-colwidth')
+            return attr ? attr.split(',').map((w) => parseInt(w, 10)) : null
+          },
+          renderHTML: (attrs: Record<string, unknown>) => {
+            const w = attrs.colwidth as number[] | null | undefined
+            if (!w || w.length === 0) return {}
+            return { colwidth: w.join(','), 'data-colwidth': w.join(',') }
+          },
+        },
         backgroundColor: {
           default: null,
           parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
@@ -191,6 +219,12 @@ const extensions = [
   }),
   // textStyle 提供 inline 样式支持(Color 扩展默认挂在 textStyle 上)
   TextStyle,
+  // 文字对齐:作用于段落 + 标题。表格单元格用 setCellAttribute('textAlign', ...),
+  // 不需要这个扩展。
+  TextAlign.configure({
+    types: ['heading', 'paragraph'],
+    alignments: ['left', 'center', 'right'],
+  }),
   // 提示框:4 种 variant(信息/成功/警告/危险),支持 wrapIn / toggle / 改 variant
   Callout,
   // 折叠块:details/summary 容器,点击 summary 切换 open/close

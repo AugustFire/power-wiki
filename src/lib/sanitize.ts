@@ -15,7 +15,7 @@ const ALLOWED_TAGS = [
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'ul', 'ol', 'li',
   'blockquote', 'pre', 'code',
-  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'colgroup', 'col',
   'img',
   // 表单 / 任务列表
   'input', 'label',
@@ -36,6 +36,7 @@ const ALLOWED_ATTR = [
   'data-color', // @tiptap/extension-highlight 多色模式用 data-color 标记
   'data-page-id', // 页面引用扩展(PageRef):链接到其他页
   'colspan', 'rowspan',
+  'colwidth', 'data-colwidth', // 表格列宽(prosemirror-tables / 我们的扩展)
   'id',
   'open', // <details open> 折叠块默认展开标记
 ]
@@ -60,7 +61,7 @@ function getPurifier(): typeof DOMPurify {
   return purifyInstance
 }
 
-// 清洗 style:只允许颜色 / 对齐相关属性,挡掉 position/font-size 等滥用
+// 清洗 style:只允许颜色 / 对齐 / 表格宽度相关属性,挡掉 position/font-size 等滥用
 function sanitizeStyle(style: string): string {
   if (!style) return ''
   const decls = style.split(';')
@@ -88,6 +89,15 @@ function sanitizeStyle(style: string): string {
     }
     if (prop === 'vertical-align') {
       if (!/^(top|middle|bottom|baseline)$/i.test(val)) continue
+      allowed.push(`${prop}: ${val}`)
+      continue
+    }
+    // 表格宽度属性(只接受像素/百分比/auto)
+    if (prop === 'width' || prop === 'min-width' || prop === 'max-width') {
+      // 挡掉 url() / expression() / javascript:
+      if (/url\s*\(|expression\s*\(|javascript:/i.test(val)) continue
+      // 只接受 px / % / auto,挡掉 calc() / vh / vw 等滥用
+      if (!/^-?\d+(\.\d+)?(px|%)?$|^auto$/i.test(val)) continue
       allowed.push(`${prop}: ${val}`)
       continue
     }

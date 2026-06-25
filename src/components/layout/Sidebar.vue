@@ -28,39 +28,12 @@ function createRoot() {
         <div class="space-name">我的知识库</div>
         <div class="space-meta">{{ totalPages }} 个页面</div>
       </div>
-      <button class="icon-btn space-settings" title="空间设置(即将上线)">
-        <span class="material-symbols-outlined" style="font-size:18px">settings</span>
-      </button>
     </div>
 
     <div class="quick-nav">
       <a class="quick-nav-item" href="#/">
         <span class="material-symbols-outlined">home</span>
         <span>首页</span>
-      </a>
-      <a
-        class="quick-nav-item"
-        href="#/"
-        :class="{ disabled: true }"
-        title="即将上线"
-        aria-disabled="true"
-        @click.prevent
-      >
-        <span class="material-symbols-outlined">star</span>
-        <span>已加星标</span>
-        <span class="coming-soon">即将上线</span>
-      </a>
-      <a
-        class="quick-nav-item"
-        href="#/"
-        :class="{ disabled: true }"
-        title="即将上线"
-        aria-disabled="true"
-        @click.prevent
-      >
-        <span class="material-symbols-outlined">edit_note</span>
-        <span>我的草稿</span>
-        <span class="coming-soon">即将上线</span>
       </a>
     </div>
 
@@ -102,20 +75,6 @@ function createRoot() {
 </template>
 
 <style scoped>
-.space-card { position: relative; }
-.space-settings {
-  width: 24px; height: 24px;
-  border-radius: var(--radius);
-  opacity: 0;
-  transition: opacity 0.15s;
-  flex-shrink: 0;
-}
-.space-card:hover .space-settings { opacity: 1; }
-.space-settings:hover {
-  background: var(--bg-subtle);
-  color: var(--text-1);
-}
-
 .quick-nav {
   display: flex;
   flex-direction: column;
@@ -140,24 +99,11 @@ function createRoot() {
   color: var(--text-1);
   text-decoration: none;
 }
-.quick-nav-item.disabled { color: var(--text-3); cursor: default; }
-.quick-nav-item.disabled:hover { background: transparent; }
 .quick-nav-item .material-symbols-outlined {
   font-size: 18px;
   color: var(--text-3);
 }
 .quick-nav-item:hover .material-symbols-outlined { color: var(--text-1); }
-.quick-nav-item .coming-soon {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-3);
-  background: var(--bg-subtle);
-  padding: 1px 6px;
-  border-radius: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 500;
-}
 
 .section-icon {
   font-size: 14px !important;

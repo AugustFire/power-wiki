@@ -66,6 +66,14 @@ const items: SlashItem[] = [
     run: (e) => e.chain().focus().toggleTaskList().run(),
   },
   {
+    id: 'table',
+    label: '表格',
+    description: '3×3 网格,首行表头',
+    icon: 'table',
+    run: (e) =>
+      e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+  },
+  {
     id: 'code',
     label: '代码块',
     description: '等宽字体块',

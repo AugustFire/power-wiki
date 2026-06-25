@@ -38,7 +38,7 @@ Vue 3(`<script setup>`)+ TypeScript + Vite 6 + Vue Router 4(hash 模式)+ Pinia(
 
 **编辑器流水线** — `src/components/editor/RichEditor.vue` 用 `useEditor` 挂载扩展(来自 `src/editor/extensions.ts`),防抖 800ms 把 `getJSON()` + `getHTML()` emit 给父组件(`EditView.vue`)。`EditView.vue` 持有本地 title/JSON/HTML 引用、`isDirty`、`saveState`;`onMounted` 时若无 `id` 则新建页面,然后 `router.replace` 到 `/p/:id/edit`。"已保存" 提示通过定时器自动隐藏。
 
-**Tiptap 扩展** — `src/editor/extensions.ts` 配置 StarterKit,关闭 `heading`、`codeBlock`、`enableInputRules`、`enablePasteRules`(无 Markdown 输入/粘贴规则)。自定义扩展:`HeadingAnchor`(替换 heading 节点的 NodeView 以渲染锚点 — `src/editor/headingAnchor.ts` + `src/components/editor/HeadingView.vue`)、`CodeBlockView`(高亮代码块的 NodeView)。`NoKeyboardShortcuts` 是一个 ProseMirror 插件(`priority: 1000`),`handleKeyDown` 吞掉所有 `Mod-…` 组合键(详见硬约束)。
+**Tiptap 扩展** — `src/editor/extensions.ts` 配置 StarterKit,关闭 `heading`、`codeBlock`(用 `HeadingAnchor` / `CodeBlockLowlight` 替换)。Markdown 输入/粘贴规则默认开启(`## ` → h2、`**bold**` → bold、`- ` → ul 等);Tiptap 通过 `view.composing` 字段自动跳过 IME 期间,中文打字不会被 inputRules 误判。自定义扩展:`HeadingAnchor`(替换 heading 节点的 NodeView 渲染锚点 — `src/editor/headingAnchor.ts` + `src/components/editor/HeadingView.vue`)、`CodeBlockView`(高亮代码块的 NodeView)、`Callout`(`src/editor/calloutExtension.ts`,4 种 variant 提示框)、`Toggle`(`src/editor/toggleExtension.ts`,details/summary 折叠块)、`PageRef`(`src/editor/pageRefExtension.ts`,Notion 风格页面引用卡片)。`BlockBrowserSave` 是一个 ProseMirror 插件(`priority: 1000`),仅拦截 Cmd/Ctrl+S 防浏览器「保存网页」对话框;其余格式快捷键(Cmd+B/I/U/Z/Y、Alt+1/2/3 等)放行给 Tiptap 默认 keymap。
 
 **阅读视图** — `src/views/ReadView.vue` 通过 `v-html`(在 `src/lib/sanitize.ts` 中预先 sanitize)渲染 `contentHTML`。`TocPanel.vue` 用 `IntersectionObserver` 做 scroll-spy,点击目录项滚动到锚点;锚点由 `src/lib/headingAnchors.ts` 在 `v-html` 渲染后注入(因为 `v-html` 不在 ProseMirror 管辖范围)。
 
@@ -53,8 +53,7 @@ Vue 3(`<script setup>`)+ TypeScript + Vite 6 + Vue Router 4(hash 模式)+ Pinia(
 - **不要暗色主题。** 不写 `prefers-color-scheme`、不做主题切换、不加 dark token 覆盖。
 - **不要移动端适配。** 不写 `@media` 断点。`index.html` 的 viewport 锁死 `1280`,全局最小宽度 1280px。仅桌面端。
 - **不要图片功能。** 不接 Tiptap Image 扩展、不做 URL 粘贴、不做文件上传。工具栏和 slash 菜单里都不能出现图片项。
-- **不要键盘快捷键。**
-- **不要键盘快捷键。** `extensions.ts` 的 `NoKeyboardShortcuts` 插件和 `RichEditor.vue` 的 `editorProps.handleKeyDown` 都会吞掉 `Mod-b/i/u/e/z/y/s/a` 以及 `Mod-Shift` 和 `Mod-Alt` 组合键。工具栏按钮的 `title` 属性仍显示 "Ctrl+B" 等作为视觉提示 — 这是有意的。StarterKit 的 input/paste 规则也是关闭的。
+- **键盘快捷键放开。** Tiptap StarterKit 默认 keymap 全开(格式、撤销重做、列表、引用、代码块等)。仅 Cmd/Ctrl+S 拦截以防浏览器「保存网页」对话框。
 
 ## 约定
 

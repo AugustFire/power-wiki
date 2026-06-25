@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 
 // eslint-disable-next-line @typescript-eslint/no-explicitany
 type AnyEditor = any
 
 const props = defineProps<{
-  node: { attrs: { language?: string | null } }
+  node: { attrs: { language?: string | null }; textContent: string }
   editor: AnyEditor
   getPos: () => number | undefined
   updateAttributes: (attrs: Record<string, unknown>) => void
@@ -82,6 +82,15 @@ function onDocMousedown(e: MouseEvent) {
 
 onMounted(() => document.addEventListener('mousedown', onDocMousedown))
 onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
+
+// ─── 行号 ───────────────────────────────────────────────
+// Tiptap 的 node prop 是响应式的(每次内容变化整个 NodeView 重渲染),
+// 模板里访问 props.node.textContent 即可拿到最新行数。
+const lineCount = computed(() => {
+  const text = props.node?.textContent ?? ''
+  if (text === '') return 1
+  return text.split('\n').length
+})
 </script>
 
 <template>
@@ -128,7 +137,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
         <span>{{ copied ? '已复制' : '复制' }}</span>
       </button>
     </div>
-    <pre><NodeViewContent as="code" :class="node.attrs.language ? `language-${node.attrs.language}` : null" /></pre>
+    <div class="code-block-body">
+      <div class="code-block-gutter" aria-hidden="true">
+        <div v-for="i in lineCount" :key="i" class="cb-line-num">{{ i }}</div>
+      </div>
+      <pre><NodeViewContent as="code" :class="node.attrs.language ? `language-${node.attrs.language}` : null" /></pre>
+    </div>
   </NodeViewWrapper>
 </template>
 
@@ -136,7 +150,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
 .code-block {
   margin: 16px 0;
   border-radius: var(--radius);
-  overflow: hidden;
   background: var(--bg-code);
   border: 1px solid var(--border);
 }
@@ -148,6 +161,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   user-select: none;
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 /* 语言下拉触发按钮 */
@@ -243,7 +257,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
 }
 .code-block :deep(pre) {
   margin: 0;
-  padding: 16px;
+  padding: 16px 16px 16px 0;
   background: transparent;
   color: #B3BAC5;
   overflow-x: auto;
@@ -251,10 +265,36 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
   font-size: 13px;
   line-height: 1.6;
   border-radius: 0;
+  flex: 1;
+  min-width: 0;
 }
 .code-block :deep(pre code) {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+/* 行号 gutter */
+.code-block-body {
+  display: flex;
+  align-items: stretch;
+}
+.code-block-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 8px 16px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4B5568;
+  user-select: none;
+  flex-shrink: 0;
+  min-width: 32px;
+}
+.cb-line-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 </style>

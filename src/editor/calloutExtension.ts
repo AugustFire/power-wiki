@@ -2,18 +2,21 @@
  * Callout 节点扩展
  *
  * 4 种状态:info / success / warning / danger
- * - 渲染结构: <div class="callout {variant}"><span class="icon">{iconChar}</span><div>{children}</div></div>
- * - 跟种子页 HTML 结构一致(.callout flex 布局:icon + content body)
- * - 种子页里的 <div class="callout-title">x</div> 解析时会被忽略(div 不在 schema),
- *   编辑保存后变成普通 paragraph;read 视图里少一个 "标题" 视觉,但内容不丢
+ * - 编辑器内:用 CalloutView (NodeView) 渲染,icon 由 Vue 控制,body 用 NodeViewContent
+ * - 读视图 / 保存 HTML:renderHTML 输出 <div.callout><span.icon>name</span><div.callout-body>...
+ *   其中 icon span 文本是 material-symbols 字体 ligature
+ * - parseHTML 用 contentElement 只取 callout-body 的 children 作为 content,
+ *   避免 icon span 里的 "warning" 文本被包成段落塞进 callout body
  *
  * 命令:
- *   - setCallout(variant): 用 variant 包裹当前块(对 paragraph 来说变成 wrapIn)
+ *   - setCallout(variant): 用 variant 包裹当前块
  *   - toggleCallout(variant): 已是 callout 则切回 paragraph,否则 wrapIn
  *   - setCalloutVariant(variant): 改当前 callout 的 variant
  *   - unsetCallout: 把 callout 内容提到上层(拆掉 callout 容器,保留内部 children)
  */
 import { Node, mergeAttributes } from '@tiptap/core'
+import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import CalloutView from '@/components/editor/CalloutView.vue'
 
 export type CalloutVariant = 'info' | 'success' | 'warning' | 'danger'
 
@@ -63,7 +66,35 @@ export const Callout = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'div.callout' }]
+    return [
+      {
+        tag: 'div.callout',
+        // 只把 callout-body 的 children 解析为 content,
+        // 跳过外层的 <span class="icon">warning</span>(material-symbols ligature 文本)
+        // ProseMirror ParseRule 的字段名是 contentElement(支持 string / HTMLElement / function)
+        contentElement: (el: HTMLElement) => {
+          const withClass = el.querySelector<HTMLElement>(':scope > div.callout-body')
+          if (withClass) return withClass
+          // seed 页面用的 <div>(无 class),找含 block 内容的那个子 div
+          const divs = el.querySelectorAll<HTMLElement>(':scope > div')
+          for (const d of divs) {
+            if (
+              d.querySelector(
+                'p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, .callout, .toggle, table',
+              )
+            ) {
+              return d
+            }
+          }
+          return el
+        },
+      },
+    ]
+  },
+
+  addNodeView() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return VueNodeViewRenderer(CalloutView as any)
   },
 
   renderHTML({ HTMLAttributes, node }) {
@@ -117,14 +148,11 @@ export const Callout = Node.create({
               const pos = $from.before(d)
               const nodeSize = n.nodeSize
               if (dispatch) {
-                // 收集 callout 内的所有顶层子块(通常是 paragraph)
                 const children: import('@tiptap/pm/model').Node[] = []
                 n.content.forEach((child) => {
                   children.push(child)
                 })
-                // 删掉 callout 节点
                 tr = tr.delete(pos, pos + nodeSize)
-                // 在同一位置逐个插入子块(它们自动落到 callout 所在层)
                 let insertPos = pos
                 for (const child of children) {
                   tr = tr.insert(insertPos, child)

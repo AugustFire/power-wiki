@@ -17,7 +17,27 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: Record<string, unknown>): void
   (e: 'update:html', html: string): void
   (e: 'ready', editor: AnyEditor): void
+  (e: 'word-count', value: { chars: number; words: number }): void
 }>()
+
+// 字数统计:中文按字符计,英文按词计
+function computeWordCount(html: string): { chars: number; words: number } {
+  // 去掉 HTML 标签和代码块内容(代码不算字数,行业惯例)
+  const noTags = html.replace(/<[^>]+>/g, '')
+  const noCode = noTags.replace(/<pre[\s\S]*?<\/pre>/g, '').replace(/<code[\s\S]*?<\/code>/g, '')
+  // 还原常见转义
+  const text = noCode
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+  const cjk = (text.match(/[一-龥㐀-䶿]/g) || []).length
+  // 英文/数字/拼音词:连续 ASCII 字母或数字
+  const en = (text.match(/[A-Za-z0-9]+/g) || []).length
+  return { chars: text.length, words: cjk + en }
+}
 
 // 防抖:编辑后 800ms 同步到父组件 / store
 let saveTimer: number | null = null
@@ -28,6 +48,7 @@ function scheduleSave(editor: AnyEditor) {
     const html = editor.getHTML()
     emit('update:modelValue', json as Record<string, unknown>)
     emit('update:html', html)
+    emit('word-count', computeWordCount(html))
   }, 800)
 }
 
@@ -71,7 +92,10 @@ watch(
 
 // 暴露 editor 给父组件(toolbar 需要)
 watch(editor, (val) => {
-  if (val) emit('ready', val)
+  if (val) {
+    emit('ready', val)
+    emit('word-count', computeWordCount(val.getHTML()))
+  }
 }, { immediate: true })
 
 // 拖拽手柄(DragHandle)被 tippy 挂到 body,默认常驻显示容易抢眼。
