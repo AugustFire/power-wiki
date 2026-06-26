@@ -1,6 +1,6 @@
 # power-wiki
 
-> **团队知识库 wiki** · Confluence 风格 · Atlassian Atlas 设计系统 · 零后端、零配置、零数据库,跑 `npm run dev` 就能用。
+> **团队知识库 wiki** · Confluence 风格 · Atlassian Atlas 设计系统 · pnpm workspaces monorepo(Vue 3 前端 + Hono/Postgres 后端 + 共享 types 包),跑 `pnpm dev` 就能用。
 
 ![编辑器速查页](screenshots/seed_editor_demo.png)
 
@@ -8,8 +8,8 @@
 
 ## ✨ 为什么选 power-wiki
 
-- **3 步跑起来** — `npm install && npm run dev`,打开 `http://localhost:5173` 立刻看到 14 篇种子页面
-- **零后端、零数据库** — 全部数据在浏览器 `localStorage`,刷新不丢、清缓存会丢(导出/导入接口规划中)
+- **3 步跑起来** — `pnpm install && docker compose up -d && pnpm dev`,打开 `http://localhost:5173` 立刻看到 wiki 应用
+- **本地全栈** — `apps/api`(Hono + Drizzle + Postgres)保存页面数据;`apps/web` 通过 Vite proxy 把 `/api/*` 转发到 8787,前端不用感知跨域
 - **Confluence 风格** — 三栏布局(树 / 内容 / 目录),Atlassian Atlas 设计系统,5 种自定义块(callout / toggle / pageRef / dateInline / headingAnchor)
 - **Tiptap 2 内核** — ProseMirror 驱动的富文本编辑,30+ 官方扩展 + 6 个自定义扩展,自动 Markdown 输入规则、键盘快捷键开箱即用
 - **设计令牌统一** — 颜色 / 间距 / 字号 / 阴影全走 CSS 变量,改一处全局联动
@@ -46,21 +46,32 @@
 
 ## 🚀 30 秒上手
 
+需要本机装好 **Node 20.11+**、**pnpm 9+**、**Docker**(给 Postgres 用)。
+
 ```bash
 git clone https://github.com/AugustFire/power-wiki.git
 cd power-wiki
-npm install
-npm run dev
+pnpm install
+cp apps/api/.env.example apps/api/.env   # 第一次需要
+docker compose up -d                     # 拉起 Postgres(127.0.0.1:5432)
+pnpm dev                                 # 同时起 web(5173) + api(8787)
 ```
 
-打开 `http://localhost:5173/`,你会看到一个完整的 wiki 应用,首页是我的知识库,左侧树状目录可以展开看到 6 个根主题。
+打开 `http://localhost:5173/`,前端初始化时会自动写入 14 篇种子页面。
 
 ### 其他命令
 
 ```bash
-npm run build            # 类型检查 + 生产构建(vue-tsc -b && vite build)
-npm run preview          # 预览构建产物
-npx vue-tsc --noEmit -p tsconfig.app.json   # 仅类型检查
+pnpm dev                  # 同时起 web + api(顶层编排)
+pnpm dev:web              # 仅前端
+pnpm dev:api              # 仅后端
+pnpm build                # 递归构建所有 workspace
+pnpm typecheck            # 递归类型检查
+pnpm -F api db:generate   # Drizzle:根据 schema 生成迁移 SQL
+pnpm -F api db:migrate    # Drizzle:应用待执行的迁移
+pnpm -F api db:push       # Drizzle:跳过迁移,直推 schema(开发用)
+docker compose down       # 停止 Postgres(数据保留在 volume 里)
+docker compose down -v    # 停 + 删数据
 ```
 
 ## 🎨 视觉与设计
@@ -74,12 +85,18 @@ npx vue-tsc --noEmit -p tsconfig.app.json   # 仅类型检查
 | 层 | 选型 | 理由 |
 |---|---|---|
 | 框架 | **Vue 3** + `<script setup>` | SFC 适合布局重的 wiki UI,Composition API 复用编辑器逻辑 |
-| 语言 | **TypeScript** | 类型安全,`PageNode` / `TreeNode` 等数据模型完整定义 |
+| 语言 | **TypeScript** | 前后端共享类型,`PageNode` / `TreeNode` 等数据模型完整定义 |
 | 构建 | **Vite 6** | 启动毫秒级,HMR 极快 |
-| 路由 | **Vue Router 4** (hash 模式) | 纯前端、无需服务端 rewrite,GitHub Pages 直接部署 |
-| 状态 | **Pinia** (setup store) | Vue 官方推荐,TS 友好,`watch(pages, …, deep)` 自动持久化 |
-| 编辑器 | **Tiptap 2** (ProseMirror 内核) | 30+ 官方扩展,6 个自定义扩展,Y.js 协作扩展已安装待启用 |
-| 持久化 | **localStorage** | 用户指定「浏览器缓存」,零后端 |
+| 路由 | **Vue Router 4** (hash 模式) | 纯前端、无需服务端 rewrite |
+| 状态 | **Pinia** (setup store) | Vue 官方推荐,TS 友好 |
+| 编辑器 | **Tiptap 2** (ProseMirror 内核) | 30+ 官方扩展,6 个自定义扩展 |
+| 前端持久化 | **localStorage**(过渡) | 暂时保留,Stage 3 后切到 API |
+| 后端 | **Hono** + **@hono/node-server** | 极轻、TS-first、内置 zod 校验 |
+| ORM | **Drizzle ORM** | 纯 TS、零 codegen、SQL 接近原生 |
+| 数据库 | **PostgreSQL 16**(jsonb + 递归 CTE) | Tiptap `contentJSON` 走 jsonb;树形查询靠 recursive CTE |
+| 校验 | **zod**(在 `packages/shared`) | 前后端共享 schema,types 由 zod 推导 |
+| 编排 | **pnpm workspaces** + **concurrently** | 单一 `pnpm dev` 同时起 web + api |
+| 本地数据库 | **docker-compose**(postgres:16-alpine) | 一行 `docker compose up -d` 起来 |
 | XSS 防御 | **DOMPurify** | read view HTML 走白名单,自定义 `data-*` 显式登记 |
 | 图标 | **Material Symbols Outlined** | 与 Atlas 原型一致,字体 ligature |
 | 字体 | Plus Jakarta Sans + PingFang SC + JetBrains Mono | 与 Atlas 原型一致 |
@@ -100,67 +117,71 @@ interface PageNode {
 }
 ```
 
-**localStorage keys:**
+**localStorage keys(Stage 3 后会被 API 替代,目前仍作为离线降级保留):**
 - `power-wiki:pages` → `PageNode[]`
 - `power-wiki:tree-expanded` → `string[]`(展开的节点 ID)
 - `power-wiki:user` → `{ id: 'me', name: '我', color: '#FF5630' }`
 
+**API(Stage 2 接入,apps/api 监听 :8787,前端通过 Vite proxy 走 :5173/api):**
+- `GET    /api/pages` → `PageNode[]`
+- `GET    /api/pages/:id` → `PageNode`
+- `POST   /api/pages` body `{ parentId?, title?, icon? }` → `PageNode`(201)
+- `PATCH  /api/pages/:id` body `{ title?, contentJSON?, contentHTML?, icon?, starred? }` → `PageNode`
+- `PATCH  /api/pages/:id/move` body `{ newParentId, newOrder? }` → `PageNode`(409 if cycle)
+- `DELETE /api/pages/:id` → 204(级联删除后代)
+
 ## 📁 目录结构
+
+pnpm workspaces monorepo:
 
 ```
 power-wiki/
+├── apps/
+│   ├── web/                       # 前端(Vue 3 + Vite 6)
+│   │   ├── package.json           # @power-wiki/web
+│   │   ├── src/                   # 全部前端代码(原根目录 src/ 搬过来)
+│   │   │   ├── main.ts
+│   │   │   ├── App.vue
+│   │   │   ├── router/
+│   │   │   ├── stores/            # pages.ts(CRUD + 树) / ui.ts
+│   │   │   ├── views/             # HomeView / ReadView / EditView / NotFoundView
+│   │   │   ├── components/        # layout/ + editor/(NodeView + Popover)
+│   │   │   ├── editor/            # Tiptap 扩展集合
+│   │   │   ├── lib/               # id / storage / sanitize / headingAnchors / ...
+│   │   │   ├── styles/            # tokens.css / base.css / components.css
+│   │   │   └── types/
+│   │   ├── public/                # seed-demo.html 等静态资源
+│   │   ├── index.html             # SPA 入口 + 字体 CDN
+│   │   ├── vite.config.ts
+│   │   ├── tsconfig.json          # 项目引用
+│   │   ├── tsconfig.app.json      # 应用代码编译选项
+│   │   └── tsconfig.node.json     # vite.config 编译选项
+│   └── api/                       # 后端(Stage 2 接入:Node + Hono + Drizzle + Postgres)
+│       └── src/                   # 占位,见 plan
+├── packages/
+│   └── shared/                    # 前后端共享 types + zod schemas(Stage 1 接入)
+│       └── src/                   # 占位
 ├── design/                        # 设计原型(只读参考)
 │   ├── wiki-edit.html
 │   └── wiki-read.html
-├── src/
-│   ├── main.ts                    # createApp + Pinia + Router + init
-│   ├── App.vue                    # 顶层布局 + 页面切换 transition
-│   ├── router/index.ts            # 4 条 hash 路由
-│   ├── stores/
-│   │   ├── pages.ts               # PageNode CRUD + 树构建 + 种子页面
-│   │   └── ui.ts                  # 侧边栏状态 / 菜单 / 重命名
-│   ├── views/
-│   │   ├── HomeView.vue           # 首页(空状态 / 卡片索引)
-│   │   ├── ReadView.vue           # 阅读页
-│   │   ├── EditView.vue           # 编辑页
-│   │   └── NotFoundView.vue       # 404
-│   ├── components/
-│   │   ├── layout/                # Sidebar / PageTree / TocPanel
-│   │   └── editor/                # RichEditor + 工具栏 + 5 个 NodeView + 5 个 Popover
-│   ├── editor/
-│   │   ├── extensions.ts          # Tiptap 扩展集合
-│   │   ├── calloutExtension.ts
-│   │   ├── toggleExtension.ts
-│   │   ├── pageRefExtension.ts
-│   │   ├── dateInlineExtension.ts
-│   │   ├── headingAnchor.ts
-│   │   └── htmlToJson.ts
-│   ├── lib/
-│   │   ├── id.ts                  # nanoid(10)
-│   │   ├── storage.ts             # localStorage 封装
-│   │   ├── sanitize.ts            # DOMPurify 白名单
-│   │   ├── headingAnchors.ts
-│   │   └── textMetrics.ts
-│   ├── styles/
-│   │   ├── tokens.css             # 设计 token(从原型复制)
-│   │   ├── base.css               # reset
-│   │   └── components.css         # 组件类
-│   └── types/page.ts              # PageNode / TreeNode
 ├── scripts/                       # Playwright 验收脚本(本地用,已 gitignore)
 ├── screenshots/                   # 验收截图(已 gitignore)
-├── package.json
-├── vite.config.ts
-├── tsconfig.app.json
-└── index.html                     # SPA 入口 + 字体 CDN
+├── pnpm-workspace.yaml            # 声明 apps/* + packages/*
+├── tsconfig.base.json             # 跨 workspace 共享 TS 选项
+├── tsconfig.json                  # 根项目引用
+├── package.json                   # 顶层:workspaces + dev/build/typecheck 编排
+└── .env.example                   # 顶层环境变量样例(后端阶段启用)
 ```
+
+> 当前阶段(Stage 0):只搬了目录,后端业务逻辑待 Stage 2 接入。`@` alias 在 `apps/web/tsconfig.app.json` + `vite.config.ts` 中继续指向 `apps/web/src`,源码层 0 改动。
 
 ## 🧪 验收
 
 每个改动阶段都有一份 `scripts/verify_*.py` 自动验收脚本,改动完成后跑一遍就能验证视觉 / 行为基线。
 
 ```bash
-# 启动 dev server
-npm run dev
+# 启动 dev server(在 apps/web 起的 vite,5173)
+pnpm dev
 
 # 在另一个终端运行验收
 python scripts/verify_date_inline.py   # 单功能验收
@@ -194,6 +215,7 @@ playwright install chromium
 - [ ] **协作模式** — Y.js + WebSocket provider,多人同时编辑
 - [ ] **IndexedDB 迁移** — 数据量过 5MB 时自动迁移,扩展容量上限
 - [ ] **完整中文化** — 当前 zh-CN,需要 i18n 框架时引入 vue-i18n
+- [ ] **后端集成** — `apps/api`(Hono + Drizzle + Postgres)+ `packages/shared` 共享 types,`apps/web` 的 `src/lib/storage.ts` 替换为 API client(详见 plan)
 
 ## 📐 设计 Token
 

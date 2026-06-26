@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1782446550040,
+      "tag": "0000_productive_scalphunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782457739638,
+      "tag": "0001_adorable_otto_octavius",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782470000000,
+      "tag": "0002_drop_fk_constraints",
+      "breakpoints": true
+    }
+  ]
+}

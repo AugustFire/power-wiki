@@ -1,0 +1,32 @@
+{
+  "name": "@power-wiki/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file=.env dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "seed": "tsx src/seed/run.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.6",
+    "@node-rs/argon2": "^2.0.2",
+    "@power-wiki/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.27",
+    "nanoid": "^5.0.9",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4",
+    "typescript": "~5.6.3"
+  }
+}

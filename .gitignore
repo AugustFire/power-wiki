@@ -40,3 +40,23 @@ __pycache__/
 
 # Playwright 验收脚本(本地用,不进版本控制;已提交的忽略)
 scripts/
+
+# Env files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Workspace build artifacts
+apps/*/dist
+apps/*/.vite
+apps/*/node_modules
+packages/*/dist
+packages/*/node_modules
+
+# tsc --build incremental metadata (regenerated on every build)
+*.tsbuildinfo
+
+# Drizzle
+apps/api/drizzle
