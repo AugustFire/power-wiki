@@ -16,12 +16,14 @@ import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
+import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import type { User, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
 const router = useRouter()
 const uiStore = useUiStore()
+const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
 const groupId = computed(() => String(route.params.id ?? ''))
@@ -162,6 +164,9 @@ async function onDelete() {
   if (!ok) return
   try {
     await api.admin.groups.delete(g.id)
+    // Group delete cascades to spaceGroupAccess; affected users' visible
+    // space set may have shrunk — re-fetch pages so the sidebar matches.
+    void pagesStore.refresh()
     void router.push('/manager/groups')
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '删除失败')
@@ -194,6 +199,12 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   </div>
 
   <div v-else-if="group" class="group-edit">
+    <nav class="ge-breadcrumb" aria-label="面包屑导航">
+      <RouterLink to="/manager/groups">用户组</RouterLink>
+      <span class="ge-bc-sep" aria-hidden="true">/</span>
+      <span class="ge-bc-current">{{ group.name }}</span>
+    </nav>
+
     <header class="ge-header">
       <div class="ge-header-text">
         <h1 class="ge-title">{{ group.name }}</h1>
@@ -296,22 +307,39 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 <style scoped>
 .group-edit { max-width: 1200px; }
 
+/* ─── Breadcrumb ─── */
+.ge-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+.ge-breadcrumb a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.ge-breadcrumb a:hover { text-decoration: underline; }
+.ge-bc-sep { color: var(--text-3); }
+.ge-bc-current { color: var(--text-2); font-weight: 500; }
+
 .ge-loading,
 .ge-error {
   padding: 48px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.ge-error { color: var(--danger, #FF5630); }
+.ge-error { color: var(--danger); }
 .ge-error .btn { margin-top: 12px; display: inline-flex; }
 
 .ge-header { margin-bottom: 20px; }
-.ge-title { font-size: 22px; font-weight: 700; color: var(--text-1, #172B4D); margin: 0; }
-.ge-sub { font-size: 13px; color: var(--text-3, #6B778C); margin: 4px 0 0 0; }
+.ge-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
+.ge-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 0; }
 
 .ge-grid {
   display: grid;
@@ -320,41 +348,41 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   align-items: start;
 }
 .ge-card {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
 }
 .ge-card-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0 0 16px 0;
 }
 .ge-fields { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:focus { border-color: var(--accent); }
 .ge-card-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
 .ge-danger-zone {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px solid var(--border, #DFE1E6);
+  border-top: 1px solid var(--border);
 }
-.ge-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3, #6B778C); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
+.ge-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
 
 /* ─── Member list ─── */
 .ge-search-row {
@@ -367,7 +395,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   top: 50%;
   transform: translateY(-50%);
   font-size: 18px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   pointer-events: none;
 }
 .ge-search {
@@ -376,22 +404,22 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   padding: 0 12px 0 36px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg-canvas, #F4F5F7);
+  color: var(--text-1);
+  background: var(--bg-canvas);
   border: 2px solid transparent;
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .ge-search:focus {
-  background: var(--bg, #FFFFFF);
-  border-color: var(--accent, #0052CC);
+  background: var(--bg);
+  border-color: var(--accent);
 }
 
 .ge-empty-members {
   padding: 24px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 13px;
 }
 
@@ -401,7 +429,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   padding: 0;
   max-height: 480px;
   overflow-y: auto;
-  border: 1px solid var(--border, #DFE1E6);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
 .member-row {
@@ -409,12 +437,12 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #DFE1E6);
-  background: var(--bg, #FFFFFF);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .member-row:last-child { border-bottom: 0; }
-.member-row:hover { background: var(--bg-canvas, #F4F5F7); }
+.member-row:hover { background: var(--bg-canvas); }
 .member-row.is-pending { opacity: 0.6; }
 .member-row.is-disabled { opacity: 0.7; }
 
@@ -422,14 +450,14 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 .member-name {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .member-email {
   font-size: 12px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -443,9 +471,9 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   border-radius: var(--radius-pill, 999px);
   white-space: nowrap;
 }
-.status-pill.good { background: var(--success-soft, #E3FCEF); color: var(--success, #36B37E); }
-.status-pill.warn { background: var(--warning-soft, #FFF7E6); color: var(--warning-text, #B86E00); }
-.status-pill.bad { background: var(--danger-soft, #FFEBE6); color: var(--danger, #FF5630); }
+.status-pill.good { background: var(--success-soft); color: var(--success); }
+.status-pill.warn { background: var(--warning-soft); color: var(--warning-text); }
+.status-pill.bad { background: var(--danger-soft); color: var(--danger); }
 
 .member-toggle {
   background: transparent;
@@ -453,15 +481,15 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   cursor: pointer;
   padding: 4px;
   border-radius: 50%;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: color var(--duration-fast) var(--ease-out);
 }
-.member-toggle:hover:not(:disabled) { color: var(--accent, #0052CC); }
+.member-toggle:hover:not(:disabled) { color: var(--accent); }
 .member-toggle:disabled { cursor: wait; }
-.member-toggle.in-group { color: var(--success, #36B37E); }
-.member-toggle.in-group:hover:not(:disabled) { color: var(--danger, #FF5630); }
+.member-toggle.in-group { color: var(--success); }
+.member-toggle.in-group:hover:not(:disabled) { color: var(--danger); }
 .member-toggle .material-symbols-outlined { font-size: 22px; }
 </style>

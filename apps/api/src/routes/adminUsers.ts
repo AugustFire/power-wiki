@@ -49,6 +49,17 @@ adminUsersRouter.get('/', async (c) => {
   return c.json(rows.map((r) => UserSchema.parse(rowToUser(r))))
 })
 
+// ─── GET /api/admin/users/:id ──────────────────────────────────────────────
+// Single user lookup. The list endpoint omits some metadata and the edit
+// view needs the full row. Kept separate from list so we don't ship every
+// field on every page render.
+adminUsersRouter.get('/:id', async (c) => {
+  const id = c.req.param('id')
+  const row = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  return c.json(UserSchema.parse(rowToUser(row)))
+})
+
 // ─── POST /api/admin/users ──────────────────────────────────────────────────
 adminUsersRouter.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}))

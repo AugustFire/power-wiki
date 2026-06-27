@@ -1,18 +1,26 @@
 <script setup lang="ts">
 /**
- * SpaceSwitcher — top of the sidebar.
+ * SpaceSwitcher — lives in the topbar, right after the brand mark.
  *
- *   - Shows the current active space (icon + name + page count).
- *   - Click opens a dropdown listing all visible spaces.
- *   - Picking a space calls `setActiveSpace` and triggers a page-tree reload
- *     so the sidebar reflects the new scope.
+ * Layout reference: design/wiki-read.html — the topbar trigger renders just
+ * the active space name + an expand_more caret. No avatar, no page count in
+ * the trigger — those only show inside the dropdown for each candidate.
  *
  * Behaviour:
- *   - Single space → static chip, no dropdown trigger (no useful action).
- *   - Zero spaces → empty-state hint pointing to /manager (admins only).
+ *   - Single visible space → trigger renders but click is a no-op.
+ *   - Multiple spaces → click opens a 320px dropdown listing every space
+ *     visible to the user, with avatar / name / page count per row.
+ *   - Zero spaces → empty state with admin CTA (links to /manager/spaces).
  *
- * The page count is computed from `pages.value` filtered by space — this is
- * the only place we cross-reference the two stores on render.
+ * Picking a space:
+ *   1. setActiveSpace(id) — flips the activeSpaceId store value (persisted).
+ *   2. pagesStore.refresh() — re-fetches the page tree scoped to the new
+ *      space; server already filters by accessibility, but the local list
+ *      may still hold pages from the previous space.
+ *   3. router.push('/') — always jump to the new space's home, even if the
+ *      user was already there. This guarantees we never strand the user on
+ *      a stale page that doesn't exist in the new space (e.g. reading /p/X
+ *      in space A → switch to space B → X is gone, would 404).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -28,8 +36,6 @@ const router = useRouter()
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
-// `spacesStore.spaces` and `spacesStore.activeSpace` are ComputedRefs. Unwrap
-// here so the template can use them as plain values.
 const spacesList = computed(() => spacesStore.spaces.value)
 const active = computed(() => spacesStore.activeSpace.value)
 const activeId = computed(() => spacesStore.activeSpaceId.value)
@@ -42,26 +48,25 @@ const pageCountBySpace = computed(() => {
   return map
 })
 
-const activePageCount = computed(() =>
-  active.value ? pageCountBySpace.value.get(active.value.id) ?? 0 : 0,
-)
-
 function toggle() {
   if (spacesList.value.length <= 1) return
   open.value = !open.value
 }
 
-function pick(id: string) {
+async function pick(id: string) {
   if (id === activeId.value) {
     open.value = false
     return
   }
   spacesStore.setActiveSpace(id)
   open.value = false
-  // Re-fetch the page tree scoped to the new space — server already filters
-  // by accessibility, but the local list may still hold pages from the previous
-  // space. Simplest: refresh, which triggers the API again.
   void pagesStore.refresh()
+  // 总是跳到新空间的首页 — 否则用户可能停留在旧空间的某个页面(在新空间里
+  // 不存在 → 404)。已在首页时 router.push('/') 是 no-op,reactive 计算
+  // 会用新 activeSpaceId 自动重渲染。
+  if (router.currentRoute.value.path !== '/') {
+    void router.push('/')
+  }
 }
 
 function goManager() {
@@ -100,22 +105,11 @@ onBeforeUnmount(() => {
       :title="spacesList.length > 1 ? '切换空间' : undefined"
       @click="toggle"
     >
-      <span
-        class="ss-avatar"
-        :style="{ background: active.color }"
-        aria-hidden="true"
-      >
-        <span v-if="active.icon" class="material-symbols-outlined ss-icon">{{ active.icon }}</span>
-        <span v-else class="ss-initials">{{ active.name.slice(0, 2) }}</span>
-      </span>
-      <span class="ss-info">
-        <span class="ss-name">{{ active.name }}</span>
-        <span class="ss-meta">{{ activePageCount }} 个页面</span>
-      </span>
+      <span class="ss-name">{{ active.name }}</span>
       <span
         v-if="spacesList.length > 1"
         class="material-symbols-outlined ss-caret"
-      >unfold_more</span>
+      >expand_more</span>
     </button>
 
     <div v-else class="ss-empty">
@@ -143,12 +137,12 @@ onBeforeUnmount(() => {
         @click="pick(s.id)"
       >
         <span
-          class="ss-avatar ss-avatar-sm"
+          class="ss-avatar"
           :style="{ background: s.color }"
           aria-hidden="true"
         >
-          <span v-if="s.icon" class="material-symbols-outlined ss-icon-sm">{{ s.icon }}</span>
-          <span v-else class="ss-initials-sm">{{ s.name.slice(0, 2) }}</span>
+          <span v-if="s.icon" class="material-symbols-outlined ss-avatar-icon">{{ s.icon }}</span>
+          <span v-else class="ss-initials">{{ s.name.slice(0, 2) }}</span>
         </span>
         <span class="ss-menu-info">
           <span class="ss-menu-name">{{ s.name }}</span>
@@ -167,119 +161,84 @@ onBeforeUnmount(() => {
 <style scoped>
 .ss-root {
   position: relative;
-  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
 }
 
 /* ─── Trigger chip ─── */
 .ss-trigger {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 8px;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
   background: transparent;
   border: 0;
   border-radius: var(--radius-md, 4px);
   font-family: inherit;
-  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
   cursor: default;
-  color: inherit;
   transition: background var(--duration-fast, 120ms) var(--ease-out, ease);
 }
 .ss-trigger-clickable { cursor: pointer; }
-.ss-trigger-clickable:hover { background: var(--bg-subtle, #F4F5F7); }
+.ss-trigger-clickable:hover { background: var(--bg-subtle); }
 
-.ss-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius, 3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 700;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-.ss-avatar-sm { width: 28px; height: 28px; font-size: 11px; border-radius: var(--radius, 3px); }
-
-.ss-icon { font-size: 20px !important; }
-.ss-icon-sm { font-size: 16px !important; }
-
-.ss-initials,
-.ss-initials-sm {
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.ss-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 .ss-name {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-1, #172B4D);
-  line-height: 1.2;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1;
 }
-.ss-meta {
-  font-size: 12px;
-  color: var(--text-3, #6B778C);
-  line-height: 1.2;
-}
+
 .ss-caret {
-  font-size: 18px !important;
-  color: var(--text-3, #6B778C);
+  font-size: var(--icon-lg, 18px) !important;
+  color: var(--text-3);
+  line-height: 1;
 }
 
 /* ─── Empty state ─── */
 .ss-empty {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 14px 8px;
-  text-align: center;
-  color: var(--text-3, #6B778C);
+  gap: 8px;
+  padding: 0 8px;
   font-size: 13px;
+  color: var(--text-3);
+  height: 32px;
 }
 .ss-empty-icon {
-  font-size: 28px !important;
-  color: var(--text-3, #6B778C);
+  font-size: var(--icon-xl, 20px) !important;
+  color: var(--text-3);
 }
 .ss-empty-cta {
-  margin-top: 4px;
-  padding: 4px 10px;
-  background: var(--accent-soft, #DEEBFF);
-  color: var(--accent, #0052CC);
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
   border: 0;
-  border-radius: var(--radius, 3px);
+  border-radius: var(--radius-sm, 3px);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
 }
-.ss-empty-cta:hover { background: var(--accent, #0052CC); color: white; }
+.ss-empty-cta:hover { background: var(--accent); color: white; }
 
 /* ─── Dropdown ─── */
 .ss-menu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 0;
-  right: 0;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  width: 320px;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-  box-shadow: var(--shadow-lg, 0 8px 16px -4px rgba(9, 30, 66, 0.16), 0 0 1px rgba(9, 30, 66, 0.16));
+  box-shadow: var(--shadow-lg, 0 16px 48px rgba(9, 30, 66, 0.2));
   padding: 4px;
-  z-index: 50;
-  max-height: 360px;
+  z-index: 200;
+  max-height: 480px;
   overflow-y: auto;
 }
 
@@ -288,18 +247,36 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px;
+  padding: 8px 10px;
   background: transparent;
   border: 0;
-  border-radius: var(--radius, 3px);
+  border-radius: var(--radius-sm, 3px);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
   color: inherit;
 }
-.ss-menu-item:hover { background: var(--bg-subtle, #F4F5F7); }
-.ss-menu-item-active { background: var(--accent-soft, #DEEBFF); }
-.ss-menu-item-active:hover { background: var(--accent-soft, #DEEBFF); }
+.ss-menu-item:hover { background: var(--bg-subtle); }
+.ss-menu-item-active { background: var(--accent-soft); }
+.ss-menu-item-active:hover { background: var(--accent-soft); }
+
+.ss-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm, 3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.ss-avatar-icon { font-size: 16px !important; }
+.ss-initials {
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
 
 .ss-menu-info {
   flex: 1;
@@ -311,18 +288,18 @@ onBeforeUnmount(() => {
 .ss-menu-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ss-menu-item-active .ss-menu-name { color: var(--accent, #0052CC); }
+.ss-menu-item-active .ss-menu-name { color: var(--accent); }
 .ss-menu-meta {
   font-size: 11px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
 }
 .ss-check {
-  font-size: 18px !important;
-  color: var(--accent, #0052CC);
+  font-size: var(--icon-lg, 18px) !important;
+  color: var(--accent);
 }
 </style>

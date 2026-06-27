@@ -64,10 +64,10 @@ withDefaults(
   font-weight: 700;
   line-height: 1;
   /* solid 默认:父级 color 控制,fallback --accent */
-  color: var(--accent, #0052CC);
+  color: var(--accent);
 }
 .brand-logo-light {
-  color: var(--text-invert, #FFFFFF);
+  color: var(--text-invert);
 }
 .bl-mark {
   display: block;

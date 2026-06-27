@@ -25,6 +25,7 @@ import {
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
+  UserGroupSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import type {
@@ -58,7 +59,92 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/* ─── 401 handler ───────────────────────────────────────────────────────
+ * Any non-public endpoint that returns 401 is treated as "your session
+ * expired" and triggers a global handler that clears auth + navigates to
+ * /login. The handler is pluggable so this module doesn't need to know
+ * about stores/router — `main.ts` wires it up at boot.
+ *
+ * Public auth endpoints (sign-in / session / sign-out) may legitimately
+ * return 401 and the caller (authStore.init / LoginView) needs to see that
+ * raw response to branch. Those paths are excluded from auto-handling.
+ */
+type UnauthorizedHandler = () => void | Promise<void>
+let unauthorizedHandler: UnauthorizedHandler = () => {
+  // Fallback before main.ts wires the real handler: hard reload to /login
+  // preserving the current hash route.
+  const target =
+    '/login?redirect=' + encodeURIComponent(window.location.hash || '/')
+  window.location.assign(target)
+}
+let unauthorizedFiring = false
+
+export function setUnauthorizedHandler(fn: UnauthorizedHandler): void {
+  unauthorizedHandler = fn
+}
+
+const PUBLIC_AUTH_PATHS = new Set([
+  '/auth/session',
+  '/auth/sign-in',
+  '/auth/sign-out',
+])
+
+/* ─── GET cache ────────────────────────────────────────────────────────
+ * A 30s in-memory cache for GET responses. Two motivations:
+ *   1. Manager views mount a list + a context panel simultaneously; without
+ *      a shared cache both fire `api.admin.users.list()` and double the load.
+ *   2. Navigating between sibling admin routes reuses the list instead of
+ *      hitting the API again on every mount.
+ *
+ * Mutations call `invalidatePrefix()` after success so stale list/get
+ * responses don't survive a write. Failed requests are auto-evicted so a
+ * 5xx doesn't poison the cache for the full TTL.
+ *
+ * We deliberately do NOT cache pages/ (`api.pages.*`) — pages are mutated
+ * constantly through the editor and the optimistic in-memory store already
+ * de-duplicates. Caching here would only delay the next refresh.
+ */
+const FETCH_CACHE_TTL_MS = 30_000
+interface CacheEntry {
+  ts: number
+  promise: Promise<unknown>
+}
+const fetchCache = new Map<string, CacheEntry>()
+
+function cacheKey(method: string, path: string): string {
+  return `${method} ${path}`
+}
+
+/**
+ * Drop every cached entry whose path component starts with `prefix`.
+ * Use after any mutation that affects the listed resource — the simplest
+ * safe pattern is `invalidatePrefix('/admin/users')` for any users.* call.
+ */
+export function invalidatePrefix(prefix: string): void {
+  const needle = ' ' + prefix
+  for (const key of fetchCache.keys()) {
+    const sep = key.indexOf(' ')
+    if (sep >= 0 && key.indexOf(needle, sep) === sep) {
+      fetchCache.delete(key)
+    }
+  }
+}
+
+/** Drop a single entry by method+path. */
+export function invalidatePath(method: string, path: string): void {
+  fetchCache.delete(cacheKey(method.toUpperCase(), path))
+}
+
+/** Wipe the entire cache — exposed for tests / forced refresh paths. */
+export function clearFetchCache(): void {
+  fetchCache.clear()
+}
+
+/**
+ * Raw HTTP + 401 handling. No caching. Callers normally go through `request`,
+ * which adds the GET cache layer on top.
+ */
+async function fetchAndParse<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
@@ -86,15 +172,55 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const errBody = body as { error?: string; message?: string } | null
-    throw new ApiError(
+    const apiErr = new ApiError(
       res.status,
       errBody?.error ?? 'unknown',
       errBody?.message ?? `${res.status} ${res.statusText}`,
       body,
     )
+    // Fire-and-forget the unauthorized handler for non-public 401s. Guarded
+    // so a burst of parallel requests only triggers one navigation.
+    if (
+      res.status === 401 &&
+      !PUBLIC_AUTH_PATHS.has(path) &&
+      !unauthorizedFiring
+    ) {
+      unauthorizedFiring = true
+      Promise.resolve()
+        .then(() => unauthorizedHandler())
+        .catch(() => {})
+        .finally(() => {
+          // Allow re-firing once the user has logged back in (handler usually
+          // navigates to /login, which re-instantiates the app shell).
+          setTimeout(() => {
+            unauthorizedFiring = false
+          }, 1000)
+        })
+    }
+    throw apiErr
   }
 
   return body as T
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  // Non-GET (POST/PATCH/PUT/DELETE) bypasses cache entirely. The endpoint
+  // groups below call `invalidatePrefix()` after success to drop related
+  // GET entries.
+  if (method !== 'GET') return fetchAndParse<T>(path, init)
+
+  const key = cacheKey(method, path)
+  const cached = fetchCache.get(key)
+  if (cached && Date.now() - cached.ts < FETCH_CACHE_TTL_MS) {
+    return cached.promise as Promise<T>
+  }
+  const promise = fetchAndParse<T>(path, init)
+  fetchCache.set(key, { ts: Date.now(), promise })
+  // Evict on failure so the next caller retries instead of seeing a
+  // rejected promise replayed for the next 30s.
+  promise.catch(() => fetchCache.delete(key))
+  return promise
 }
 
 /**
@@ -139,6 +265,40 @@ export const api = {
       }),
     delete: (id: string) =>
       request<void>(`/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    /**
+     * Stage 5: trash listing (admin only).
+     * `?space=<id>` is required by the backend; we surface the 400 as-is
+     * and let the caller decide what to do.
+     */
+    trash: {
+      list: (spaceId: string) =>
+        getManyPages(`/pages/trash?space=${encodeURIComponent(spaceId)}`),
+    },
+    /**
+     * Stage 5: restore a single trashed page (admin only).
+     * Returns void; on 409 the caller inspects `ApiError.body` for the
+     * `parent_trashed` vs `not_trashed` reason.
+     */
+    restore: async (id: string): Promise<void> => {
+      await request<void>(`/pages/${encodeURIComponent(id)}/restore`, {
+        method: 'POST',
+      })
+      // Drop both: the main list (restored page reappears) and trash list
+      // (restored page leaves the trash).
+      invalidatePrefix('/pages/trash')
+      invalidatePath('GET', '/pages')
+    },
+    /**
+     * Stage 5: permanently delete a trashed page (admin only).
+     * Underlying row must already be trashed, else backend returns 409.
+     */
+    purge: async (id: string): Promise<void> => {
+      await request<void>(
+        `/pages/${encodeURIComponent(id)}?purge=true`,
+        { method: 'DELETE' },
+      )
+      invalidatePrefix('/pages/trash')
+    },
   },
 
   spaces: {
@@ -164,7 +324,15 @@ export const api = {
         mustResetPassword: r.mustResetPassword,
       }))
     },
-    signOut: () => request<void>('/auth/sign-out', { method: 'POST' }),
+    signOut: async () => {
+      await request<void>('/auth/sign-out', { method: 'POST' })
+      // Drop the cached /auth/session response so the very next init() (from
+      // router.replace → /login) doesn't replay the now-stale "logged in" user.
+      // Without this, the public-route bounce branch in router.beforeEach
+      // (isAuthed && to.name === 'login' → return '/') swallows the redirect
+      // and the user appears stuck until they refresh.
+      invalidatePath('GET', '/auth/session')
+    },
     /** GET /api/auth/session — returns user + mustResetPassword; 401 if not logged in. */
     getSession: () =>
       request<{ user: User; mustResetPassword: boolean }>('/auth/session').then(
@@ -198,58 +366,91 @@ export const api = {
           '/admin/users',
           { method: 'POST', body: JSON.stringify(input) },
         )
+        invalidatePrefix('/admin/users')
         return {
           user: UserSchema.parse(raw.user) as User,
           initialPassword: raw.initialPassword,
         }
       },
-      update: (id: string, input: UpdateUserInput) =>
-        request<User>(`/admin/users/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify(input),
-        }).then((u) => UserSchema.parse(u) as User),
-      disable: (id: string) =>
-        request<User>(`/admin/users/${encodeURIComponent(id)}/disable`, {
-          method: 'POST',
-        }).then((u) => UserSchema.parse(u) as User),
-      enable: (id: string) =>
-        request<User>(`/admin/users/${encodeURIComponent(id)}/enable`, {
-          method: 'POST',
-        }).then((u) => UserSchema.parse(u) as User),
-      resetPassword: (id: string) =>
-        request<{ initialPassword: string }>(
+      update: async (id: string, input: UpdateUserInput): Promise<User> => {
+        const u = await request<User>(
+          `/admin/users/${encodeURIComponent(id)}`,
+          { method: 'PATCH', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/admin/users')
+        return UserSchema.parse(u) as User
+      },
+      disable: async (id: string): Promise<User> => {
+        const u = await request<User>(
+          `/admin/users/${encodeURIComponent(id)}/disable`,
+          { method: 'POST' },
+        )
+        invalidatePrefix('/admin/users')
+        return UserSchema.parse(u) as User
+      },
+      enable: async (id: string): Promise<User> => {
+        const u = await request<User>(
+          `/admin/users/${encodeURIComponent(id)}/enable`,
+          { method: 'POST' },
+        )
+        invalidatePrefix('/admin/users')
+        return UserSchema.parse(u) as User
+      },
+      resetPassword: async (id: string): Promise<string> => {
+        const r = await request<{ initialPassword: string }>(
           `/admin/users/${encodeURIComponent(id)}/reset-password`,
           { method: 'POST' },
-        ).then((r) => r.initialPassword),
+        )
+        invalidatePrefix('/admin/users')
+        return r.initialPassword
+      },
     },
     groups: {
-      list: async (): Promise<UserGroup[]> => request<UserGroup[]>('/admin/groups'),
-      get: (id: string) =>
-        request<UserGroup>(`/admin/groups/${encodeURIComponent(id)}`),
-      create: (input: CreateGroupInput) =>
-        request<UserGroup>('/admin/groups', {
+      list: async (): Promise<UserGroup[]> => {
+        const raw = await request<UserGroup[]>('/admin/groups')
+        return raw.map((g) => UserGroupSchema.parse(g) as UserGroup)
+      },
+      get: async (id: string): Promise<UserGroup> => {
+        const raw = await request<UserGroup>(`/admin/groups/${encodeURIComponent(id)}`)
+        return UserGroupSchema.parse(raw) as UserGroup
+      },
+      create: async (input: CreateGroupInput): Promise<UserGroup> => {
+        const g = await request<UserGroup>('/admin/groups', {
           method: 'POST',
           body: JSON.stringify(input),
-        }),
-      update: (id: string, input: UpdateGroupInput) =>
-        request<UserGroup>(`/admin/groups/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify(input),
-        }),
-      delete: (id: string) =>
-        request<void>(`/admin/groups/${encodeURIComponent(id)}`, {
+        })
+        invalidatePrefix('/admin/groups')
+        return UserGroupSchema.parse(g) as UserGroup
+      },
+      update: async (id: string, input: UpdateGroupInput): Promise<UserGroup> => {
+        const g = await request<UserGroup>(
+          `/admin/groups/${encodeURIComponent(id)}`,
+          { method: 'PATCH', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/admin/groups')
+        return UserGroupSchema.parse(g) as UserGroup
+      },
+      delete: async (id: string): Promise<void> => {
+        await request<void>(`/admin/groups/${encodeURIComponent(id)}`, {
           method: 'DELETE',
-        }),
-      addMember: (groupId: string, userId: string) =>
-        request<UserGroup>(`/admin/groups/${encodeURIComponent(groupId)}/members`, {
-          method: 'POST',
-          body: JSON.stringify({ userId }),
-        }),
-      removeMember: (groupId: string, userId: string) =>
-        request<void>(
+        })
+        invalidatePrefix('/admin/groups')
+      },
+      addMember: async (groupId: string, userId: string): Promise<UserGroup> => {
+        const g = await request<UserGroup>(
+          `/admin/groups/${encodeURIComponent(groupId)}/members`,
+          { method: 'POST', body: JSON.stringify({ userId }) },
+        )
+        invalidatePrefix('/admin/groups')
+        return UserGroupSchema.parse(g) as UserGroup
+      },
+      removeMember: async (groupId: string, userId: string): Promise<void> => {
+        await request<void>(
           `/admin/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
           { method: 'DELETE' },
-        ),
+        )
+        invalidatePrefix('/admin/groups')
+      },
     },
     spaces: {
       list: async (): Promise<Space[]> => {
@@ -262,25 +463,52 @@ export const api = {
         )
         return SpaceSchema.parse(raw) as Space
       },
-      create: (input: CreateSpaceInput) =>
-        request<Space>('/admin/spaces', {
+      create: async (input: CreateSpaceInput): Promise<Space> => {
+        const s = await request<Space>('/admin/spaces', {
           method: 'POST',
           body: JSON.stringify(input),
-        }),
-      update: (id: string, input: UpdateSpaceInput) =>
-        request<Space>(`/admin/spaces/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify(input),
-        }),
-      delete: (id: string) =>
-        request<void>(`/admin/spaces/${encodeURIComponent(id)}`, {
+        })
+        invalidatePrefix('/admin/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
+      update: async (id: string, input: UpdateSpaceInput): Promise<Space> => {
+        const s = await request<Space>(
+          `/admin/spaces/${encodeURIComponent(id)}`,
+          { method: 'PATCH', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/admin/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
+      delete: async (id: string): Promise<void> => {
+        await request<void>(`/admin/spaces/${encodeURIComponent(id)}`, {
           method: 'DELETE',
-        }),
-      setAccess: (id: string, input: SetSpaceAccessInput) =>
-        request<Space>(`/admin/spaces/${encodeURIComponent(id)}/access`, {
-          method: 'PUT',
-          body: JSON.stringify(input),
-        }),
+        })
+        invalidatePrefix('/admin/spaces')
+      },
+      setAccess: async (id: string, input: SetSpaceAccessInput): Promise<Space> => {
+        const s = await request<Space>(
+          `/admin/spaces/${encodeURIComponent(id)}/access`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/admin/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
+      addAccess: async (id: string, groupId: string): Promise<Space> => {
+        const s = await request<Space>(
+          `/admin/spaces/${encodeURIComponent(id)}/access/${encodeURIComponent(groupId)}`,
+          { method: 'POST' },
+        )
+        invalidatePrefix('/admin/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
+      removeAccess: async (id: string, groupId: string): Promise<Space> => {
+        const s = await request<Space>(
+          `/admin/spaces/${encodeURIComponent(id)}/access/${encodeURIComponent(groupId)}`,
+          { method: 'DELETE' },
+        )
+        invalidatePrefix('/admin/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
     },
   },
 } as const

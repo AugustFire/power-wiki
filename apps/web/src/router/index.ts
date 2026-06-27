@@ -73,7 +73,12 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'users',
         name: 'manager-users',
-        component: () => import('@/views/manager/UsersView.vue'),
+        // Named views: default = list, context = right-side panel. Edit
+        // routes below stay single-component (no context panel).
+        components: {
+          default: () => import('@/views/manager/UsersView.vue'),
+          context: () => import('@/views/manager/panels/UsersContextPanel.vue'),
+        },
       },
       {
         path: 'users/:id',
@@ -84,7 +89,10 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'groups',
         name: 'manager-groups',
-        component: () => import('@/views/manager/GroupsView.vue'),
+        components: {
+          default: () => import('@/views/manager/GroupsView.vue'),
+          context: () => import('@/views/manager/panels/GroupsContextPanel.vue'),
+        },
       },
       {
         path: 'groups/:id',
@@ -95,13 +103,23 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'spaces',
         name: 'manager-spaces',
-        component: () => import('@/views/manager/SpacesView.vue'),
+        components: {
+          default: () => import('@/views/manager/SpacesView.vue'),
+          context: () => import('@/views/manager/panels/SpacesContextPanel.vue'),
+        },
       },
       {
         path: 'spaces/:id',
         name: 'manager-space-edit',
         component: () => import('@/views/manager/SpaceEditView.vue'),
         props: true,
+      },
+      {
+        // Stage 5: admin-only trash view. Single-component route (no
+        // context panel) because the list IS the action surface.
+        path: 'trash',
+        name: 'manager-trash',
+        component: () => import('@/views/manager/TrashView.vue'),
       },
     ],
   },

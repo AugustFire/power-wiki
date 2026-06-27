@@ -21,6 +21,23 @@ const subPages = computed(() => pagesStore.getChildren(props.id))
 const safeHtml = computed(() => sanitizeAndHardenLinks(page.value?.contentHTML ?? ''))
 const contentEl = ref<HTMLElement | null>(null)
 
+/**
+ * 作者展示名。
+ *   - 真实 JOIN 命中 → authorName
+ *   - authorId='me'(旧 seed) → '我'
+ *   - authorId 还在但用户已删(LEFT JOIN 拿不到) → '未知作者'
+ */
+const authorDisplay = computed(() => {
+  const p = page.value
+  if (!p) return ''
+  if (p.authorName) return p.authorName
+  if (p.authorId === 'me') return '我'
+  return '未知作者'
+})
+
+/** 头像色:JOIN 拿到的 color;拿不到时退化到中性灰 */
+const authorAvatarColor = computed(() => page.value?.authorColor ?? '#6B778C')
+
 // 面包屑链路(根 → 当前页)
 const breadcrumb = computed(() => {
   const chain: { id: string; title: string }[] = []
@@ -200,7 +217,7 @@ watch(
               </span>
               <span class="status-pill purple">
                 <span class="material-symbols-outlined icon-sm">account_circle</span>
-                {{ page.authorId === 'me' ? '我' : page.authorId }}
+                {{ authorDisplay }}
               </span>
               <span class="status-pill">
                 <span class="material-symbols-outlined icon-sm">update</span>
@@ -210,7 +227,10 @@ watch(
 
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
-              <span class="author"><UserAvatar :size="20" /> 我</span>
+              <span class="author">
+                <UserAvatar :size="20" :color="authorAvatarColor" />
+                {{ authorDisplay }}
+              </span>
               <span class="dot">·</span>
               <span>创建于 {{ new Date(page.createdAt).toLocaleDateString('zh-CN') }}</span>
               <span class="dot">·</span>

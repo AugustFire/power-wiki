@@ -9,15 +9,18 @@
  *
  * Member management happens in GroupEditView. Here we only show a count.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
+import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
+import { useManagerActions } from '@/composables/useManagerActions'
 import type { UserGroup, User } from '@power-wiki/shared'
 
 const router = useRouter()
 const uiStore = useUiStore()
+const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
 const groups = ref<UserGroup[]>([])
@@ -25,11 +28,22 @@ const users = ref<User[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
-const showCreate = ref(false)
+const { showCreateGroup: showCreate } = useManagerActions()
 const createName = ref('')
 const createDesc = ref('')
 const creating = ref(false)
 const createError = ref<string | null>(null)
+
+// Reset form fields when the panel button transitions closed → open.
+// Also reset `showCreate` on mount so stale open state doesn't carry over.
+onMounted(() => { showCreate.value = false })
+watch(showCreate, (next, prev) => {
+  if (next && !prev) {
+    createName.value = ''
+    createDesc.value = ''
+    createError.value = null
+  }
+})
 
 const memberCountByGroup = ref<Record<string, number>>({})
 
@@ -61,9 +75,6 @@ onMounted(load)
 
 function openCreate() {
   showCreate.value = true
-  createName.value = ''
-  createDesc.value = ''
-  createError.value = null
 }
 
 function closeCreate() {
@@ -106,6 +117,9 @@ async function onDelete(g: UserGroup) {
     await api.admin.groups.delete(g.id)
     groups.value = groups.value.filter((x) => x.id !== g.id)
     delete memberCountByGroup.value[g.id]
+    // Group delete cascades to spaceGroupAccess; affected users' visible
+    // space set may have shrunk — re-fetch pages so the sidebar matches.
+    void pagesStore.refresh()
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '删除失败')
   }
@@ -127,10 +141,6 @@ function formatDate(ts: number): string {
         <h1 class="gv-title">用户组</h1>
         <p class="gv-sub">共 {{ groups.length }} 个用户组,用于批量管理用户对空间的访问权限</p>
       </div>
-      <button type="button" class="btn primary" :disabled="loading" @click="openCreate">
-        <span class="material-symbols-outlined btn-icon">group_add</span>
-        <span>创建用户组</span>
-      </button>
     </header>
 
     <div v-if="loadError" class="gv-error">{{ loadError }}</div>
@@ -225,7 +235,7 @@ function formatDate(ts: number): string {
 </template>
 
 <style scoped>
-.groups-view { max-width: 1100px; }
+.groups-view { max-width: 1400px; }
 
 .gv-header {
   display: flex;
@@ -234,12 +244,12 @@ function formatDate(ts: number): string {
   gap: 16px;
   margin-bottom: 20px;
 }
-.gv-title { font-size: 22px; font-weight: 700; color: var(--text-1, #172B4D); margin: 0; }
-.gv-sub { font-size: 13px; color: var(--text-3, #6B778C); margin: 4px 0 0 0; }
+.gv-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
+.gv-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 0; }
 
 .gv-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 10px 14px;
   border-radius: var(--radius-md, 4px);
   font-size: 14px;
@@ -250,28 +260,28 @@ function formatDate(ts: number): string {
 .gv-empty {
   padding: 60px 24px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.gv-empty .ge-icon { font-size: 48px; color: var(--text-3, #6B778C); display: block; margin-bottom: 12px; }
-.gv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2, #44546F); margin: 0 0 4px 0; }
+.gv-empty .ge-icon { font-size: 48px; color: var(--text-3); display: block; margin-bottom: 12px; }
+.gv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
 .gv-empty p { margin: 0; }
 
 /* ─── Create panel ─── */
 .create-panel {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
   margin-bottom: 16px;
 }
-.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1, #172B4D); margin: 0; }
+.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1); margin: 0; }
 .cp-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 8px 12px;
   border-radius: var(--radius-md, 4px);
   font-size: 13px;
@@ -284,20 +294,20 @@ function formatDate(ts: number): string {
   margin-bottom: 16px;
 }
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:focus { border-color: var(--accent); }
 .cp-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ─── Card grid ─── */
@@ -307,8 +317,8 @@ function formatDate(ts: number): string {
   gap: 12px;
 }
 .gv-card {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 16px 20px;
   cursor: pointer;
@@ -319,7 +329,7 @@ function formatDate(ts: number): string {
   outline: none;
 }
 .gv-card:hover {
-  border-color: var(--border-strong, #C1C7D0);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-sm, 0 1px 1px rgba(9, 30, 66, 0.13));
 }
 .gv-card:focus-visible {
@@ -328,15 +338,15 @@ function formatDate(ts: number): string {
 }
 
 .gc-head { display: flex; gap: 12px; align-items: flex-start; }
-.gc-icon { font-size: 22px; color: var(--accent, #0052CC); flex-shrink: 0; }
+.gc-icon { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .gc-text { min-width: 0; }
-.gc-name { font-size: 15px; font-weight: 600; color: var(--text-1, #172B4D); }
-.gc-desc { font-size: 13px; color: var(--text-3, #6B778C); margin-top: 2px; line-height: 1.4; }
+.gc-name { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.gc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
 
 .gc-stats { display: flex; gap: 24px; }
 .gc-stat { display: flex; flex-direction: column; }
-.gcs-value { font-size: 14px; font-weight: 600; color: var(--text-1, #172B4D); }
-.gcs-label { font-size: 11px; color: var(--text-3, #6B778C); text-transform: uppercase; letter-spacing: 0.04em; }
+.gcs-value { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.gcs-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .gc-actions { display: flex; align-items: center; justify-content: space-between; }
 .ra-btn {
@@ -346,14 +356,14 @@ function formatDate(ts: number): string {
   border: 0;
   border-radius: var(--radius-sm, 3px);
   cursor: pointer;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.ra-btn:hover { background: var(--danger-soft, #FFEBE6); color: var(--danger, #FF5630); }
+.ra-btn:hover { background: var(--danger-soft); color: var(--danger); }
 .ra-btn .material-symbols-outlined { font-size: 18px; }
-.gc-open { color: var(--text-3, #6B778C); display: inline-flex; }
+.gc-open { color: var(--text-3); display: inline-flex; }
 .gc-open .material-symbols-outlined { font-size: 18px; }
 </style>

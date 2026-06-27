@@ -151,8 +151,8 @@ async function onLogout() {
   top: calc(100% + 8px);
   right: 0;
   min-width: 240px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   box-shadow: var(--shadow-md, 0 4px 8px -2px rgba(9, 30, 66, 0.08), 0 0 1px rgba(9, 30, 66, 0.08));
   padding: 4px;
@@ -172,7 +172,7 @@ async function onLogout() {
 .um-name {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
@@ -180,7 +180,7 @@ async function onLogout() {
 }
 .um-email {
   font-size: 12px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
@@ -189,7 +189,7 @@ async function onLogout() {
 
 .um-divider {
   height: 1px;
-  background: var(--border, #DFE1E6);
+  background: var(--border);
   margin: 2px 0;
 }
 
@@ -200,7 +200,7 @@ async function onLogout() {
   padding: 8px 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm, 3px);
@@ -209,13 +209,13 @@ async function onLogout() {
   width: 100%;
   transition: background var(--duration-fast) var(--ease-out);
 }
-.um-item:hover { background: var(--bg-canvas, #F4F5F7); }
+.um-item:hover { background: var(--bg-canvas); }
 .um-item:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
-.um-item.danger { color: var(--danger, #FF5630); }
-.um-item.danger:hover { background: var(--danger-soft, #FFEBE6); }
+.um-item.danger { color: var(--danger); }
+.um-item.danger:hover { background: var(--danger-soft); }
 
 .um-icon {
   font-size: 18px;

@@ -13,12 +13,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
+import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import type { Space, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
 const router = useRouter()
 const uiStore = useUiStore()
+const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
 const spaceId = computed(() => String(route.params.id ?? ''))
@@ -33,8 +35,9 @@ const editName = ref('')
 const editDesc = ref('')
 const editColor = ref('#0052CC')
 const saving = ref(false)
-const dirty = ref(false)
+const formDirty = ref(false)
 const search = ref('')
+const pendingGroupId = ref<string | null>(null)
 
 const COLOR_PALETTE = [
   '#0052CC', '#00875A', '#FF5630', '#FFAB00',
@@ -69,7 +72,7 @@ function syncFormFromSpace() {
   editName.value = space.value.name
   editDesc.value = space.value.description ?? ''
   editColor.value = space.value.color
-  dirty.value = false
+  formDirty.value = false
 }
 
 watch(spaceId, () => {
@@ -92,22 +95,49 @@ function isAuthorized(groupId: string): boolean {
   return accessGroupIds.value.has(groupId)
 }
 
-function toggleAccess(g: UserGroup) {
-  // Pure local toggle — the actual server write happens on save.
-  if (isAuthorized(g.id)) {
+async function toggleAccess(g: UserGroup) {
+  // Each toggle is its own POST/DELETE — same pattern as GroupEditView's
+  // member management. The local Set is updated optimistically and rolled
+  // back on failure; no dirty/save flow is needed.
+  if (pendingGroupId.value || !space.value) return
+  const wasAuthorized = isAuthorized(g.id)
+  if (wasAuthorized) {
     accessGroupIds.value.delete(g.id)
   } else {
     accessGroupIds.value.add(g.id)
   }
   accessGroupIds.value = new Set(accessGroupIds.value)
+  pendingGroupId.value = g.id
+
+  try {
+    const updated = wasAuthorized
+      ? await api.admin.spaces.removeAccess(space.value.id, g.id)
+      : await api.admin.spaces.addAccess(space.value.id, g.id)
+    accessGroupIds.value = new Set(updated.accessGroupIds ?? [])
+    space.value = { ...space.value, accessGroupIds: Array.from(accessGroupIds.value) }
+    // Access change may have flipped this space in/out of the current user's
+    // visible set — refresh pages so sidebar / HomeView reflect reality.
+    void pagesStore.refresh()
+  } catch (e) {
+    // Rollback
+    if (wasAuthorized) {
+      accessGroupIds.value.add(g.id)
+    } else {
+      accessGroupIds.value.delete(g.id)
+    }
+    accessGroupIds.value = new Set(accessGroupIds.value)
+    uiStore.setError(e instanceof ApiError ? e.message : '操作失败')
+  } finally {
+    pendingGroupId.value = null
+  }
 }
 
 function markDirty() {
-  dirty.value = true
+  formDirty.value = true
 }
 
 async function onSave() {
-  if (!space.value || !dirty.value || saving.value) return
+  if (!space.value || !formDirty.value || saving.value) return
   saving.value = true
   try {
     const updated = await api.admin.spaces.update(space.value.id, {
@@ -115,12 +145,8 @@ async function onSave() {
       description: editDesc.value.trim() || undefined,
       color: editColor.value,
     })
-    // Persist the access group set as a separate PUT (replaces the entire set).
-    const withAccess = await api.admin.spaces.setAccess(space.value.id, {
-      groupIds: Array.from(accessGroupIds.value),
-    })
-    space.value = { ...updated, ...withAccess, accessGroupIds: withAccess.accessGroupIds }
-    dirty.value = false
+    space.value = { ...space.value, ...updated }
+    syncFormFromSpace()
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '保存失败')
   } finally {
@@ -130,9 +156,6 @@ async function onSave() {
 
 function onReset() {
   syncFormFromSpace()
-  if (space.value) {
-    accessGroupIds.value = new Set(space.value.accessGroupIds ?? [])
-  }
 }
 
 async function onDelete() {
@@ -147,6 +170,9 @@ async function onDelete() {
   if (!ok) return
   try {
     await api.admin.spaces.delete(s.id)
+    // Space delete cascades to its pages — drop them from the in-memory tree
+    // immediately rather than waiting for the next manual refresh.
+    void pagesStore.refresh()
     void router.push('/manager/spaces')
   } catch (e) {
     if (e instanceof ApiError && e.status === 409 && e.code === 'space_not_empty') {
@@ -172,6 +198,12 @@ function formatDate(ts: number): string {
   </div>
 
   <div v-else-if="space" class="space-edit">
+    <nav class="se-breadcrumb" aria-label="面包屑导航">
+      <RouterLink to="/manager/spaces">空间</RouterLink>
+      <span class="se-bc-sep" aria-hidden="true">/</span>
+      <span class="se-bc-current">{{ space.name }}</span>
+    </nav>
+
     <header class="se-header">
       <div class="se-header-text">
         <div class="se-title-row">
@@ -233,8 +265,8 @@ function formatDate(ts: number): string {
           </div>
         </div>
         <div class="se-card-actions">
-          <button type="button" class="btn ghost" :disabled="!dirty || saving" @click="onReset">取消</button>
-          <button type="button" class="btn primary" :disabled="!dirty || saving" @click="onSave">
+          <button type="button" class="btn ghost" :disabled="!formDirty || saving" @click="onReset">取消</button>
+          <button type="button" class="btn primary" :disabled="!formDirty || saving" @click="onSave">
             {{ saving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -250,9 +282,9 @@ function formatDate(ts: number): string {
 
       <!-- Access groups -->
       <section class="se-card se-card-groups">
-        <h2 class="se-card-title">访问组 ({{ accessGroupIds.size }})</h2>
+        <h2 class="se-card-title">访问组</h2>
         <p class="se-card-hint">
-          勾选的用户组可访问此空间下的所有页面。未勾选任何组 = 仅有管理员可访问。
+          勾选的用户组可访问此空间下的所有页面。未勾选任何组 = 仅有管理员可访问。点击即生效,无需保存。
         </p>
         <div class="se-search-row">
           <span class="material-symbols-outlined se-search-icon">search</span>
@@ -276,7 +308,10 @@ function formatDate(ts: number): string {
             v-for="g in filteredGroups"
             :key="g.id"
             class="group-row"
-            :class="{ 'is-authorized': isAuthorized(g.id) }"
+            :class="{
+              'is-authorized': isAuthorized(g.id),
+              'is-pending': pendingGroupId === g.id,
+            }"
           >
             <span class="material-symbols-outlined gr-icon">workspaces</span>
             <div class="group-text">
@@ -287,6 +322,7 @@ function formatDate(ts: number): string {
               type="button"
               class="group-toggle"
               :class="{ 'in-group': isAuthorized(g.id) }"
+              :disabled="pendingGroupId !== null"
               :title="isAuthorized(g.id) ? '取消授权' : '授权访问'"
               @click="toggleAccess(g)"
             >
@@ -304,17 +340,34 @@ function formatDate(ts: number): string {
 <style scoped>
 .space-edit { max-width: 1200px; }
 
+/* ─── Breadcrumb ─── */
+.se-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+.se-breadcrumb a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.se-breadcrumb a:hover { text-decoration: underline; }
+.se-bc-sep { color: var(--text-3); }
+.se-bc-current { color: var(--text-2); font-weight: 500; }
+
 .se-loading,
 .se-error {
   padding: 48px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.se-error { color: var(--danger, #FF5630); }
+.se-error { color: var(--danger); }
 .se-error .btn { margin-top: 12px; display: inline-flex; }
 
 .se-header { margin-bottom: 20px; }
@@ -322,7 +375,7 @@ function formatDate(ts: number): string {
 .se-avatar {
   width: 40px;
   height: 40px;
-  border-radius: var(--radius, 3px);
+  border-radius: var(--radius-md, 4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -332,8 +385,8 @@ function formatDate(ts: number): string {
   flex-shrink: 0;
 }
 .se-initials { letter-spacing: 0.5px; text-transform: uppercase; }
-.se-title { font-size: 22px; font-weight: 700; color: var(--text-1, #172B4D); margin: 0; }
-.se-sub { font-size: 13px; color: var(--text-3, #6B778C); margin: 4px 0 0 52px; }
+.se-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
+.se-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 52px; }
 
 .se-grid {
   display: grid;
@@ -342,39 +395,39 @@ function formatDate(ts: number): string {
   align-items: start;
 }
 .se-card {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
 }
 .se-card-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0 0 12px 0;
 }
 .se-card-hint {
   font-size: 12px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   margin: -8px 0 14px 0;
   line-height: 1.5;
 }
 .se-fields { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:focus { border-color: var(--accent); }
 
 .color-swatches { display: flex; gap: 6px; }
 .cs-swatch {
@@ -387,16 +440,16 @@ function formatDate(ts: number): string {
   transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .cs-swatch:hover:not(:disabled) { transform: scale(1.1); }
-.cs-swatch-active { border-color: var(--text-1, #172B4D); }
+.cs-swatch-active { border-color: var(--text-1); }
 
 .se-card-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
 .se-danger-zone {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px solid var(--border, #DFE1E6);
+  border-top: 1px solid var(--border);
 }
-.se-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3, #6B778C); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
+.se-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
 
 /* ─── Group list ─── */
 .se-search-row {
@@ -409,7 +462,7 @@ function formatDate(ts: number): string {
   top: 50%;
   transform: translateY(-50%);
   font-size: 18px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   pointer-events: none;
 }
 .se-search {
@@ -418,27 +471,27 @@ function formatDate(ts: number): string {
   padding: 0 12px 0 36px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg-canvas, #F4F5F7);
+  color: var(--text-1);
+  background: var(--bg-canvas);
   border: 2px solid transparent;
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .se-search:focus {
-  background: var(--bg, #FFFFFF);
-  border-color: var(--accent, #0052CC);
+  background: var(--bg);
+  border-color: var(--accent);
 }
 
 .se-empty-groups {
   padding: 24px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 13px;
-  border: 1px dashed var(--border, #DFE1E6);
+  border: 1px dashed var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.se-empty-groups a { color: var(--accent, #0052CC); text-decoration: none; }
+.se-empty-groups a { color: var(--accent); text-decoration: none; }
 .se-empty-groups a:hover { text-decoration: underline; }
 
 .group-list {
@@ -447,7 +500,7 @@ function formatDate(ts: number): string {
   padding: 0;
   max-height: 480px;
   overflow-y: auto;
-  border: 1px solid var(--border, #DFE1E6);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
 .group-row {
@@ -455,19 +508,20 @@ function formatDate(ts: number): string {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border, #DFE1E6);
-  background: var(--bg, #FFFFFF);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
   transition: background var(--duration-fast) var(--ease-out);
 }
 .group-row:last-child { border-bottom: 0; }
-.group-row:hover { background: var(--bg-canvas, #F4F5F7); }
-.group-row.is-authorized { background: var(--accent-soft, #DEEBFF); }
-.group-row.is-authorized:hover { background: var(--accent-soft, #DEEBFF); }
+.group-row:hover:not(.is-pending) { background: var(--bg-canvas); }
+.group-row.is-authorized { background: var(--accent-soft); }
+.group-row.is-authorized:hover:not(.is-pending) { background: var(--accent-soft); }
+.group-row.is-pending { opacity: 0.6; }
 
-.gr-icon { font-size: 22px; color: var(--accent, #0052CC); flex-shrink: 0; }
+.gr-icon { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .group-text { min-width: 0; flex: 1; }
-.group-name { font-size: 14px; font-weight: 500; color: var(--text-1, #172B4D); }
-.group-desc { font-size: 12px; color: var(--text-3, #6B778C); margin-top: 2px; }
+.group-name { font-size: 14px; font-weight: 500; color: var(--text-1); }
+.group-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 
 .group-toggle {
   background: transparent;
@@ -475,14 +529,15 @@ function formatDate(ts: number): string {
   cursor: pointer;
   padding: 4px;
   border-radius: 50%;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: color var(--duration-fast) var(--ease-out);
 }
-.group-toggle:hover:not(:disabled) { color: var(--accent, #0052CC); }
-.group-toggle.in-group { color: var(--success, #36B37E); }
-.group-toggle.in-group:hover:not(:disabled) { color: var(--danger, #FF5630); }
+.group-toggle:hover:not(:disabled) { color: var(--accent); }
+.group-toggle:disabled { cursor: wait; }
+.group-toggle.in-group { color: var(--success); }
+.group-toggle.in-group:hover:not(:disabled) { color: var(--danger); }
 .group-toggle .material-symbols-outlined { font-size: 22px; }
 </style>

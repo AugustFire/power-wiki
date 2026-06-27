@@ -38,8 +38,20 @@ export interface PageNode {
   updatedAt: number
   /** Stage 4 起是真实 user.id;旧 seed 页面可能是 'me'(向前兼容) */
   authorId: string
+  /** 创建者姓名,通过 JOIN users 表填充;authorId='me' 或用户不存在时为 null */
+  authorName: string | null
+  /** 创建者头像色,同上 */
+  authorColor: string | null
   /** 用户手动收藏的页面,Sidebar 会高亮显示 */
   starred?: boolean
+  /**
+   * Stage 5 软删除:非 null = 已被移到回收站。
+   * 默认 SELECT 不返回此字段,只有 trash.list 端点会包含。
+   * 恢复后回到 null。
+   */
+  deletedAt?: number | null
+  /** Stage 5:谁把页移到回收站。purge 时记录审计。 */
+  deletedBy?: string | null
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */

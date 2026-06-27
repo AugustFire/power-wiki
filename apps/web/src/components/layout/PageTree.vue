@@ -27,6 +27,105 @@ const isRenaming = computed(() => uiStore.renamingId === props.node.id)
 const renameValue = ref(props.node.title)
 const renameInputRef = ref<HTMLInputElement | null>(null)
 
+/* ─── Drag & drop ──────────────────────────────────────────────────────
+ *  HTML5 drag API, scoped to row drags inside the tree. Drop semantics:
+ *    - top half of row  → insert ABOVE this row (same parent)
+ *    - bottom half      → insert BELOW this row (same parent)
+ *  No "drop on row to make it a child" — use ⋯ menu → "在此页下添加子页面".
+ *  Reorders within the same parent + cross-parent moves go through
+ *  pagesStore.movePage which handles cycle protection + sibling reorder.
+ */
+const draggingId = ref<string | null>(null)
+type DropHint = 'before' | 'after'
+const dropTarget = ref<{ id: string; position: DropHint } | null>(null)
+const isDragSource = computed(() => draggingId.value === props.node.id)
+const dropHint = computed<DropHint | null>(
+  () => (dropTarget.value?.id === props.node.id ? dropTarget.value.position : null),
+)
+
+function onDragStart(e: DragEvent) {
+  if (isRenaming.value) {
+    e.preventDefault()
+    return
+  }
+  if (!e.dataTransfer) return
+  draggingId.value = props.node.id
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', props.node.id)
+}
+
+function onDragEnd() {
+  draggingId.value = null
+  dropTarget.value = null
+}
+
+function onDragOver(e: DragEvent) {
+  // Reject self-drag and drags from outside this tree.
+  if (!draggingId.value || draggingId.value === props.node.id) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  const row = e.currentTarget as HTMLElement
+  const rect = row.getBoundingClientRect()
+  const position: DropHint = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after'
+  // Avoid re-triggering reactivity if nothing changed.
+  if (dropTarget.value?.id !== props.node.id || dropTarget.value.position !== position) {
+    dropTarget.value = { id: props.node.id, position }
+  }
+}
+
+function onDragLeave(e: DragEvent) {
+  // relatedTarget can be null when leaving the window — treat that as a clean exit.
+  if (e.relatedTarget && (e.currentTarget as Node).contains(e.relatedTarget as Node)) return
+  if (dropTarget.value?.id === props.node.id) dropTarget.value = null
+}
+
+async function onDrop(e: DragEvent) {
+  e.preventDefault()
+  const target = dropTarget.value
+  draggingId.value = null
+  dropTarget.value = null
+  if (!target) return
+  const draggedId = e.dataTransfer?.getData('text/plain')
+  if (!draggedId || draggedId === target.id) return
+
+  const targetPage = pagesStore.getPage(target.id)
+  if (!targetPage) return
+
+  // Refuse cycles: can't drop a page onto itself or one of its descendants.
+  if (isAncestor(draggedId, target.id)) return
+
+  // Compute the new sortOrder for the dragged page in the target parent's
+  // sibling list. The page is being inserted at the same level as `target`,
+  // so the target's parent is the new parent.
+  const newParentId = targetPage.parentId
+  const siblings = pagesStore.pages
+    .filter((p) => p.parentId === newParentId && p.id !== draggedId)
+    .sort((a, b) => a.order - b.order)
+  let insertAt = siblings.findIndex((p) => p.id === target.id)
+  if (insertAt < 0) insertAt = siblings.length
+  if (target.position === 'after') insertAt += 1
+
+  try {
+    await pagesStore.movePage(draggedId, newParentId, insertAt)
+  } catch {
+    // banner already shown by store
+  }
+}
+
+/**
+ * Walk parent chain from `startId`; return true if `ancestorId` appears.
+ * Used to refuse drops that would create a cycle (X onto a descendant of X).
+ */
+function isAncestor(startId: string, ancestorId: string): boolean {
+  let cur: ReturnType<typeof pagesStore.getPage> = pagesStore.getPage(startId)
+  let guard = 0
+  while (cur && guard++ < 64) {
+    if (cur.id === ancestorId) return true
+    cur = cur.parentId ? pagesStore.getPage(cur.parentId) : undefined
+  }
+  return false
+}
+
 const menuStyle = computed(() => {
   const { x, y } = uiStore.menuPos
   // 视口边缘裁剪 —— 在右下角点击 ⋯ 时,菜单会溢出。
@@ -106,6 +205,39 @@ function cancelRename() {
   uiStore.endRename()
 }
 
+function openInNewTab() {
+  uiStore.closeMenu()
+  window.open(`#/p/${props.node.id}`, '_blank', 'noopener')
+}
+
+const copyFlash = ref<string | null>(null)
+let copyFlashTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyLink() {
+  uiStore.closeMenu()
+  const url = `${window.location.origin}${window.location.pathname}#/p/${props.node.id}`
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url)
+    } else {
+      // Fallback for non-secure contexts where clipboard API is gated.
+      const ta = document.createElement('textarea')
+      ta.value = url
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    copyFlash.value = '已复制'
+    if (copyFlashTimer) clearTimeout(copyFlashTimer)
+    copyFlashTimer = setTimeout(() => { copyFlash.value = null }, 1500)
+  } catch {
+    uiStore.setError('复制失败,请手动复制链接')
+  }
+}
+
 function onRenameKey(e: KeyboardEvent) {
   // 仅处理单个按键的 Enter / Escape,不做任何 Ctrl/Meta 组合键绑定
   if (e.key === 'Enter') {
@@ -119,14 +251,18 @@ function onRenameKey(e: KeyboardEvent) {
 
 function deletePage() {
   uiStore.closeMenu()
-  const descendantCount = countDescendants(props.node.id)
-  const message =
-    descendantCount > 0
-      ? `这将同时删除 ${descendantCount} 个子页面,且无法恢复。`
-      : '页面删除后无法恢复。'
+  // Stage 5: refuse to delete a page with non-trashed children. The server
+  // also enforces this (409 has_children) but UX is much better if the
+  // menu item itself is disabled (see template below) — this branch only
+  // fires if the menu was reached some other way (keyboard, automation).
+  const descendantCount = countLiveDescendants(props.node.id)
+  if (descendantCount > 0) {
+    uiStore.setError('请先删除子页面')
+    return
+  }
   confirm({
     title: `删除「${props.node.title}」?`,
-    message,
+    message: '页面将进入回收站,可联系管理员恢复。',
     danger: true,
     confirmText: '删除',
     cancelText: '取消',
@@ -134,7 +270,7 @@ function deletePage() {
     if (!ok) return
     const wasCurrent = route.params.id === props.node.id
     try {
-      await pagesStore.deletePage(props.node.id)
+      await pagesStore.softDeletePage(props.node.id)
     } catch {
       return // banner shown by store; stay on current page
     }
@@ -149,7 +285,13 @@ function promoteToRoot() {
   void pagesStore.movePage(props.node.id, null)
 }
 
-function countDescendants(id: string): number {
+/**
+ * Count non-trashed descendants of `id`. Stage 5: a page can only be
+ * soft-deleted when it has zero live children, mirroring the backend's
+ * 409 `has_children` guard. `getChildren` already filters out trashed
+ * rows, so this count is "live children" by construction.
+ */
+function countLiveDescendants(id: string): number {
   let count = 0
   const stack: string[] = [id]
   while (stack.length) {
@@ -163,6 +305,8 @@ function countDescendants(id: string): number {
   return count
 }
 
+const hasLiveChildren = computed(() => countLiveDescendants(props.node.id) > 0)
+
 // 当外部关闭重命名(比如点别处),把输入值还原
 watch(isRenaming, (val) => {
   if (val) renameValue.value = props.node.title
@@ -173,9 +317,20 @@ watch(isRenaming, (val) => {
   <div class="tree-branch">
     <div
       class="tree-row"
-      :class="{ active: isActive }"
+      :class="{
+        active: isActive,
+        'is-dragging': isDragSource,
+        'drop-before': dropHint === 'before',
+        'drop-after': dropHint === 'after',
+      }"
+      :draggable="!isRenaming"
       @click="navigate"
       @contextmenu.prevent="onMoreClick"
+      @dragstart="onDragStart"
+      @dragend="onDragEnd"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
     >
       <span
         class="caret"
@@ -226,7 +381,21 @@ watch(isRenaming, (val) => {
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
-        <button class="menu-item danger" @click="deletePage">
+        <button class="menu-item" @click="openInNewTab">
+          <span class="material-symbols-outlined icon-md">open_in_new</span>
+          <span>在新窗口打开</span>
+        </button>
+        <button class="menu-item" @click="copyLink">
+          <span class="material-symbols-outlined icon-md">{{ copyFlash === null ? 'link' : 'check' }}</span>
+          <span>{{ copyFlash ?? '复制链接' }}</span>
+        </button>
+        <div class="menu-sep"></div>
+        <button
+          class="menu-item danger"
+          :disabled="hasLiveChildren"
+          :title="hasLiveChildren ? '请先删除子页面' : '删除此页面(可在回收站恢复)'"
+          @click="deletePage"
+        >
           <span class="material-symbols-outlined icon-md">delete</span>
           <span>删除</span>
         </button>
@@ -254,6 +423,25 @@ export default { name: 'PageTree' }
   inset: 0;
   z-index: 199;
   background: transparent;
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-3);
+}
+.menu-item:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
+
+/* ─── Drag & drop ────────────────────────────────────────────────────── */
+.tree-row.is-dragging { opacity: 0.4; }
+.tree-row.drop-before {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+.tree-row.drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
 }
 </style>
 

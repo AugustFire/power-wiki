@@ -8,17 +8,20 @@
  *     rename/delete.
  *   - Delete is gated by the server: refuses if the space still has pages.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
+import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
+import { useManagerActions } from '@/composables/useManagerActions'
 import type { Space, UserGroup } from '@power-wiki/shared'
 
 const router = useRouter()
 const uiStore = useUiStore()
 const spacesStore = useSpacesStore()
+const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
 const spaces = ref<Space[]>([])
@@ -26,12 +29,24 @@ const groups = ref<UserGroup[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
-const showCreate = ref(false)
+const { showCreateSpace: showCreate } = useManagerActions()
 const createName = ref('')
 const createDesc = ref('')
 const createColor = ref('#0052CC')
 const creating = ref(false)
 const createError = ref<string | null>(null)
+
+// Reset form fields when the panel button transitions closed → open.
+// Also reset `showCreate` on mount so stale open state doesn't carry over.
+onMounted(() => { showCreate.value = false })
+watch(showCreate, (next, prev) => {
+  if (next && !prev) {
+    createName.value = ''
+    createDesc.value = ''
+    createColor.value = '#0052CC'
+    createError.value = null
+  }
+})
 
 const COLOR_PALETTE = [
   '#0052CC', '#00875A', '#FF5630', '#FFAB00',
@@ -72,10 +87,6 @@ onMounted(load)
 
 function openCreate() {
   showCreate.value = true
-  createName.value = ''
-  createDesc.value = ''
-  createColor.value = '#0052CC'
-  createError.value = null
 }
 
 function closeCreate() {
@@ -127,6 +138,8 @@ async function onDelete(s: Space) {
     // Mirror to the sidebar store — if the deleted space was the active one,
     // the store already auto-shifts; otherwise just drop it.
     await spacesStore.refresh()
+    // Delete cascades to the space's pages; drop them from the in-memory tree.
+    void pagesStore.refresh()
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : '删除失败'
     if (e instanceof ApiError && e.status === 409 && e.code === 'space_not_empty') {
@@ -153,10 +166,6 @@ function formatDate(ts: number): string {
         <h1 class="sv-title">空间</h1>
         <p class="sv-sub">共 {{ spaces.length }} 个空间,用于按团队 / 项目组织页面并控制访问权限</p>
       </div>
-      <button type="button" class="btn primary" :disabled="loading" @click="openCreate">
-        <span class="material-symbols-outlined btn-icon">create_new_folder</span>
-        <span>创建空间</span>
-      </button>
     </header>
 
     <div v-if="loadError" class="sv-error">{{ loadError }}</div>
@@ -280,7 +289,7 @@ function formatDate(ts: number): string {
 </template>
 
 <style scoped>
-.spaces-view { max-width: 1100px; }
+.spaces-view { max-width: 1400px; }
 
 .sv-header {
   display: flex;
@@ -289,12 +298,12 @@ function formatDate(ts: number): string {
   gap: 16px;
   margin-bottom: 20px;
 }
-.sv-title { font-size: 22px; font-weight: 700; color: var(--text-1, #172B4D); margin: 0; }
-.sv-sub { font-size: 13px; color: var(--text-3, #6B778C); margin: 4px 0 0 0; }
+.sv-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
+.sv-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 0; }
 
 .sv-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 10px 14px;
   border-radius: var(--radius-md, 4px);
   font-size: 14px;
@@ -305,28 +314,28 @@ function formatDate(ts: number): string {
 .sv-empty {
   padding: 60px 24px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.sv-empty .se-icon { font-size: 48px; color: var(--text-3, #6B778C); display: block; margin-bottom: 12px; }
-.sv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2, #44546F); margin: 0 0 4px 0; }
+.sv-empty .se-icon { font-size: 48px; color: var(--text-3); display: block; margin-bottom: 12px; }
+.sv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
 .sv-empty p { margin: 0; }
 
 /* ─── Create panel ─── */
 .create-panel {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
   margin-bottom: 16px;
 }
-.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1, #172B4D); margin: 0 0 12px 0; }
+.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1); margin: 0 0 12px 0; }
 .cp-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 8px 12px;
   border-radius: var(--radius-md, 4px);
   font-size: 13px;
@@ -345,20 +354,20 @@ function formatDate(ts: number): string {
   margin-bottom: 16px;
 }
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:focus { border-color: var(--accent); }
 
 .color-swatches { display: flex; gap: 6px; }
 .cs-swatch {
@@ -371,7 +380,7 @@ function formatDate(ts: number): string {
   transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .cs-swatch:hover { transform: scale(1.1); }
-.cs-swatch-active { border-color: var(--text-1, #172B4D); }
+.cs-swatch-active { border-color: var(--text-1); }
 
 .cp-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
@@ -382,8 +391,8 @@ function formatDate(ts: number): string {
   gap: 12px;
 }
 .sv-card {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 16px 20px;
   cursor: pointer;
@@ -394,7 +403,7 @@ function formatDate(ts: number): string {
   outline: none;
 }
 .sv-card:hover {
-  border-color: var(--border-strong, #C1C7D0);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-sm, 0 1px 1px rgba(9, 30, 66, 0.13));
 }
 .sv-card:focus-visible {
@@ -406,7 +415,7 @@ function formatDate(ts: number): string {
 .sc-avatar {
   width: 40px;
   height: 40px;
-  border-radius: var(--radius, 3px);
+  border-radius: var(--radius-md, 4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -418,13 +427,13 @@ function formatDate(ts: number): string {
 .sc-icon { font-size: 22px !important; }
 .sc-initials { letter-spacing: 0.5px; text-transform: uppercase; }
 .sc-text { min-width: 0; }
-.sc-name { font-size: 15px; font-weight: 600; color: var(--text-1, #172B4D); }
-.sc-desc { font-size: 13px; color: var(--text-3, #6B778C); margin-top: 2px; line-height: 1.4; }
+.sc-name { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.sc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
 
 .sc-stats { display: flex; gap: 24px; }
 .sc-stat { display: flex; flex-direction: column; }
-.scs-value { font-size: 14px; font-weight: 600; color: var(--text-1, #172B4D); }
-.scs-label { font-size: 11px; color: var(--text-3, #6B778C); text-transform: uppercase; letter-spacing: 0.04em; }
+.scs-value { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.scs-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .sc-actions { display: flex; align-items: center; justify-content: space-between; }
 .ra-btn {
@@ -434,14 +443,14 @@ function formatDate(ts: number): string {
   border: 0;
   border-radius: var(--radius-sm, 3px);
   cursor: pointer;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.ra-btn:hover { background: var(--danger-soft, #FFEBE6); color: var(--danger, #FF5630); }
+.ra-btn:hover { background: var(--danger-soft); color: var(--danger); }
 .ra-btn .material-symbols-outlined { font-size: 18px; }
-.sc-open { color: var(--text-3, #6B778C); display: inline-flex; }
+.sc-open { color: var(--text-3); display: inline-flex; }
 .sc-open .material-symbols-outlined { font-size: 18px; }
 </style>

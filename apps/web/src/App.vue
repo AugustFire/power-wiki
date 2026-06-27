@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { RouterView } from 'vue-router'
-import UserMenu from '@/components/ui/UserMenu.vue'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
+import TopBar from '@/components/layout/TopBar.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
-import SpaceSwitcher from '@/components/layout/SpaceSwitcher.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -20,24 +19,67 @@ const { loading, loaded, loadError } = storeToRefs(pagesStore)
 const { status: authStatus } = storeToRefs(authStore)
 
 /**
- * Three render branches:
+ * Render branches:
  *
  *   1. auth initialising → centered spinner (no topbar, no layout — we don't
  *      yet know if this is /login or a protected route, so don't render
  *      either until the guard decides)
  *   2. unauthed → RouterView only. LoginView / ResetPasswordView render
  *      full-bleed (their own .login-page / .reset-page containers).
- *   3. authed → full shell with topbar + sidebar + RouterView.
+ *   3. transitioning → centered spinner. Set by LoginView between
+ *      auth.login() resolving and router.replace() settling on the
+ *      destination, so the brief unmount frame between LoginView (branch 2)
+ *      and the authed shell (branch 4) doesn't flash blank.
+ *   4. authed → full shell with topbar + sidebar + RouterView.
  */
 const isAuthed = computed(() => authStore.isAuthed)
 const authInitialising = computed(
   () => authStatus.value === 'idle' || authStatus.value === 'loading',
 )
+const showBoot = computed(
+  () => authInitialising.value || (isAuthed.value && authStore.transitioning),
+)
+
+/**
+ * Global ⌘K / `/` shortcut — opens the top search palette from anywhere
+ * in the authed shell. Skipped when focus is in a text input or contenteditable
+ * (login form, editor, search box itself) so user typing is never hijacked.
+ * The handler is registered even during the unauthed branch but bails out
+ * silently — uiStore.openTopSearch is a no-op when there's no shell to
+ * render the palette in.
+ */
+function isTypingTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false
+  const tag = t.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable
+}
+
+function onGlobalKey(e: KeyboardEvent) {
+  if (e.isComposing) return
+  if (!isAuthed.value) return
+  if (isTypingTarget(e.target)) return
+
+  const mod = e.metaKey || e.ctrlKey
+  if (mod && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    uiStore.openTopSearch()
+    return
+  }
+  // Vim-style: bare "/" opens search. Shift+/ ("?") is left alone so users
+  // can still type question marks freely.
+  if (e.key === '/' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault()
+    uiStore.openTopSearch()
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', onGlobalKey))
+onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 </script>
 
 <template>
-  <!-- 1. auth initialising -->
-  <div v-if="authInitialising" class="auth-boot">
+  <!-- 1. auth initialising / 3. post-login transitioning -->
+  <div v-if="showBoot" class="auth-boot">
     <BrandLogo :size="48" class="ab-mark" />
     <div class="ab-spinner" aria-hidden="true"></div>
   </div>
@@ -45,28 +87,9 @@ const authInitialising = computed(
   <!-- 2. unauthed: LoginView / ResetPasswordView render full-bleed -->
   <RouterView v-else-if="!isAuthed" />
 
-  <!-- 3. authed: full app shell -->
+  <!-- 4. authed: full app shell -->
   <div v-else class="app-shell">
-    <header class="topbar">
-      <div class="brand">
-        <BrandLogo :size="24" with-wordmark class="topbar-logo" />
-        <span class="brand-divider" aria-hidden="true"></span>
-        <SpaceSwitcher />
-      </div>
-      <button
-        type="button"
-        class="global-search"
-        title="搜索所有页面"
-        @click="uiStore.openTopSearch()"
-      >
-        <span class="material-symbols-outlined icon">search</span>
-        <span class="gs-placeholder">搜索所有页面…</span>
-        <kbd class="gs-kbd">⌘K</kbd>
-      </button>
-      <div class="topbar-right">
-        <UserMenu />
-      </div>
-    </header>
+    <TopBar />
 
     <div v-if="error" class="error-banner" role="alert">
       <span class="material-symbols-outlined eb-icon">error</span>
@@ -113,13 +136,13 @@ const authInitialising = computed(
   align-items: center;
   justify-content: center;
   gap: 28px;
-  background: var(--bg-canvas, #F4F5F7);
+  background: var(--bg-canvas);
 }
 .ab-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid var(--border, #DFE1E6);
-  border-top-color: var(--accent, #0052CC);
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: ab-spin 0.8s linear infinite;
 }
@@ -131,10 +154,10 @@ const authInitialising = computed(
   align-items: center;
   gap: 10px;
   padding: 10px 24px;
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 14px;
-  border-bottom: 1px solid var(--danger, #FF5630);
+  border-bottom: 1px solid var(--danger);
 }
 .eb-icon { font-size: 20px; flex-shrink: 0; }
 .eb-text { flex: 1; }
@@ -158,13 +181,13 @@ const authInitialising = computed(
   justify-content: center;
   min-height: 60vh;
   gap: 16px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
 }
 .pl-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid var(--border, #DFE1E6);
-  border-top-color: var(--accent, #0052CC);
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: pl-spin 0.8s linear infinite;
 }
@@ -181,31 +204,31 @@ const authInitialising = computed(
   gap: 12px;
   padding: 24px;
   text-align: center;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
 }
 .pe-icon {
   font-size: 56px;
-  color: var(--danger, #FF5630);
+  color: var(--danger);
 }
 .pe-title {
   font-size: 20px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0;
 }
 .pe-text {
   font-size: 14px;
   margin: 0;
-  color: var(--danger, #FF5630);
+  color: var(--danger);
 }
 .pe-hint {
   font-size: 13px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   margin: 0;
   max-width: 480px;
 }
 .pe-hint code {
-  background: var(--bg-muted, #F4F5F7);
+  background: var(--bg-muted);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -214,12 +237,12 @@ const authInitialising = computed(
 .pe-retry {
   margin-top: 8px;
   padding: 8px 20px;
-  background: var(--accent, #0052CC);
+  background: var(--accent);
   color: white;
   border: 0;
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
 }
-.pe-retry:hover { background: var(--accent-hover, #0747A6); }
+.pe-retry:hover { background: var(--accent-hover); }
 </style>

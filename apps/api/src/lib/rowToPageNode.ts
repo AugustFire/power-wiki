@@ -9,12 +9,22 @@
  * handler that requires spaceId. If we see a null here, the bootstrap hasn't
  * run for this row — surface it loudly instead of silently returning a
  * space-less page that would then 500 in the frontend.
+ *
+ * Author info is denormalized via LEFT JOIN users. The caller passes a row
+ * that already carries `authorName` / `authorColor` columns (see
+ * `pagesWithAuthorSelect()` in pages.ts) — both nullable when the page's
+ * authorId doesn't match a real user (legacy 'me' seed or a deleted user).
  */
 
 import type { PageNode } from '@power-wiki/shared'
 import type { PageRow } from '../db/schema'
 
-export function rowToPageNode(row: PageRow): PageNode {
+export type PageRowWithAuthor = PageRow & {
+  authorName: string | null
+  authorColor: string | null
+}
+
+export function rowToPageNode(row: PageRowWithAuthor): PageNode {
   if (row.spaceId === null) {
     throw new Error(
       `page ${row.id} has no space_id — bootstrap.ts backfill must run before the API serves pages`,
@@ -31,7 +41,11 @@ export function rowToPageNode(row: PageRow): PageNode {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     authorId: row.authorId,
+    authorName: row.authorName,
+    authorColor: row.authorColor,
     starred: row.starred,
+    deletedAt: row.deletedAt,
+    deletedBy: row.deletedBy,
   }
   if (row.icon !== null) node.icon = row.icon
   return node

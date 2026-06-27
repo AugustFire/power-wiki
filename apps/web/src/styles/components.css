@@ -1016,7 +1016,21 @@ body:not(.editor-hover) .drag-handle {
 .tiptap th { background: var(--bg-subtle); font-weight: 600; }
 .tiptap ul[data-type="taskList"] { list-style: none; padding-left: 0; }
 .tiptap ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: flex-start; }
-.tiptap ul[data-type="taskList"] li > label { margin-top: 4px; }
+/* 与 .prose 同款对齐:label 高度固定一行,inline-flex center,checkbox 与文字 x-height 对齐 */
+.tiptap ul[data-type="taskList"] li > label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.6em;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+}
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
 .tiptap ul[data-type="taskList"] li > div { flex: 1; }
 
 .edit-footer {

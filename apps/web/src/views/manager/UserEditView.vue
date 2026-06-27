@@ -189,6 +189,12 @@ const colorPresets = [
   </div>
 
   <div v-else-if="user" class="user-edit">
+    <nav class="ue-breadcrumb" aria-label="面包屑导航">
+      <RouterLink to="/manager/users">用户</RouterLink>
+      <span class="ue-bc-sep" aria-hidden="true">/</span>
+      <span class="ue-bc-current">{{ user.name }}</span>
+    </nav>
+
     <header class="ue-header">
       <UserAvatar :size="56" :label="user.name" :color="user.color" />
       <div class="ue-header-text">
@@ -343,17 +349,34 @@ const colorPresets = [
 <style scoped>
 .user-edit { max-width: 1000px; }
 
+/* ─── Breadcrumb ─── */
+.ue-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+.ue-breadcrumb a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.ue-breadcrumb a:hover { text-decoration: underline; }
+.ue-bc-sep { color: var(--text-3); }
+.ue-bc-current { color: var(--text-2); font-weight: 500; }
+
 .ue-loading,
 .ue-error {
   padding: 48px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
-.ue-error { color: var(--danger, #FF5630); }
+.ue-error { color: var(--danger); }
 .ue-error .btn { margin-top: 12px; display: inline-flex; }
 
 /* ─── Header ─── */
@@ -367,7 +390,7 @@ const colorPresets = [
 .ue-title {
   font-size: 22px;
   font-weight: 700;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0;
 }
 .ue-meta {
@@ -379,7 +402,7 @@ const colorPresets = [
 }
 .ue-email {
   font-size: 13px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
 }
 
 .status-pill,
@@ -390,22 +413,22 @@ const colorPresets = [
   padding: 2px 8px;
   border-radius: var(--radius-pill, 999px);
 }
-.status-pill.good { background: var(--success-soft, #E3FCEF); color: var(--success, #36B37E); }
-.status-pill.warn { background: var(--warning-soft, #FFF7E6); color: var(--warning-text, #B86E00); }
-.status-pill.bad { background: var(--danger-soft, #FFEBE6); color: var(--danger, #FF5630); }
+.status-pill.good { background: var(--success-soft); color: var(--success); }
+.status-pill.warn { background: var(--warning-soft); color: var(--warning-text); }
+.status-pill.bad { background: var(--danger-soft); color: var(--danger); }
 .role-pill {
-  background: var(--bg-subtle, #EBECF0);
-  color: var(--text-2, #44546F);
+  background: var(--bg-subtle);
+  color: var(--text-2);
 }
 .role-pill.admin {
-  background: var(--purple-soft, #EAE6FF);
-  color: var(--purple, #403294);
+  background: var(--purple-soft);
+  color: var(--purple);
 }
 
 /* ─── One-time password banner ─── */
 .otp-banner {
-  background: var(--warning-soft, #FFF7E6);
-  border: 1px solid var(--warning, #FFAB00);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
   border-radius: var(--radius-md, 4px);
   padding: 16px 20px;
   margin-bottom: 16px;
@@ -414,10 +437,10 @@ const colorPresets = [
   gap: 12px;
 }
 .otp-row { display: flex; gap: 12px; align-items: flex-start; }
-.otp-icon { font-size: 24px; color: var(--warning-text, #B86E00); flex-shrink: 0; }
+.otp-icon { font-size: 24px; color: var(--warning-text); flex-shrink: 0; }
 .otp-text { flex: 1; }
-.otp-title { font-size: 14px; font-weight: 600; color: var(--text-1, #172B4D); }
-.otp-hint { font-size: 13px; color: var(--text-2, #44546F); margin-top: 2px; }
+.otp-title { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.otp-hint { font-size: 13px; color: var(--text-2); margin-top: 2px; }
 .otp-password-row { display: flex; gap: 8px; }
 .otp-input {
   flex: 1;
@@ -426,13 +449,13 @@ const colorPresets = [
   font-family: var(--font-mono, monospace);
   font-size: 14px;
   font-weight: 600;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   outline: none;
 }
-.otp-input:focus { border-color: var(--accent, #0052CC); }
+.otp-input:focus { border-color: var(--accent); }
 .otp-actions { display: flex; justify-content: flex-end; }
 
 /* ─── Grid + cards ─── */
@@ -443,35 +466,35 @@ const colorPresets = [
   align-items: start;
 }
 .ue-card {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
 }
 .ue-card-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0 0 16px 0;
 }
 .ue-fields { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
-.field-hint { font-size: 12px; color: var(--text-3, #6B778C); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.field-hint { font-size: 12px; color: var(--text-3); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus:not(:disabled) { border-color: var(--accent, #0052CC); }
-.field-input:disabled { background: var(--bg-canvas, #F4F5F7); color: var(--text-3, #6B778C); }
+.field-input:focus:not(:disabled) { border-color: var(--accent); }
+.field-input:disabled { background: var(--bg-canvas); color: var(--text-3); }
 
 .ue-card-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
@@ -487,8 +510,8 @@ const colorPresets = [
   outline-offset: 2px;
   transition: outline-color var(--duration-fast) var(--ease-out);
 }
-.color-swatch.active { outline-color: var(--accent, #0052CC); }
-.color-swatch:hover:not(.active) { outline-color: var(--border-strong, #C1C7D0); }
+.color-swatch.active { outline-color: var(--accent); }
+.color-swatch:hover:not(.active) { outline-color: var(--border-strong); }
 
 .ue-action-list { display: flex; flex-direction: column; gap: 14px; }
 .ue-action {
@@ -497,17 +520,17 @@ const colorPresets = [
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  background: var(--bg-canvas, #F4F5F7);
+  background: var(--bg-canvas);
   border-radius: var(--radius-md, 4px);
 }
-.ue-action-title { font-size: 14px; font-weight: 600; color: var(--text-1, #172B4D); }
-.ue-action-hint { font-size: 12px; color: var(--text-3, #6B778C); margin-top: 2px; }
+.ue-action-title { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.ue-action-hint { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 
-.ue-readonly { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border, #DFE1E6); }
+.ue-readonly { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .ue-ro-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-.ue-ro-label { color: var(--text-3, #6B778C); }
+.ue-ro-label { color: var(--text-3); }
 .ue-ro-value {
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
   font-family: var(--font-mono, monospace);
 }
 </style>

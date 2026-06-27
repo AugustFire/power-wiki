@@ -29,6 +29,14 @@ export const useAuthStore = defineStore('auth', () => {
   const mustResetPassword = ref(false)
   const status = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const loadError = ref<string | null>(null)
+  /**
+   * True during the LoginView → destination transition. App.vue shows a
+   * centered boot spinner while this is set, so the brief unmount frame
+   * between LoginView (unauthed branch) and the authed shell doesn't flash
+   * blank. LoginView sets it after auth.login() resolves and clears it
+   * once router.replace() has settled on the destination.
+   */
+  const transitioning = ref(false)
 
   // Module-scoped so concurrent init() callers share the same promise.
   // We keep this outside the store factory since the store factory re-runs
@@ -103,6 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
     mustResetPassword,
     status,
     loadError,
+    transitioning,
     // computed
     isAuthed,
     isAdmin,

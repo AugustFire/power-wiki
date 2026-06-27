@@ -162,11 +162,20 @@ export const pages = pgTable(
     authorId: text('author_id').notNull().default('me'),
 
     starred: boolean('starred').notNull().default(false),
+
+    /**
+     * Stage 5 soft-delete. NULL = live page; non-NULL = trashed.
+     * `deleted_by` records who moved it (admin restores via /api/pages/:id/restore;
+     * purge via DELETE /api/pages/:id?purge=true). No FK — see header rule.
+     */
+    deletedAt: bigint('deleted_at', { mode: 'number' }),
+    deletedBy: text('deleted_by'),
   },
   (table) => [
     index('pages_parent_idx').on(table.parentId),
     index('pages_parent_order_idx').on(table.parentId, table.sortOrder),
     index('pages_space_idx').on(table.spaceId),
+    index('pages_trash_idx').on(table.spaceId, table.deletedAt),
   ],
 )
 

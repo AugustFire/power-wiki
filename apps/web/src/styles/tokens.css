@@ -98,6 +98,7 @@
     --sub-h:        48px;
     --sidebar-w:    280px;
     --toc-w:        240px;
+    --context-w:    300px;
     --content-max:  1100px;
 
     /* Code highlight — 配 --bg-code 深底,Material 暗主题调色板 */

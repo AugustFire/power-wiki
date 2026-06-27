@@ -58,6 +58,11 @@ export function seedPages(defaultSpaceId: string): PageNode[] {
     createdAt: now - 86400000 * daysAgo,
     updatedAt: now - 3600000 * daysAgo,
     authorId: 'me',
+    // Seed pages are authored by the legacy 'me' sentinel — the LEFT JOIN in
+    // pages.ts can't resolve that to a real user, so these stay null on the
+    // wire and ReadView falls back to "我".
+    authorName: null,
+    authorColor: null,
   })
 
   // 一些可复用的 HTML 片段 ─────────────────────────────────────

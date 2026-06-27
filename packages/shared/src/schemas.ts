@@ -44,7 +44,15 @@ export const PageNodeSchema = z.object({
   createdAt: z.number().int().positive(),
   updatedAt: z.number().int().positive(),
   authorId: z.string().min(1),
+  /** Denormalized author display fields — backend LEFT JOIN users. Null when
+   *  authorId='me' (legacy seed) or refers to a now-deleted user. */
+  authorName: z.string().nullable(),
+  authorColor: z.string().nullable(),
   starred: z.boolean().optional(),
+  /** Stage 5 软删除字段:默认 SELECT 不会返回(trash.list 才会)。
+   *  Optional + nullable,因为常规响应不带这两个字段。 */
+  deletedAt: z.number().int().positive().nullable().optional(),
+  deletedBy: z.string().min(1).nullable().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */
@@ -194,7 +202,9 @@ export const UpdatePageInputSchema = z
 export const MovePageInputSchema = z.object({
   /** 新父页面 id,null = 移动到顶级 */
   newParentId: PageIdSchema.nullable(),
-  /** 移动后在该父级下的排序位置,可选(默认追加到末尾) */
+  /** 0-based 插入位置:在 newParentId 的子页面列表(排除自身)中,
+   * 把该页插入到第 newOrder 个位置。不传 = 追加到末尾。
+   * 后端会重新分配整个 sibling 列表的 sortOrder,无需客户端再批量 PATCH。 */
   newOrder: z.number().int().nonnegative().optional(),
 })
 

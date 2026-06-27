@@ -12,11 +12,11 @@
  * (apps/api/src/routes/spaces.ts) which filters by their group memberships.
  *
  * setAccess replaces the full group set in a single transaction (delete +
- * bulk insert). This keeps the frontend simple: compute the diff, send the
- * new set, done.
+ * bulk insert). The single-toggle UI uses POST/DELETE on /:id/access/:groupId
+ * for optimistic per-group updates; PUT stays for batch ops.
  */
 import { Hono } from 'hono'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray, sql, and } from 'drizzle-orm'
 import {
   CreateSpaceInputSchema,
   SetSpaceAccessInputSchema,
@@ -212,6 +212,71 @@ adminSpacesRouter.put('/:id/access', async (c) => {
 
   const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
   return c.json(rowToSpace(updated, groupIds))
+})
+
+/* ─── POST /api/admin/spaces/:id/access/:groupId ──────────────────────── */
+// Grants a single group access to the space. Idempotent — re-adding an
+// already-authorized group is a no-op (returns 200, not 409) so the frontend
+// can fire-and-forget without tracking prior state.
+adminSpacesRouter.post('/:id/access/:groupId', async (c) => {
+  const id = c.req.param('id')
+  const groupId = c.req.param('groupId')
+
+  const [space] = await db
+    .select({ id: spaces.id })
+    .from(spaces)
+    .where(eq(spaces.id, id))
+    .limit(1)
+  if (!space) return c.json({ error: 'not_found' }, 404)
+
+  const [group] = await db
+    .select({ id: userGroups.id })
+    .from(userGroups)
+    .where(eq(userGroups.id, groupId))
+    .limit(1)
+  if (!group) {
+    return c.json({ error: 'invalid_input', message: '用户组不存在' }, 400)
+  }
+
+  const now = Date.now()
+  // ON CONFLICT DO NOTHING keeps this idempotent — the frontend doesn't have
+  // to track prior membership, and a stale tab clicking again is harmless.
+  await db
+    .insert(spaceGroupAccess)
+    .values({ spaceId: id, groupId, grantedAt: now })
+    .onConflictDoNothing()
+  await db.update(spaces).set({ updatedAt: now }).where(eq(spaces.id, id))
+
+  const accessGroupIds = await getAccessGroupIds(id)
+  const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
+  return c.json(rowToSpace(updated, accessGroupIds))
+})
+
+/* ─── DELETE /api/admin/spaces/:id/access/:groupId ───────────────────── */
+// Revokes a single group's access. Idempotent — removing an already-unauthorized
+// group returns 200 with the current set, not 404.
+adminSpacesRouter.delete('/:id/access/:groupId', async (c) => {
+  const id = c.req.param('id')
+  const groupId = c.req.param('groupId')
+
+  const [space] = await db
+    .select({ id: spaces.id })
+    .from(spaces)
+    .where(eq(spaces.id, id))
+    .limit(1)
+  if (!space) return c.json({ error: 'not_found' }, 404)
+
+  const now = Date.now()
+  await db
+    .delete(spaceGroupAccess)
+    .where(
+      and(eq(spaceGroupAccess.spaceId, id), eq(spaceGroupAccess.groupId, groupId)),
+    )
+  await db.update(spaces).set({ updatedAt: now }).where(eq(spaces.id, id))
+
+  const accessGroupIds = await getAccessGroupIds(id)
+  const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
+  return c.json(rowToSpace(updated, accessGroupIds))
 })
 
 // Re-export for tests / introspection.

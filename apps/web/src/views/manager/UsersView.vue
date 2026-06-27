@@ -10,10 +10,11 @@
  *
  * Edit form (name, color, role) lives in /manager/users/:id → UserEditView.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useManagerActions } from '@/composables/useManagerActions'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import type { User } from '@power-wiki/shared'
@@ -26,12 +27,25 @@ const users = ref<User[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
-const showCreate = ref(false)
+const { showCreateUser: showCreate } = useManagerActions()
 const createEmail = ref('')
 const createName = ref('')
 const createRole = ref<'admin' | 'user'>('user')
 const creating = ref(false)
 const createError = ref<string | null>(null)
+
+// Reset the form fields every time the panel button transitions the form
+// from closed → open. Also reset `showCreate` on mount so stale open state
+// from a previous visit doesn't carry over.
+onMounted(() => { showCreate.value = false })
+watch(showCreate, (next, prev) => {
+  if (next && !prev) {
+    createEmail.value = ''
+    createName.value = ''
+    createRole.value = 'user'
+    createError.value = null
+  }
+})
 
 const oneTimePassword = ref<string | null>(null)
 const oneTimeUser = ref<User | null>(null)
@@ -54,10 +68,6 @@ onMounted(load)
 
 function openCreate() {
   showCreate.value = true
-  createEmail.value = ''
-  createName.value = ''
-  createRole.value = 'user'
-  createError.value = null
 }
 
 function closeCreate() {
@@ -199,10 +209,6 @@ function roleLabel(r: User['role']): string {
         <h1 class="uv-title">用户</h1>
         <p class="uv-sub">共 {{ users.length }} 个用户,{{ adminCount }} 个管理员</p>
       </div>
-      <button type="button" class="btn primary" :disabled="loading" @click="openCreate">
-        <span class="material-symbols-outlined btn-icon">person_add</span>
-        <span>创建用户</span>
-      </button>
     </header>
 
     <div v-if="loadError" class="uv-error">{{ loadError }}</div>
@@ -347,7 +353,7 @@ function roleLabel(r: User['role']): string {
 </template>
 
 <style scoped>
-.users-view { max-width: 1200px; }
+.users-view { max-width: 1600px; }
 
 /* ─── Header ─── */
 .uv-header {
@@ -360,18 +366,18 @@ function roleLabel(r: User['role']): string {
 .uv-title {
   font-size: 22px;
   font-weight: 700;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0;
 }
 .uv-sub {
   font-size: 13px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   margin: 4px 0 0 0;
 }
 
 .uv-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 10px 14px;
   border-radius: var(--radius-md, 4px);
   font-size: 14px;
@@ -382,17 +388,17 @@ function roleLabel(r: User['role']): string {
 .uv-empty {
   padding: 48px;
   text-align: center;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 14px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
 
 /* ─── One-time password banner ─── */
 .otp-banner {
-  background: var(--warning-soft, #FFF7E6);
-  border: 1px solid var(--warning, #FFAB00);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
   border-radius: var(--radius-md, 4px);
   padding: 16px 20px;
   margin-bottom: 16px;
@@ -401,10 +407,10 @@ function roleLabel(r: User['role']): string {
   gap: 12px;
 }
 .otp-row { display: flex; gap: 12px; align-items: flex-start; }
-.otp-icon { font-size: 24px; color: var(--warning-text, #B86E00); flex-shrink: 0; }
+.otp-icon { font-size: 24px; color: var(--warning-text); flex-shrink: 0; }
 .otp-text { flex: 1; }
-.otp-title { font-size: 14px; font-weight: 600; color: var(--text-1, #172B4D); }
-.otp-hint { font-size: 13px; color: var(--text-2, #44546F); margin-top: 2px; }
+.otp-title { font-size: 14px; font-weight: 600; color: var(--text-1); }
+.otp-hint { font-size: 13px; color: var(--text-2); margin-top: 2px; }
 .otp-password-row { display: flex; gap: 8px; }
 .otp-input {
   flex: 1;
@@ -413,28 +419,28 @@ function roleLabel(r: User['role']): string {
   font-family: var(--font-mono, monospace);
   font-size: 14px;
   font-weight: 600;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   outline: none;
 }
-.otp-input:focus { border-color: var(--accent, #0052CC); }
+.otp-input:focus { border-color: var(--accent); }
 .otp-actions { display: flex; justify-content: flex-end; }
 
 /* ─── Create form ─── */
 .create-panel {
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   padding: 20px 24px;
   margin-bottom: 16px;
 }
-.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1, #172B4D); margin: 0; }
-.cp-hint { font-size: 13px; color: var(--text-3, #6B778C); margin: 4px 0 16px 0; }
+.cp-title { font-size: 16px; font-weight: 600; color: var(--text-1); margin: 0; }
+.cp-hint { font-size: 13px; color: var(--text-3); margin: 4px 0 16px 0; }
 .cp-error {
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   padding: 8px 12px;
   border-radius: var(--radius-md, 4px);
   font-size: 13px;
@@ -447,27 +453,27 @@ function roleLabel(r: User['role']): string {
   margin-bottom: 16px;
 }
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-label { font-size: 13px; font-weight: 600; color: var(--text-2, #44546F); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .field-input {
   height: 36px;
   padding: 0 10px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:focus { border-color: var(--accent); }
 .cp-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ─── Table ─── */
 .users-table {
   width: 100%;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   border-collapse: separate;
   border-spacing: 0;
@@ -478,17 +484,17 @@ function roleLabel(r: User['role']): string {
   text-align: left;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 10px 16px;
-  background: var(--bg-canvas, #F4F5F7);
-  border-bottom: 1px solid var(--border, #DFE1E6);
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--border);
 }
 .users-table td {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #DFE1E6);
-  color: var(--text-1, #172B4D);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-1);
   vertical-align: middle;
 }
 .users-table tr:last-child td { border-bottom: 0; }
@@ -501,14 +507,14 @@ function roleLabel(r: User['role']): string {
 .user-cell-text { min-width: 0; }
 .user-name {
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .user-email {
   font-size: 12px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -520,12 +526,12 @@ function roleLabel(r: User['role']): string {
   font-weight: 500;
   padding: 2px 8px;
   border-radius: var(--radius-pill, 999px);
-  background: var(--bg-subtle, #EBECF0);
-  color: var(--text-2, #44546F);
+  background: var(--bg-subtle);
+  color: var(--text-2);
 }
 .role-pill.admin {
-  background: var(--purple-soft, #EAE6FF);
-  color: var(--purple, #403294);
+  background: var(--purple-soft);
+  color: var(--purple);
 }
 
 .status-pill {
@@ -535,12 +541,12 @@ function roleLabel(r: User['role']): string {
   padding: 2px 8px;
   border-radius: var(--radius-pill, 999px);
 }
-.status-pill.good { background: var(--success-soft, #E3FCEF); color: var(--success, #36B37E); }
-.status-pill.warn { background: var(--warning-soft, #FFF7E6); color: var(--warning-text, #B86E00); }
-.status-pill.bad { background: var(--danger-soft, #FFEBE6); color: var(--danger, #FF5630); }
-.status-pill.muted { background: var(--bg-subtle, #EBECF0); color: var(--text-3, #6B778C); }
+.status-pill.good { background: var(--success-soft); color: var(--success); }
+.status-pill.warn { background: var(--warning-soft); color: var(--warning-text); }
+.status-pill.bad { background: var(--danger-soft); color: var(--danger); }
+.status-pill.muted { background: var(--bg-subtle); color: var(--text-3); }
 
-.last-login { color: var(--text-3, #6B778C); font-size: 13px; }
+.last-login { color: var(--text-3); font-size: 13px; }
 
 .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .ra-btn {
@@ -550,13 +556,13 @@ function roleLabel(r: User['role']): string {
   border: 0;
   border-radius: var(--radius-sm, 3px);
   cursor: pointer;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: background var(--duration-fast) var(--ease-out);
 }
-.ra-btn:hover { background: var(--bg-canvas, #F4F5F7); color: var(--text-1, #172B4D); }
+.ra-btn:hover { background: var(--bg-canvas); color: var(--text-1); }
 .ra-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ra-btn .material-symbols-outlined { font-size: 18px; }
 </style>

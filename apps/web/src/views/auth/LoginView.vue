@@ -43,11 +43,16 @@ async function onSubmit() {
       return
     }
     const dest = resolveRedirect()
+    // Cover the LoginView → destination handoff so the unmount frame doesn't
+    // flash blank. Cleared in the finally after router.replace resolves +
+    // one tick, so the destination view has at least started mounting.
+    authStore.transitioning = true
     if (!dest.startsWith('/manager')) {
       await spacesStore.init()
       await pagesStore.init()
     }
-    void router.replace(dest)
+    await router.replace(dest)
+    await new Promise((r) => setTimeout(r, 80))
   } catch (e) {
     if (e instanceof ApiError && e.code === 'account_disabled') {
       errorMsg.value = '账号已被禁用,请联系管理员'
@@ -60,6 +65,7 @@ async function onSubmit() {
     }
   } finally {
     submitting.value = false
+    authStore.transitioning = false
   }
 }
 </script>
@@ -142,7 +148,7 @@ async function onSubmit() {
 .login-page {
   min-height: 100vh;
   display: flex;
-  background: var(--bg, #FFFFFF);
+  background: var(--bg);
 }
 
 /* ─── 左侧品牌区(40%) ─── */
@@ -152,8 +158,8 @@ async function onSubmit() {
   overflow: hidden;
   background:
     radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.08), transparent 60%),
-    linear-gradient(135deg, var(--accent, #0052CC) 0%, var(--accent-hover, #0747A6) 100%);
-  color: var(--text-invert, #FFFFFF);
+    linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+  color: var(--text-invert);
   display: flex;
   align-items: center;
   padding: 64px;
@@ -161,7 +167,7 @@ async function onSubmit() {
 .lb-decor {
   position: absolute;
   inset: 0;
-  color: var(--text-invert, #FFFFFF);
+  color: var(--text-invert);
   pointer-events: none;
 }
 .lb-decor svg {
@@ -201,13 +207,13 @@ async function onSubmit() {
   align-items: center;
   justify-content: center;
   padding: 64px;
-  background: var(--bg-canvas, #F4F5F7);
+  background: var(--bg-canvas);
 }
 .login-card {
   width: 100%;
   max-width: 400px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #DFE1E6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg, 6px);
   padding: 36px;
   box-shadow: var(--shadow-md, 0 4px 8px -2px rgba(9, 30, 66, 0.08), 0 0 1px rgba(9, 30, 66, 0.08));
@@ -219,13 +225,13 @@ async function onSubmit() {
 .lc-title {
   font-size: 26px;
   font-weight: 700;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 4px 0 0 0;
   line-height: 1.2;
 }
 .lc-hint {
   font-size: 13px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   margin: 0 0 8px 0;
 }
 
@@ -234,11 +240,11 @@ async function onSubmit() {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--danger-soft, #FFEBE6);
-  color: var(--danger, #FF5630);
+  background: var(--danger-soft);
+  color: var(--danger);
   font-size: 13px;
   border-radius: var(--radius-md, 4px);
-  border: 1px solid var(--danger, #FF5630);
+  border: 1px solid var(--danger);
 }
 .le-icon { font-size: 18px; flex-shrink: 0; }
 
@@ -250,29 +256,29 @@ async function onSubmit() {
 .field-label {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
 }
 .field-input {
   height: 44px;
   padding: 0 12px;
   font-size: 14px;
   font-family: var(--font-sans, inherit);
-  color: var(--text-1, #172B4D);
-  background: var(--bg, #FFFFFF);
-  border: 2px solid var(--border, #DFE1E6);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 2px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
   transition: border-color var(--duration-fast, 120ms) var(--ease-out, ease);
 }
-.field-input:focus { border-color: var(--accent, #0052CC); }
-.field-input:disabled { background: var(--bg-canvas, #F4F5F7); cursor: not-allowed; }
+.field-input:focus { border-color: var(--accent); }
+.field-input:disabled { background: var(--bg-canvas); cursor: not-allowed; }
 
 .submit {
   margin-top: 4px;
   height: 44px;
   width: 100%;
-  background: var(--accent, #0052CC);
-  color: var(--text-invert, #FFFFFF);
+  background: var(--accent);
+  color: var(--text-invert);
   border: 0;
   border-radius: var(--radius-md, 4px);
   font-size: 14px;
@@ -285,7 +291,7 @@ async function onSubmit() {
   gap: 8px;
   transition: background var(--duration-fast, 120ms) var(--ease-out, ease);
 }
-.submit:hover:not(:disabled) { background: var(--accent-hover, #0747A6); }
+.submit:hover:not(:disabled) { background: var(--accent-hover); }
 .submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .spinner {

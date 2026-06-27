@@ -20,6 +20,14 @@ export const usePagesStore = defineStore('pages', () => {
   const loading = ref(false)
   /** 初始化阶段(冷启动加载 / 重连)的失败信息;UI 用来决定显示加载占位还是错误页 */
   const loadError = ref<string | null>(null)
+  /**
+   * Stage 5: trash cache. The store doesn't auto-load this — the admin
+   * TrashView pulls it via `loadTrash(spaceId)` on mount. Lives outside
+   * `pages.value` because trash rows have `deletedAt != null` and would
+   * otherwise leak into the tree builder.
+   */
+  const trashed = ref<PageNode[]>([])
+  const trashLoaded = ref(false)
 
   function ui() {
     return useUiStore()
@@ -44,10 +52,27 @@ export const usePagesStore = defineStore('pages', () => {
     }
   }
 
-  /** Re-fetch the full page list — used after admin operations, space switch, etc. */
+  /**
+   * Re-fetch the page list without flipping `loaded`/`loading`, so the UI
+   * doesn't flash back to the boot spinner. Used after admin operations
+   * (space access change, group delete, etc.) that may have changed the
+   * user's visible-space set.
+   *
+   * Assumes `init()` has already run. If it hasn't, the refresh call still
+   * updates pages.value, but `loaded` stays false — that's the caller's bug.
+   */
   async function refresh(): Promise<void> {
-    loaded.value = false
-    await init()
+    try {
+      const list = await api.pages.list()
+      pages.value = list
+      // Re-run migration in case any fetched pages are still missing JSON —
+      // this is a no-op for already-migrated pages.
+      migrateEmptyJson()
+    } catch (e) {
+      ui().setError(
+        `刷新失败: ${e instanceof ApiError ? e.message : '未知错误'}`,
+      )
+    }
   }
 
   /**
@@ -129,6 +154,10 @@ export const usePagesStore = defineStore('pages', () => {
       createdAt: now,
       updatedAt: now,
       authorId: 'me',
+      // Optimistic placeholder — replaced by the server's response which
+      // carries the real LEFT-JOIN'd authorName / authorColor.
+      authorName: null,
+      authorColor: null,
       spaceId,
     }
     pages.value.push(optimistic)
@@ -192,28 +221,109 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
-   * 级联删除 — 后端 ON DELETE CASCADE 一次往返搞定后代;
-   * 前端用 collectDescendantIds 拿到全部待删 id 做快照,失败时整批还原。
+   * Stage 5: 软删(回收站)。后端在有未删子节点时会返 409 has_children;
+   * UI 应该在调用前就禁用删除按钮,但保留这条路径以防前端过滤与服务端不一致。
+   *
+   * 走乐观更新 — 从主树立刻移除,失败回滚并 banner。TrashView 自己 reload,
+   * 这里的 `trashed` 数组只由 TrashView 维护。
    */
-  async function deletePage(id: string): Promise<void> {
-    const ids = collectDescendantIds(id)
-    const snapshot = pages.value.filter((p) => ids.has(p.id))
-    pages.value = pages.value.filter((p) => !ids.has(p.id))
+  async function softDeletePage(id: string): Promise<void> {
+    const snapshot = pages.value.find((p) => p.id === id)
+    if (!snapshot) throw new Error(`page not found: ${id}`)
+    pages.value = pages.value.filter((p) => p.id !== id)
 
     try {
       await api.pages.delete(id)
     } catch (e) {
-      // 还原(保持原顺序 — 简单 push 回数组尾部即可,顺序在 getTree() 里会按 order 重排)
-      pages.value = [...pages.value, ...snapshot]
-      ui().setError(`删除失败: ${errorMessage(e)}`)
+      // 还原 — 简单 push 回数组尾部,顺序在 getTree() 里会按 order 重排
+      pages.value = [...pages.value, snapshot]
+      const msg =
+        e instanceof ApiError && e.code === 'has_children'
+          ? '请先删除子页面'
+          : `删除失败: ${errorMessage(e)}`
+      ui().setError(msg)
       throw e
     }
   }
 
   /**
-   * 移动节点到新父级。循环保护本地也做一次(server 是权威,但本地拒绝可以省一次往返)。
+   * Stage 5: admin-only. Restores a single trashed page. The backend enforces
+   * the parent-must-be-restored rule (409 parent_trashed). On success we
+   * reload the page tree so the restored row appears in its original spot
+   * (and the trash cache entry is dropped).
    */
-  async function movePage(id: string, newParentId: string | null): Promise<PageNode> {
+  async function restorePage(id: string): Promise<void> {
+    trashed.value = trashed.value.filter((p) => p.id !== id)
+    try {
+      await api.pages.restore(id)
+      // Restore may also restore other rows if the backend lifted a
+      // subtree, but our spec is single-row restore. Refresh everything
+      // to be safe — pages.list is cheap and not cached.
+      const list = await api.pages.list()
+      pages.value = list
+      migrateEmptyJson()
+    } catch (e) {
+      // Re-fetch trash to resync the optimistic drop with truth.
+      await loadTrashForCurrent()
+      const msg =
+        e instanceof ApiError && e.code === 'parent_trashed'
+          ? '请先恢复父页面'
+          : `恢复失败: ${errorMessage(e)}`
+      ui().setError(msg)
+      throw e
+    }
+  }
+
+  /**
+   * Stage 5: admin-only. Permanently deletes a trashed row. No optimistic
+   * re-render — we just drop from `trashed` and refresh on failure.
+   */
+  async function purgePage(id: string): Promise<void> {
+    const snapshot = trashed.value.find((p) => p.id === id)
+    trashed.value = trashed.value.filter((p) => p.id !== id)
+    try {
+      await api.pages.purge(id)
+    } catch (e) {
+      if (snapshot) trashed.value = [...trashed.value, snapshot]
+      ui().setError(`永久删除失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
+   * Stage 5: load trashed pages for the active space. Called by TrashView
+   * on mount; idempotent. Re-running it refetches and overwrites.
+   */
+  async function loadTrash(spaceId: string): Promise<void> {
+    try {
+      trashed.value = await api.pages.trash.list(spaceId)
+      trashLoaded.value = true
+    } catch (e) {
+      ui().setError(`加载回收站失败: ${errorMessage(e)}`)
+    }
+  }
+
+  /**
+   * Stage 5: re-load trash for the active space without requiring the
+   * caller to know which space is active. Used after restore/purge failure.
+   */
+  async function loadTrashForCurrent(): Promise<void> {
+    const spaceId = useSpacesStore().activeSpaceId.value
+    if (spaceId) await loadTrash(spaceId)
+  }
+
+  /**
+   * 移动节点到新父级。`newOrder` 是 0-based 插入位置 — 把该页面插入到目标父级
+   * 子列表(排除自身)的第 newOrder 个位置。省略则追加到末尾。
+   * 循环保护本地也做一次(server 是权威,但本地拒绝可以省一次往返)。
+   *
+   * 本地先按目标顺序重排兄弟节点的 order,然后调 API;失败时整批还原快照。
+   */
+  async function movePage(
+    id: string,
+    newParentId: string | null,
+    newOrder?: number,
+  ): Promise<PageNode> {
     if (id === newParentId) throw new Error('cannot move into self')
     if (newParentId) {
       const descendants = collectDescendantIds(id)
@@ -223,16 +333,47 @@ export const usePagesStore = defineStore('pages', () => {
     const idx = pages.value.findIndex((p) => p.id === id)
     if (idx < 0) throw new Error(`page not found: ${id}`)
     const snapshot = pages.value[idx]!
-    pages.value[idx] = { ...snapshot, parentId: newParentId }
+    // Snapshot the full pages array so we can roll back on failure.
+    const pagesSnapshot = pages.value.slice()
+
+    // Compute the new sort order for the moved page and its (former + new)
+    // siblings in one pass. The server will rewrite the whole sibling list
+    // atomically; we mirror it locally so the tree re-renders immediately.
+    const targetSiblings = pages.value
+      .filter((p) => p.parentId === newParentId && p.id !== id)
+      .sort((a, b) => a.order - b.order)
+    const insertAt = Math.max(
+      0,
+      Math.min(newOrder ?? targetSiblings.length, targetSiblings.length),
+    )
+    const reordered: PageNode[] = [
+      ...targetSiblings.slice(0, insertAt),
+      { ...snapshot, parentId: newParentId, order: insertAt, updatedAt: Date.now() },
+      ...targetSiblings.slice(insertAt),
+    ]
+
+    // Rewrite local order values + the moved page's parentId so the tree
+    // rebuild reflects the new layout. Page records we didn't touch keep
+    // their original snapshot identity.
+    const reorderedIds = new Set(reordered.map((p) => p.id))
+    pages.value = pages.value.map((p) => {
+      if (p.id === id) {
+        return { ...p, parentId: newParentId, order: insertAt, updatedAt: Date.now() }
+      }
+      if (reorderedIds.has(p.id)) {
+        const newOrderVal = reordered.findIndex((r) => r.id === p.id)
+        return newOrderVal >= 0 ? { ...p, order: newOrderVal } : p
+      }
+      return p
+    })
 
     try {
-      const real = await api.pages.move(id, { newParentId })
+      const real = await api.pages.move(id, { newParentId, newOrder })
       const i = pages.value.findIndex((p) => p.id === id)
       if (i >= 0) pages.value[i] = real
       return real
     } catch (e) {
-      const i = pages.value.findIndex((p) => p.id === id)
-      if (i >= 0) pages.value[i] = snapshot
+      pages.value = pagesSnapshot
       ui().setError(`移动失败: ${errorMessage(e)}`)
       throw e
     }
@@ -254,8 +395,13 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   function getTree(): TreeNode[] {
+    // Stage 5: never render trashed rows. The backend already filters, but
+    // optimistic updates (softDeletePage) briefly hold trashed rows in
+    // `pages.value` until the server confirms — drop them here so the
+    // tree doesn't flicker a deleted-then-restored node.
+    const live = pages.value.filter((p) => p.deletedAt == null)
     const map = new Map<string, TreeNode>()
-    for (const p of pages.value) {
+    for (const p of live) {
       map.set(p.id, {
         id: p.id,
         title: p.title,
@@ -265,7 +411,7 @@ export const usePagesStore = defineStore('pages', () => {
       })
     }
     const roots: TreeNode[] = []
-    for (const p of pages.value) {
+    for (const p of live) {
       const node = map.get(p.id)!
       if (p.parentId && map.has(p.parentId)) {
         map.get(p.parentId)!.children.push(node)
@@ -293,7 +439,8 @@ export const usePagesStore = defineStore('pages', () => {
    */
   function getTreeForSpace(spaceId: string | null): TreeNode[] {
     if (!spaceId) return getTree()
-    const scoped = pages.value.filter((p) => p.spaceId === spaceId)
+    // Stage 5: also filter trashed rows out of the scoped tree.
+    const scoped = pages.value.filter((p) => p.spaceId === spaceId && p.deletedAt == null)
     const map = new Map<string, TreeNode>()
     for (const p of scoped) {
       map.set(p.id, {
@@ -311,7 +458,9 @@ export const usePagesStore = defineStore('pages', () => {
         map.get(p.parentId)!.children.push(node)
       } else {
         // Promote orphans to roots — this happens if the parent lives in
-        // another space (shouldn't, but we don't crash).
+        // another space (shouldn't, but we don't crash) OR if the parent
+        // was trashed (Stage 5): the orphan shows up as a root until the
+        // admin restores the parent.
         roots.push(node)
       }
     }
@@ -325,7 +474,7 @@ export const usePagesStore = defineStore('pages', () => {
 
   function getChildren(parentId: string | null): PageNode[] {
     return pages.value
-      .filter((p) => p.parentId === parentId)
+      .filter((p) => p.parentId === parentId && p.deletedAt == null)
       .sort((a, b) => a.order - b.order)
   }
 
@@ -336,6 +485,8 @@ export const usePagesStore = defineStore('pages', () => {
     loaded,
     loading,
     loadError,
+    trashed,
+    trashLoaded,
     tree,
     init,
     refresh,
@@ -343,11 +494,14 @@ export const usePagesStore = defineStore('pages', () => {
     getPage,
     getChildren,
     updatePage,
-    deletePage,
+    softDeletePage,
     renamePage,
     movePage,
     getTree,
     getTreeForSpace,
+    loadTrash,
+    restorePage,
+    purgePage,
   }
 })
 
