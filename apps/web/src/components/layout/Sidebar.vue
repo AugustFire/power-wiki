@@ -5,7 +5,6 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import PageTree from './PageTree.vue'
-import SpaceSwitcher from './SpaceSwitcher.vue'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -32,8 +31,6 @@ async function createRoot() {
 
 <template>
   <aside class="sidebar">
-    <SpaceSwitcher />
-
     <div class="quick-nav">
       <a class="quick-nav-item" href="#/">
         <span class="material-symbols-outlined">home</span>
@@ -172,12 +169,12 @@ async function createRoot() {
 }
 .create-page-btn kbd {
   margin-left: auto;
-  background: var(--accent-bg-soft);
-  color: var(--accent);
+  background: var(--bg-subtle);
+  color: var(--text-3);
   border-color: transparent;
 }
 .create-page-btn:hover kbd {
-  background: rgba(255, 255, 255, 0.25);
-  color: white;
+  background: var(--bg);
+  color: var(--text-2);
 }
 </style>

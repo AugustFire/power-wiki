@@ -1,0 +1,5 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="#0052CC">
+  <path fill-rule="evenodd" d="M4 4 H20 A6 6 0 0 1 20 16 H12 V28 H4 Z M12 8 H18 A2 2 0 0 1 18 12 H12 Z"/>
+  <line x1="20" y1="22" x2="29" y2="22" stroke="#0052CC" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+  <line x1="20" y1="26" x2="29" y2="26" stroke="#0052CC" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+</svg>

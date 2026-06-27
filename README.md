@@ -80,6 +80,8 @@ docker compose down -v    # 停 + 删数据
 
 设计视口 **2560×1440**(24" 2K 显示器),最小宽度锁死 1280px — 仅桌面端。开发期间不要写 `@media` 断点。
 
+**品牌识别** — 唯一资产来源 `apps/web/src/components/ui/BrandLogo.vue`(几何 P + 右侧递减透明度书页线,`fill="currentColor"`)。所有品牌出现位置(topbar / Login split layout 左栏 / ResetPassword split layout 左栏 / auth-boot 启动屏 / 404 页)都通过 `<BrandLogo>` 引用。Favicon 资产(`public/favicon.svg` + 16/32/180 PNG)改 SVG 后跑 `node scripts/render-favicons.mjs` 重新生成。
+
 ## 🏗️ 技术栈
 
 | 层 | 选型 | 理由 |
@@ -145,13 +147,13 @@ power-wiki/
 │   │   │   ├── router/
 │   │   │   ├── stores/            # pages.ts(CRUD + 树) / ui.ts
 │   │   │   ├── views/             # HomeView / ReadView / EditView / NotFoundView
-│   │   │   ├── components/        # layout/ + editor/(NodeView + Popover)
+│   │   │   ├── components/        # layout/ + editor/(NodeView + Popover) + ui/(UserAvatar / UserMenu / **BrandLogo**)
 │   │   │   ├── editor/            # Tiptap 扩展集合
 │   │   │   ├── lib/               # id / storage / sanitize / headingAnchors / ...
 │   │   │   ├── styles/            # tokens.css / base.css / components.css
 │   │   │   └── types/
-│   │   ├── public/                # seed-demo.html 等静态资源
-│   │   ├── index.html             # SPA 入口 + 字体 CDN
+│   │   ├── public/                # favicon.svg + 16/32/180 PNG(BrandLogo 的源 SVG)
+│   │   ├── index.html             # SPA 入口 + 字体 CDN + favicon 链接 + theme-color
 │   │   ├── vite.config.ts
 │   │   ├── tsconfig.json          # 项目引用
 │   │   ├── tsconfig.app.json      # 应用代码编译选项

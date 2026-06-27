@@ -3,7 +3,9 @@ import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { RouterView } from 'vue-router'
 import UserMenu from '@/components/ui/UserMenu.vue'
+import BrandLogo from '@/components/ui/BrandLogo.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
+import SpaceSwitcher from '@/components/layout/SpaceSwitcher.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -36,6 +38,7 @@ const authInitialising = computed(
 <template>
   <!-- 1. auth initialising -->
   <div v-if="authInitialising" class="auth-boot">
+    <BrandLogo :size="48" class="ab-mark" />
     <div class="ab-spinner" aria-hidden="true"></div>
   </div>
 
@@ -46,8 +49,9 @@ const authInitialising = computed(
   <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark">P</span>
-        <span class="brand-name">power-wiki</span>
+        <BrandLogo :size="24" with-wordmark class="topbar-logo" />
+        <span class="brand-divider" aria-hidden="true"></span>
+        <SpaceSwitcher />
       </div>
       <button
         type="button"
@@ -105,8 +109,10 @@ const authInitialising = computed(
 .auth-boot {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 28px;
   background: var(--bg-canvas, #F4F5F7);
 }
 .ab-spinner {

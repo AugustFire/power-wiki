@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { ApiError } from '@/lib/api'
+import BrandLogo from '@/components/ui/BrandLogo.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -29,11 +30,6 @@ const canSubmit = computed(() =>
   newPassword.value !== currentPassword.value,
 )
 
-/**
- * Pick redirect target after reset:
- *   1. ?redirect= query string (validated)
- *   2. Otherwise → /manager/users for admins, / for regular users
- */
 function resolveRedirect(): string {
   const raw = route.query.redirect
   if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) return raw
@@ -47,7 +43,6 @@ async function onSubmit() {
   try {
     await authStore.resetPassword(currentPassword.value, newPassword.value)
     const dest = resolveRedirect()
-    // Admin lands on manager UI; only kick off data loaders for the home path.
     if (!dest.startsWith('/manager')) {
       await spacesStore.init()
       await pagesStore.init()
@@ -69,78 +64,97 @@ async function onSubmit() {
 
 <template>
   <div class="reset-page">
-    <form class="reset-card" @submit.prevent="onSubmit">
-      <div class="brand">
-        <span class="brand-mark">P</span>
-        <span class="brand-name">power-wiki</span>
+    <aside class="reset-brand">
+      <div class="rb-decor" aria-hidden="true">
+        <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+          <g stroke="currentColor" stroke-linecap="round" fill="none">
+            <line x1="40" y1="60" x2="360" y2="60" stroke-width="2" opacity="0.18" />
+            <line x1="40" y1="80" x2="280" y2="80" stroke-width="2" opacity="0.12" />
+            <line x1="40" y1="100" x2="320" y2="100" stroke-width="2" opacity="0.08" />
+            <circle cx="340" cy="320" r="80" stroke-width="2" opacity="0.1" />
+            <circle cx="340" cy="320" r="40" stroke-width="2" opacity="0.16" />
+          </g>
+        </svg>
       </div>
-      <h1 class="reset-title">设置新密码</h1>
-      <p class="reset-hint">
-        你正在首次登录或被管理员重置了密码,请设置一个新的密码。
-      </p>
-
-      <div v-if="errorMsg" class="reset-error" role="alert">
-        <span class="material-symbols-outlined le-icon">error</span>
-        <span>{{ errorMsg }}</span>
+      <div class="rb-content">
+        <BrandLogo :size="56" variant="light" with-wordmark class="rb-logo" />
+        <h1 class="rb-tagline">设置新密码</h1>
+        <p class="rb-sub">
+          你正在首次登录或被管理员重置了密码,<br />
+          请设置一个新的密码以保护账号安全。
+        </p>
       </div>
+    </aside>
 
-      <label class="field">
-        <span class="field-label">当前密码</span>
-        <input
-          v-model="currentPassword"
-          type="password"
-          autocomplete="current-password"
-          required
-          placeholder="初始密码或旧密码"
-          class="field-input"
-          :disabled="submitting"
-          autofocus
-        />
-      </label>
+    <main class="reset-main">
+      <form class="reset-card" @submit.prevent="onSubmit">
+        <BrandLogo :size="28" class="rc-mark" />
+        <h2 class="rc-title">设置新密码</h2>
+        <p class="rc-hint">密码至少 8 位,且不能与当前密码相同</p>
 
-      <label class="field">
-        <span class="field-label">新密码</span>
-        <input
-          v-model="newPassword"
-          type="password"
-          autocomplete="new-password"
-          required
-          minlength="8"
-          placeholder="至少 8 位"
-          class="field-input"
-          :class="{ 'field-input-invalid': newPasswordTooShort || sameAsCurrent }"
-          :disabled="submitting"
-        />
-        <span v-if="newPasswordTooShort" class="field-hint field-hint-warn">
-          密码至少需要 8 位
-        </span>
-        <span v-else-if="sameAsCurrent" class="field-hint field-hint-warn">
-          新密码不能与当前密码相同
-        </span>
-      </label>
+        <div v-if="errorMsg" class="rc-error" role="alert">
+          <span class="material-symbols-outlined le-icon">error</span>
+          <span>{{ errorMsg }}</span>
+        </div>
 
-      <label class="field">
-        <span class="field-label">确认新密码</span>
-        <input
-          v-model="confirmPassword"
-          type="password"
-          autocomplete="new-password"
-          required
-          placeholder="再输入一次"
-          class="field-input"
-          :class="{ 'field-input-invalid': passwordsMismatch }"
-          :disabled="submitting"
-        />
-        <span v-if="passwordsMismatch" class="field-hint field-hint-warn">
-          两次输入的密码不一致
-        </span>
-      </label>
+        <label class="field">
+          <span class="field-label">当前密码</span>
+          <input
+            v-model="currentPassword"
+            type="password"
+            autocomplete="current-password"
+            required
+            placeholder="初始密码或旧密码"
+            class="field-input"
+            :disabled="submitting"
+            autofocus
+          />
+        </label>
 
-      <button type="submit" class="submit" :disabled="!canSubmit || submitting">
-        <span v-if="submitting" class="spinner" aria-hidden="true"></span>
-        <span>{{ submitting ? '提交中…' : '设置新密码并登录' }}</span>
-      </button>
-    </form>
+        <label class="field">
+          <span class="field-label">新密码</span>
+          <input
+            v-model="newPassword"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="8"
+            placeholder="至少 8 位"
+            class="field-input"
+            :class="{ 'field-input-invalid': newPasswordTooShort || sameAsCurrent }"
+            :disabled="submitting"
+          />
+          <span v-if="newPasswordTooShort" class="field-hint field-hint-warn">
+            密码至少需要 8 位
+          </span>
+          <span v-else-if="sameAsCurrent" class="field-hint field-hint-warn">
+            新密码不能与当前密码相同
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">确认新密码</span>
+          <input
+            v-model="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            required
+            placeholder="再输入一次"
+            class="field-input"
+            :class="{ 'field-input-invalid': passwordsMismatch }"
+            :disabled="submitting"
+          />
+          <span v-if="passwordsMismatch" class="field-hint field-hint-warn">
+            两次输入的密码不一致
+          </span>
+        </label>
+
+        <button type="submit" class="submit" :disabled="!canSubmit || submitting">
+          <span v-if="submitting" class="spinner" aria-hidden="true"></span>
+          <span>{{ submitting ? '提交中…' : '设置新密码并登录' }}</span>
+        </button>
+      </form>
+    </main>
   </div>
 </template>
 
@@ -148,60 +162,88 @@ async function onSubmit() {
 .reset-page {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-canvas, #F4F5F7);
-  padding: 24px;
+  background: var(--bg, #FFFFFF);
 }
 
+/* ─── 左侧品牌区(40%) ─── */
+.reset-brand {
+  flex: 0 0 40%;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.08), transparent 60%),
+    linear-gradient(135deg, var(--accent, #0052CC) 0%, var(--accent-hover, #0747A6) 100%);
+  color: var(--text-invert, #FFFFFF);
+  display: flex;
+  align-items: center;
+  padding: 64px;
+}
+.rb-decor {
+  position: absolute;
+  inset: 0;
+  color: var(--text-invert, #FFFFFF);
+  pointer-events: none;
+}
+.rb-decor svg { width: 100%; height: 100%; }
+.rb-content {
+  position: relative;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.rb-logo { font-size: 36px; }
+.rb-tagline {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 8px 0 0 0;
+  letter-spacing: -0.01em;
+}
+.rb-sub {
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+  opacity: 0.85;
+  font-weight: 400;
+}
+
+/* ─── 右侧表单区(60%) ─── */
+.reset-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px;
+  background: var(--bg-canvas, #F4F5F7);
+}
 .reset-card {
   width: 100%;
   max-width: 440px;
   background: var(--bg, #FFFFFF);
   border: 1px solid var(--border, #DFE1E6);
   border-radius: var(--radius-lg, 6px);
-  padding: 32px;
+  padding: 36px;
   box-shadow: var(--shadow-md, 0 4px 8px -2px rgba(9, 30, 66, 0.08), 0 0 1px rgba(9, 30, 66, 0.08));
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 16px;
-  margin-bottom: 4px;
-}
-.brand-mark {
-  width: 24px;
-  height: 24px;
-  background: var(--accent, #0052CC);
-  border-radius: var(--radius, 3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-size: 14px;
-}
-.brand-name { color: var(--text-1, #172B4D); }
-
-.reset-title {
-  font-size: 22px;
+.rc-mark { margin-bottom: 4px; }
+.rc-title {
+  font-size: 26px;
   font-weight: 700;
   color: var(--text-1, #172B4D);
   margin: 4px 0 0 0;
   line-height: 1.2;
 }
-.reset-hint {
+.rc-hint {
   font-size: 13px;
   color: var(--text-3, #6B778C);
   margin: 0 0 4px 0;
 }
 
-.reset-error {
+.rc-error {
   display: flex;
   align-items: center;
   gap: 8px;

@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { ApiError } from '@/lib/api'
+import BrandLogo from '@/components/ui/BrandLogo.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -37,15 +38,11 @@ async function onSubmit() {
   submitting.value = true
   try {
     await authStore.login(email.value.trim(), password.value)
-    // After login, store now has user + mustResetPassword.
-    // mustReset takes priority — Router guard will re-route to /reset-password.
     if (authStore.needsPasswordReset) {
       void router.replace('/reset-password')
       return
     }
     const dest = resolveRedirect()
-    // Spaces and pages still need to load for HomeView (regular user path).
-    // Admin lands on /manager/users directly, so we can skip those loads.
     if (!dest.startsWith('/manager')) {
       await spacesStore.init()
       await pagesStore.init()
@@ -55,8 +52,6 @@ async function onSubmit() {
     if (e instanceof ApiError && e.code === 'account_disabled') {
       errorMsg.value = '账号已被禁用,请联系管理员'
     } else if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-      // Generic 401 from sign-in — backend intentionally doesn't distinguish
-      // wrong email vs wrong password to prevent enumeration.
       errorMsg.value = '邮箱或密码错误'
     } else if (e instanceof ApiError) {
       errorMsg.value = e.message
@@ -71,51 +66,75 @@ async function onSubmit() {
 
 <template>
   <div class="login-page">
-    <form class="login-card" @submit.prevent="onSubmit">
-      <div class="brand">
-        <span class="brand-mark">P</span>
-        <span class="brand-name">power-wiki</span>
+    <!-- 左侧:品牌区 -->
+    <aside class="login-brand">
+      <div class="lb-decor" aria-hidden="true">
+        <!-- 装饰:浅色低透明度几何元素,呼应 logo 的书页线条 -->
+        <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+          <g stroke="currentColor" stroke-linecap="round" fill="none">
+            <line x1="40" y1="60" x2="360" y2="60" stroke-width="2" opacity="0.18" />
+            <line x1="40" y1="80" x2="280" y2="80" stroke-width="2" opacity="0.12" />
+            <line x1="40" y1="100" x2="320" y2="100" stroke-width="2" opacity="0.08" />
+            <circle cx="340" cy="320" r="80" stroke-width="2" opacity="0.1" />
+            <circle cx="340" cy="320" r="40" stroke-width="2" opacity="0.16" />
+          </g>
+        </svg>
       </div>
-      <h1 class="login-title">登录</h1>
-      <p class="login-hint">使用账号密码登录到团队知识库</p>
-
-      <div v-if="errorMsg" class="login-error" role="alert">
-        <span class="material-symbols-outlined le-icon">error</span>
-        <span>{{ errorMsg }}</span>
+      <div class="lb-content">
+        <BrandLogo :size="56" variant="light" with-wordmark class="lb-logo" />
+        <h1 class="lb-tagline">团队知识库 · 协作编辑</h1>
+        <p class="lb-sub">
+          Confluence 风格的开源 wiki,<br />
+          沉淀团队每一份知识。
+        </p>
       </div>
+    </aside>
 
-      <label class="field">
-        <span class="field-label">邮箱</span>
-        <input
-          v-model="email"
-          type="email"
-          autocomplete="email"
-          required
-          placeholder="you@example.com"
-          class="field-input"
-          :disabled="submitting"
-          autofocus
-        />
-      </label>
+    <!-- 右侧:表单区 -->
+    <main class="login-main">
+      <form class="login-card" @submit.prevent="onSubmit">
+        <BrandLogo :size="28" class="lc-mark" />
+        <h2 class="lc-title">登录</h2>
+        <p class="lc-hint">使用账号密码登录到团队知识库</p>
 
-      <label class="field">
-        <span class="field-label">密码</span>
-        <input
-          v-model="password"
-          type="password"
-          autocomplete="current-password"
-          required
-          placeholder="••••••••"
-          class="field-input"
-          :disabled="submitting"
-        />
-      </label>
+        <div v-if="errorMsg" class="lc-error" role="alert">
+          <span class="material-symbols-outlined le-icon">error</span>
+          <span>{{ errorMsg }}</span>
+        </div>
 
-      <button type="submit" class="submit" :disabled="submitting">
-        <span v-if="submitting" class="spinner" aria-hidden="true"></span>
-        <span>{{ submitting ? '登录中…' : '登录' }}</span>
-      </button>
-    </form>
+        <label class="field">
+          <span class="field-label">邮箱</span>
+          <input
+            v-model="email"
+            type="email"
+            autocomplete="email"
+            required
+            placeholder="you@example.com"
+            class="field-input"
+            :disabled="submitting"
+            autofocus
+          />
+        </label>
+
+        <label class="field">
+          <span class="field-label">密码</span>
+          <input
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            placeholder="••••••••"
+            class="field-input"
+            :disabled="submitting"
+          />
+        </label>
+
+        <button type="submit" class="submit" :disabled="submitting">
+          <span v-if="submitting" class="spinner" aria-hidden="true"></span>
+          <span>{{ submitting ? '登录中…' : '登录' }}</span>
+        </button>
+      </form>
+    </main>
   </div>
 </template>
 
@@ -123,60 +142,94 @@ async function onSubmit() {
 .login-page {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-canvas, #F4F5F7);
-  padding: 24px;
+  background: var(--bg, #FFFFFF);
 }
 
+/* ─── 左侧品牌区(40%) ─── */
+.login-brand {
+  flex: 0 0 40%;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.08), transparent 60%),
+    linear-gradient(135deg, var(--accent, #0052CC) 0%, var(--accent-hover, #0747A6) 100%);
+  color: var(--text-invert, #FFFFFF);
+  display: flex;
+  align-items: center;
+  padding: 64px;
+}
+.lb-decor {
+  position: absolute;
+  inset: 0;
+  color: var(--text-invert, #FFFFFF);
+  pointer-events: none;
+}
+.lb-decor svg {
+  width: 100%;
+  height: 100%;
+}
+.lb-content {
+  position: relative;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.lb-logo {
+  /* 让字标跟着 logo 一起变大 — Logo 56px,字标约 36px */
+  font-size: 36px;
+}
+.lb-tagline {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 8px 0 0 0;
+  letter-spacing: -0.01em;
+}
+.lb-sub {
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+  opacity: 0.85;
+  font-weight: 400;
+}
+
+/* ─── 右侧表单区(60%) ─── */
+.login-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px;
+  background: var(--bg-canvas, #F4F5F7);
+}
 .login-card {
   width: 100%;
   max-width: 400px;
   background: var(--bg, #FFFFFF);
   border: 1px solid var(--border, #DFE1E6);
   border-radius: var(--radius-lg, 6px);
-  padding: 32px;
+  padding: 36px;
   box-shadow: var(--shadow-md, 0 4px 8px -2px rgba(9, 30, 66, 0.08), 0 0 1px rgba(9, 30, 66, 0.08));
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 16px;
-  margin-bottom: 4px;
-}
-.brand-mark {
-  width: 24px;
-  height: 24px;
-  background: var(--accent, #0052CC);
-  border-radius: var(--radius, 3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-size: 14px;
-}
-.brand-name { color: var(--text-1, #172B4D); }
-
-.login-title {
-  font-size: 24px;
+.lc-mark { margin-bottom: 4px; }
+.lc-title {
+  font-size: 26px;
   font-weight: 700;
   color: var(--text-1, #172B4D);
   margin: 4px 0 0 0;
   line-height: 1.2;
 }
-.login-hint {
+.lc-hint {
   font-size: 13px;
   color: var(--text-3, #6B778C);
   margin: 0 0 8px 0;
 }
 
-.login-error {
+.lc-error {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -211,13 +264,8 @@ async function onSubmit() {
   outline: none;
   transition: border-color var(--duration-fast, 120ms) var(--ease-out, ease);
 }
-.field-input:focus {
-  border-color: var(--accent, #0052CC);
-}
-.field-input:disabled {
-  background: var(--bg-canvas, #F4F5F7);
-  cursor: not-allowed;
-}
+.field-input:focus { border-color: var(--accent, #0052CC); }
+.field-input:disabled { background: var(--bg-canvas, #F4F5F7); cursor: not-allowed; }
 
 .submit {
   margin-top: 4px;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
+import BrandLogo from '@/components/ui/BrandLogo.vue'
 
 const router = useRouter()
 
@@ -24,6 +25,7 @@ function goHome() {
 
       <div class="content">
         <div class="empty notfound">
+          <BrandLogo :size="32" class="nf-mark" />
           <div class="empty-illustration">
             <svg viewBox="0 0 240 160" width="220" height="146" aria-hidden="true">
               <circle cx="120" cy="80" r="56" fill="#FFEBE6" />
@@ -47,6 +49,8 @@ function goHome() {
 
 <style scoped>
 .notfound-shell { min-height: calc(100vh - var(--topbar-h)); }
+.empty.notfound { display: flex; flex-direction: column; align-items: center; }
+.nf-mark { margin-bottom: 12px; }
 .empty.notfound h2 { margin-top: 4px; }
 .notfound-actions { margin-top: 12px; }
 </style>

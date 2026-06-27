@@ -48,15 +48,15 @@
     font-size: 18px;
     cursor: pointer;
 }
-.brand-mark {
-    width: 24px; height: 24px;
-    background: var(--accent);
-    border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    color: white; font-size: 14px;
+
+/* brand 与 SpaceSwitcher 之间的细分隔条 — 参考 design/wiki-read.html */
+.brand-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    margin: 0 8px;
+    flex-shrink: 0;
 }
-.brand-name { color: var(--text-1); }
-.brand-name span { color: var(--text-3); font-weight: 400; margin-left: 4px; }
 
 .global-search {
     position: relative;
@@ -360,22 +360,23 @@
 }
 .create-page-btn {
     width: 100%;
-    height: 32px;
+    min-height: 32px;
+    padding: 6px 10px;
     border-radius: var(--radius);
     background: transparent;
-    border: 1px dashed var(--border-strong);
+    border: 0;
     color: var(--text-2);
     font-size: 14px;
+    font-weight: 500;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 6px;
+    text-align: left;
 }
 .create-page-btn:hover {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: var(--accent);
-    border-style: solid;
+    background: var(--bg-subtle);
+    color: var(--text-1);
 }
 
 /* =========================
