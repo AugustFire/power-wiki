@@ -54,27 +54,53 @@ const COLOR_PALETTE = [
 ]
 
 const pageCountBySpace = ref<Record<string, number>>({})
+const childCountBySpace = ref<Record<string, number>>({})
+const lastUpdateBySpace = ref<Record<string, number>>({})
 const accessGroupCountBySpace = ref<Record<string, number>>({})
+const groupById = ref<Record<string, UserGroup>>({})
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  const day = Math.floor(diff / 86_400_000)
+  if (day < 7) return `${day} 天前`
+  return new Date(ts).toLocaleDateString('zh-CN')
+}
 
 async function load() {
   loading.value = true
   loadError.value = null
   try {
+    // Single batch: spaces + groups, then per-space pages for the dense stats.
+    // Previously each space triggered a per-space group fetch — now we use
+    // accessGroupIds from the space response directly, plus one groups.list()
+    // call to resolve group names/colors for the avatar preview.
     const [s, g] = await Promise.all([api.admin.spaces.list(), api.admin.groups.list()])
     spaces.value = s
     groups.value = g
-    // Compute counts from the space response itself (admin API returns
-    // accessGroupIds). Page counts need a roundtrip per space — small N.
+    groupById.value = Object.fromEntries(g.map((grp) => [grp.id, grp]))
+
     const pageCounts: Record<string, number> = {}
+    const childCounts: Record<string, number> = {}
+    const lastUpdates: Record<string, number> = {}
     await Promise.all(
       s.map(async (sp) => {
         accessGroupCountBySpace.value[sp.id] = sp.accessGroupIds?.length ?? 0
-        // Page count via the pages list — cheaper than a dedicated endpoint.
         const pages = await api.pages.list({ space: sp.id }).catch(() => [])
         pageCounts[sp.id] = pages.length
+        // Child pages = pages with a non-null parentId in this space.
+        childCounts[sp.id] = pages.filter((p) => p.parentId != null).length
+        // Last update = max(updatedAt) over pages in this space, or the
+        // space's own updatedAt as a fallback.
+        const pageMax = pages.reduce((m, p) => Math.max(m, p.updatedAt), 0)
+        lastUpdates[sp.id] = pageMax || sp.updatedAt
       }),
     )
     pageCountBySpace.value = pageCounts
+    childCountBySpace.value = childCounts
+    lastUpdateBySpace.value = lastUpdates
   } catch (e) {
     loadError.value = e instanceof ApiError ? e.message : '加载空间失败'
     uiStore.setError(loadError.value)
@@ -161,11 +187,22 @@ function formatDate(ts: number): string {
 
 <template>
   <div class="spaces-view">
+    <div class="view-content-wide">
     <header class="sv-header">
-      <div>
+      <div class="sv-header-text">
         <h1 class="sv-title">空间</h1>
         <p class="sv-sub">共 {{ spaces.length }} 个空间,用于按团队 / 项目组织页面并控制访问权限</p>
       </div>
+      <!-- Create action lives in the main header, not the right context
+           panel (which is read-only info / stats). -->
+      <button
+        type="button"
+        class="sv-action"
+        @click="showCreate = true"
+      >
+        <span class="material-symbols-outlined">create_new_folder</span>
+        <span>创建新空间</span>
+      </button>
     </header>
 
     <div v-if="loadError" class="sv-error">{{ loadError }}</div>
@@ -256,20 +293,53 @@ function formatDate(ts: number): string {
             <div v-if="s.description" class="sc-desc">{{ s.description }}</div>
           </div>
         </div>
+
         <div class="sc-stats">
           <div class="sc-stat">
             <span class="scs-value">{{ pageCountBySpace[s.id] ?? 0 }}</span>
             <span class="scs-label">页面</span>
           </div>
           <div class="sc-stat">
+            <span class="scs-value">{{ childCountBySpace[s.id] ?? 0 }}</span>
+            <span class="scs-label">子页</span>
+          </div>
+          <div class="sc-stat">
             <span class="scs-value">{{ accessGroupCountBySpace[s.id] ?? 0 }}</span>
             <span class="scs-label">授权组</span>
           </div>
           <div class="sc-stat">
+            <span class="scs-value">{{ lastUpdateBySpace[s.id] ? relativeTime(lastUpdateBySpace[s.id]!) : '—' }}</span>
+            <span class="scs-label">最近更新</span>
+          </div>
+          <div class="sc-stat">
             <span class="scs-value">{{ formatDate(s.createdAt) }}</span>
-            <span class="scs-label">创建时间</span>
+            <span class="scs-label">创建</span>
           </div>
         </div>
+
+        <!-- Access group avatar preview. Empty state hints at the implication
+             of having no groups (admin-only access). -->
+        <div class="sc-access">
+          <span class="sc-access-label">授权组:</span>
+          <div v-if="(s.accessGroupIds?.length ?? 0) === 0" class="sc-access-empty">
+            无授权 — 只有管理员可访问
+          </div>
+          <div v-else class="sc-access-avatars">
+            <span
+              v-for="gid in (s.accessGroupIds ?? []).slice(0, 5)"
+              :key="gid"
+              class="sc-access-avatar"
+              :title="groupById[gid]?.name ?? gid"
+            >
+              {{ (groupById[gid]?.name ?? gid).slice(0, 1) }}
+            </span>
+            <span
+              v-if="(s.accessGroupIds?.length ?? 0) > 5"
+              class="sc-access-more"
+            >+{{ (s.accessGroupIds?.length ?? 0) - 5 }}</span>
+          </div>
+        </div>
+
         <div class="sc-actions">
           <button
             type="button"
@@ -285,11 +355,20 @@ function formatDate(ts: number): string {
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.spaces-view { max-width: 1400px; }
+.spaces-view { width: 100%; }
+/* Centered (`margin: 0 auto`) and max-width: 1680 to match the
+   editor's `.content-inner` so the manager content area is at the same
+   X and width as the editor's content area. The card grid auto-fills
+   the available width — 2K shows 4-5 columns, small viewports 1-2. */
+.view-content-wide {
+  max-width: 1680px;
+  margin: 0 auto;
+}
 
 .sv-header {
   display: flex;
@@ -298,8 +377,29 @@ function formatDate(ts: number): string {
   gap: 16px;
   margin-bottom: 20px;
 }
+.sv-header-text { min-width: 0; }
 .sv-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
 .sv-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 0; }
+.sv-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-sans, inherit);
+  color: #FFFFFF;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 4px);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sv-action:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.sv-action .material-symbols-outlined { font-size: 18px; }
 
 .sv-error {
   background: var(--danger-soft);
@@ -387,8 +487,8 @@ function formatDate(ts: number): string {
 /* ─── Card grid ─── */
 .sv-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
 }
 .sv-card {
   background: var(--bg);
@@ -396,15 +496,17 @@ function formatDate(ts: number): string {
   border-radius: var(--radius-md, 4px);
   padding: 16px 20px;
   cursor: pointer;
-  transition: box-shadow var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
   display: flex;
   flex-direction: column;
   gap: 12px;
   outline: none;
+  position: relative;
 }
 .sv-card:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm, 0 1px 1px rgba(9, 30, 66, 0.13));
+  box-shadow: var(--shadow-md, 0 4px 8px -2px rgba(9, 30, 66, 0.10), 0 0 1px rgba(9, 30, 66, 0.08));
+  transform: translateY(-2px);
 }
 .sv-card:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -430,10 +532,58 @@ function formatDate(ts: number): string {
 .sc-name { font-size: 15px; font-weight: 600; color: var(--text-1); }
 .sc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
 
-.sc-stats { display: flex; gap: 24px; }
-.sc-stat { display: flex; flex-direction: column; }
+.sc-stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.sc-stat { display: flex; flex-direction: column; min-width: 56px; }
 .scs-value { font-size: 14px; font-weight: 600; color: var(--text-1); }
 .scs-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.sc-access {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.sc-access-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.sc-access-empty {
+  font-size: 12px;
+  color: var(--danger, #DE350B);
+  font-weight: 500;
+}
+.sc-access-avatars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sc-access-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 2px solid var(--bg);
+  margin-left: -6px;
+}
+.sc-access-avatar:first-child { margin-left: 0; }
+.sc-access-more {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 600;
+}
 
 .sc-actions { display: flex; align-items: center; justify-content: space-between; }
 .ra-btn {

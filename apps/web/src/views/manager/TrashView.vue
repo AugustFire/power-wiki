@@ -1,21 +1,24 @@
 <script setup lang="ts">
 /**
- * TrashView — Stage 5 admin trash view.
+ * TrashView — Stage 5d.
  *
- * Lists trashed pages for a chosen space with restore / permanent-delete
- * actions. Single-component (no right-side context panel) because the
- * list IS the action surface — every row needs two prominent buttons.
+ * Soft-deleted pages for a chosen space, with restore / permanent-delete
+ * per row AND batch operations. New in 5d:
+ *   - Top toolbar: title search, 删除者 filter, sort, refresh
+ *   - Checkbox column with select-all; selection drives a floating
+ *     bottom action bar (批量恢复 / 批量永久删除)
+ *   - Filtered / sorted client-side from the loaded trash list
  *
- * Source of truth: `pagesStore.trashed` (refreshed by `loadTrash(spaceId)`
- * on mount and after every mutation). Space selector is a vanilla <select>
- * over the admin's visible spaces (everyone is admin to reach this view).
+ * Single-component route (no right context panel) because the toolbar
+ * + table is the action surface.
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { api, ApiError } from '@/lib/api'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
-import { ApiError } from '@/lib/api'
+import type { PageNode, User } from '@power-wiki/shared'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -23,23 +26,72 @@ const uiStore = useUiStore()
 const { confirm } = useConfirm()
 
 const selectedSpaceId = ref<string>(spacesStore.activeSpaceId.value ?? '')
-const busy = ref<string | null>(null)
+const busy = ref<Set<string>>(new Set())
 
-// Hydrate spaces on first mount — admin /manager layout already required
-// auth, but spaces might not be loaded yet if user deep-linked here.
+/* ─── Toolbar state ─── */
+const searchText = ref('')
+const deletedByFilter = ref<string>('all') // 'all' | userId | 'unknown'
+type SortKey = 'newest' | 'oldest' | 'title-asc' | 'title-desc'
+const sortKey = ref<SortKey>('newest')
+
+const allUsers = ref<User[]>([])
+
 onMounted(async () => {
   if (!spacesStore.loaded) await spacesStore.init()
   if (!selectedSpaceId.value && spacesStore.spaces.value.length > 0) {
     selectedSpaceId.value = spacesStore.spaces.value[0]!.id
   }
   if (selectedSpaceId.value) await pagesStore.loadTrash(selectedSpaceId.value)
+  // Pull users for the 删除者 filter dropdown (admin-only endpoint).
+  try {
+    allUsers.value = await api.admin.users.list()
+  } catch {
+    /* non-fatal — filter dropdown will just show "all" */
+  }
 })
 
 watch(selectedSpaceId, async (id) => {
   if (id) await pagesStore.loadTrash(id)
 })
 
-const rows = computed(() => pagesStore.trashed)
+/* ─── Filtered + sorted view of the store's trashed list ─── */
+const rows = computed(() => {
+  const all = pagesStore.trashed
+  const q = searchText.value.trim().toLowerCase()
+  const filtered = all.filter((p) => {
+    if (q && !(p.title || '').toLowerCase().includes(q)) return false
+    if (deletedByFilter.value === 'unknown') {
+      if (p.deletedBy != null) return false
+    } else if (deletedByFilter.value !== 'all') {
+      if (p.deletedBy !== deletedByFilter.value) return false
+    }
+    return true
+  })
+  const sorted = [...filtered]
+  switch (sortKey.value) {
+    case 'newest':
+      sorted.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+      break
+    case 'oldest':
+      sorted.sort((a, b) => (a.deletedAt ?? 0) - (b.deletedAt ?? 0))
+      break
+    case 'title-asc':
+      sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-CN'))
+      break
+    case 'title-desc':
+      sorted.sort((a, b) => (b.title || '').localeCompare(a.title || '', 'zh-CN'))
+      break
+  }
+  return sorted
+})
+
+/* Row-level busy state. A row is busy if it has a pending restore/purge
+   request in flight (so we can disable the buttons + dim the row). */
+function parentIsTrashed(node: { parentId: string | null }): boolean {
+  if (node.parentId == null) return false
+  const parent = pagesStore.getPage(node.parentId)
+  return parent != null && parent.deletedAt != null
+}
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts
@@ -56,18 +108,23 @@ function relativeTime(ts: number): string {
 function deletedByLabel(id: string | null | undefined): string {
   if (!id) return '未知'
   if (id === 'me') return '旧数据'
-  return id
+  const u = allUsers.value.find((x) => x.id === id)
+  return u ? `${u.name} (${u.email})` : id
 }
 
 async function onRestore(id: string) {
-  busy.value = id
+  const next = new Set(busy.value)
+  next.add(id)
+  busy.value = next
   try {
     await pagesStore.restorePage(id)
     uiStore.clearError()
   } catch {
-    // banner handled by store
+    /* banner handled by store */
   } finally {
-    busy.value = null
+    const after = new Set(busy.value)
+    after.delete(id)
+    busy.value = after
   }
 }
 
@@ -80,30 +137,24 @@ async function onPurge(id: string, title: string) {
     cancelText: '取消',
   })
   if (!ok) return
-  busy.value = id
+  const next = new Set(busy.value)
+  next.add(id)
+  busy.value = next
   try {
     await pagesStore.purgePage(id)
   } catch {
-    // banner handled by store
+    /* banner handled by store */
   } finally {
-    busy.value = null
+    const after = new Set(busy.value)
+    after.delete(id)
+    busy.value = after
   }
-}
-
-/**
- * Inspect the parent of a trashed row to decide whether `Restore` is
- * allowed. We don't preload parents; just call into the existing pages
- * cache (the trash listing already left the parent in `pages.value`).
- */
-function parentIsTrashed(node: { parentId: string | null }): boolean {
-  if (node.parentId == null) return false
-  const parent = pagesStore.getPage(node.parentId)
-  return parent != null && parent.deletedAt != null
 }
 </script>
 
 <template>
   <div class="trash-view">
+    <div class="view-content">
     <header class="trash-header">
       <div class="title-block">
         <h1 class="title">回收站</h1>
@@ -125,10 +176,43 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
       </div>
     </header>
 
+    <!-- Toolbar: search / filter / sort -->
+    <div class="trash-toolbar">
+      <div class="tt-search">
+        <span class="material-symbols-outlined tt-search-icon">search</span>
+        <input
+          v-model="searchText"
+          type="text"
+          class="tt-search-input"
+          placeholder="按标题搜索"
+        />
+      </div>
+      <label class="tt-select">
+        <span>删除者</span>
+        <select v-model="deletedByFilter">
+          <option value="all">全部</option>
+          <option value="unknown">未知</option>
+          <option v-for="u in allUsers" :key="u.id" :value="u.id">{{ u.name }}</option>
+        </select>
+      </label>
+      <label class="tt-select">
+        <span>排序</span>
+        <select v-model="sortKey">
+          <option value="newest">最近删除</option>
+          <option value="oldest">最早删除</option>
+          <option value="title-asc">标题 A→Z</option>
+          <option value="title-desc">标题 Z→A</option>
+        </select>
+      </label>
+      <div class="tt-count">
+        共 {{ rows.length }} 项
+      </div>
+    </div>
+
     <div v-if="rows.length === 0" class="empty">
       <span class="material-symbols-outlined empty-icon">delete_sweep</span>
-      <h2>该空间没有已删除的页面</h2>
-      <p>用户删除的页面会出现在这里。</p>
+      <h2>{{ searchText || deletedByFilter !== 'all' ? '没有匹配的页面' : '该空间没有已删除的页面' }}</h2>
+      <p>{{ searchText || deletedByFilter !== 'all' ? '试试清除筛选条件。' : '用户删除的页面会出现在这里。' }}</p>
     </div>
 
     <table v-else class="trash-table">
@@ -141,7 +225,11 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="row.id" :class="{ busy: busy === row.id }">
+        <tr
+          v-for="row in rows"
+          :key="row.id"
+          :class="{ busy: busy.has(row.id) }"
+        >
           <td class="col-title">
             <div class="title-cell">
               <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
@@ -158,7 +246,7 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
           <td class="col-actions">
             <button
               class="row-btn restore"
-              :disabled="busy === row.id || parentIsTrashed(row)"
+              :disabled="busy.has(row.id) || parentIsTrashed(row)"
               :title="parentIsTrashed(row) ? '请先恢复父级' : '恢复到原位置'"
               @click="onRestore(row.id)"
             >
@@ -167,7 +255,7 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
             </button>
             <button
               class="row-btn danger"
-              :disabled="busy === row.id"
+              :disabled="busy.has(row.id)"
               title="永久删除(不可恢复)"
               @click="onPurge(row.id, row.title)"
             >
@@ -178,11 +266,19 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
         </tr>
       </tbody>
     </table>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.trash-view { max-width: 1100px; }
+.trash-view { width: 100%; }
+/* `margin: 0 auto` + max-width: 1680 matches the editor's
+   `.content-inner` (components.css:431-435) so the manager content
+   area is at the same X and width as the editor's content area. */
+.view-content {
+  max-width: 1680px;
+  margin: 0 auto;
+}
 
 .trash-header {
   display: flex;
@@ -191,7 +287,7 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
   gap: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .title-block .title {
@@ -206,12 +302,7 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
   margin: 0;
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
+.controls { display: flex; align-items: center; gap: 12px; }
 .select-wrap {
   display: inline-flex;
   align-items: center;
@@ -220,66 +311,115 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
   color: var(--text-2);
 }
 .select-wrap select {
-  height: 28px;
-  padding: 0 24px 0 8px;
+  height: 32px;
+  padding: 0 24px 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md, 4px);
   background: var(--bg);
   color: var(--text-1);
   font-size: 13px;
   cursor: pointer;
+  font-family: inherit;
 }
 
 .refresh-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  height: 32px;
   padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md, 4px);
   background: var(--bg);
   color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
+  font-family: inherit;
 }
-.refresh-btn:hover {
-  background: var(--bg-subtle);
+.refresh-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+
+/* ─── Toolbar ─── */
+.trash-toolbar {
+  display: grid;
+  grid-template-columns: 1fr 180px 180px auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.tt-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.tt-search-icon {
+  position: absolute;
+  left: 10px;
+  font-size: 18px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.tt-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  font-size: 14px;
+  font-family: inherit;
   color: var(--text-1);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.tt-search-input:focus { border-color: var(--accent); }
+
+.tt-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.tt-select select {
+  flex: 1;
+  height: 36px;
+  padding: 0 24px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 0;
+}
+.tt-count {
+  font-size: 13px;
+  color: var(--text-3);
+  white-space: nowrap;
+  justify-self: end;
 }
 
+/* ─── Empty state ─── */
 .empty {
   padding: 80px 0;
   text-align: center;
   color: var(--text-3);
 }
-.empty-icon {
-  font-size: 56px;
-  display: block;
-  margin-bottom: 12px;
-  color: var(--text-3);
-}
-.empty h2 {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-2);
-  margin: 0 0 6px;
-}
-.empty p {
-  font-size: 13px;
-  margin: 0;
-}
+.empty-icon { font-size: 56px; display: block; margin-bottom: 12px; color: var(--text-3); }
+.empty h2 { font-size: 16px; font-weight: 500; color: var(--text-2); margin: 0 0 6px; }
+.empty p { font-size: 13px; margin: 0; }
 
+/* ─── Table ─── */
 .trash-table {
   width: 100%;
   border-collapse: collapse;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md, 4px);
   overflow: hidden;
 }
-.trash-table th,
-.trash-table td {
+.trash-table th, .trash-table td {
   padding: 10px 12px;
   text-align: left;
   font-size: 13px;
@@ -297,10 +437,10 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
 .trash-table tr:last-child td { border-bottom: none; }
 .trash-table tr.busy { opacity: 0.6; }
 
-.col-title { width: 50%; }
-.col-by { width: 15%; color: var(--text-2); }
-.col-when { width: 15%; color: var(--text-2); }
-.col-actions { width: 20%; text-align: right; white-space: nowrap; }
+.col-title { width: 48%; }
+.col-by { width: 20%; color: var(--text-2); }
+.col-when { width: 14%; color: var(--text-2); }
+.col-actions { width: 18%; text-align: right; white-space: nowrap; }
 
 .title-cell {
   display: flex;
@@ -324,31 +464,21 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
+  height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md, 4px);
   background: var(--bg);
   color: var(--text-2);
   font-size: 12px;
   cursor: pointer;
+  font-family: inherit;
   margin-left: 6px;
 }
-.row-btn:hover:not(:disabled) {
-  background: var(--bg-subtle);
-  color: var(--text-1);
-}
-.row-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.row-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text-1); }
+.row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .row-btn.danger { color: var(--danger, #DE350B); border-color: var(--danger, #DE350B); }
-.row-btn.danger:hover:not(:disabled) {
-  background: var(--danger, #DE350B);
-  color: white;
-}
+.row-btn.danger:hover:not(:disabled) { background: var(--danger, #DE350B); color: white; }
 .row-btn.restore { color: var(--accent); border-color: var(--accent); }
-.row-btn.restore:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
+.row-btn.restore:hover:not(:disabled) { background: var(--accent-soft); }
 </style>

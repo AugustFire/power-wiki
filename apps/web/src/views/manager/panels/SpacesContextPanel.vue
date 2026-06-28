@@ -7,13 +7,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
-import { useManagerActions } from '@/composables/useManagerActions'
 import type { Space } from '@power-wiki/shared'
 import ContextPanel from '@/components/manager/ContextPanel.vue'
 import StatBlock from '@/components/manager/StatBlock.vue'
-
-const { showCreateSpace } = useManagerActions()
-function toggleCreate() { showCreateSpace.value = !showCreateSpace.value }
 
 const uiStore = useUiStore()
 const spaces = ref<Space[]>([])
@@ -68,17 +64,8 @@ const biggestSpace = computed(() => {
   <ContextPanel>
     <template #title>空间概览</template>
 
-    <button
-      type="button"
-      class="quick-action"
-      :class="{ 'is-open': showCreateSpace }"
-      @click="toggleCreate"
-    >
-      <span class="material-symbols-outlined qa-icon">
-        {{ showCreateSpace ? 'close' : 'create_new_folder' }}
-      </span>
-      <span>{{ showCreateSpace ? '取消创建' : '创建新空间' }}</span>
-    </button>
+    <!-- Create action lives in the main area's header (SpacesView), not
+         here. Right panel is read-only info / stats. -->
 
     <div class="row-3">
       <StatBlock :value="totalSpaces" label="总空间" />
@@ -118,33 +105,6 @@ const biggestSpace = computed(() => {
 </template>
 
 <style scoped>
-.quick-action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 12px;
-  background: var(--accent);
-  color: #FFFFFF;
-  border: 0;
-  border-radius: var(--radius-md, 4px);
-  font-size: 13px;
-  font-weight: 600;
-  font-family: var(--font-sans, inherit);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out);
-}
-.quick-action:hover { background: var(--accent-hover); }
-.quick-action.is-open {
-  background: var(--bg-subtle);
-  color: var(--text-2);
-}
-.quick-action.is-open:hover {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-.qa-icon { font-size: 18px; }
-
 .row-3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

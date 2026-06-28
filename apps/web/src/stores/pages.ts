@@ -33,6 +33,24 @@ export const usePagesStore = defineStore('pages', () => {
     return useUiStore()
   }
 
+  /**
+   * Stage 5d: drop ALL in-memory data so the next caller re-fetches.
+   *
+   * Called by auth.logout() / auth.login() to prevent the next user from
+   * seeing the previous user's page tree, trashed list, or stale space
+   * selection. Without this, switching accounts in the same browser tab
+   * leaks data across sessions (and triggers 401s when the next user
+   * tries to load trash for a space the previous user had selected).
+   */
+  function reset(): void {
+    pages.value = []
+    trashed.value = []
+    loaded.value = false
+    trashLoaded.value = false
+    loading.value = false
+    loadError.value = null
+  }
+
   async function init(): Promise<void> {
     if (loaded.value || loading.value) return
     loading.value = true
@@ -490,6 +508,7 @@ export const usePagesStore = defineStore('pages', () => {
     tree,
     init,
     refresh,
+    reset,
     createPage,
     getPage,
     getChildren,

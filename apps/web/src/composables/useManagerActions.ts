@@ -11,6 +11,10 @@
  * route), but we keep them separate so each panel can independently own
  * its own state and there's no cross-talk if a route transition lands
  * mid-toggle.
+ *
+ * Stage 5d: `resetAll()` clears the three open-form flags. Called by
+ * auth.logout() / auth.login() so the next user doesn't inherit an
+ * already-open create form from the previous session.
  */
 import { ref } from 'vue'
 
@@ -23,5 +27,12 @@ export function useManagerActions() {
     showCreateUser,
     showCreateGroup,
     showCreateSpace,
+    resetAll,
   }
+}
+
+function resetAll(): void {
+  showCreateUser.value = false
+  showCreateGroup.value = false
+  showCreateSpace.value = false
 }

@@ -2,14 +2,18 @@
 /**
  * GroupEditView — edit a single user-group (name, description, members).
  *
- * Stage 4b:
- *   - Edit form: name, description
- *   - Members: search + toggleable list of all users. Clicking a row toggles
- *     membership. Optimistic add/remove with rollback on failure.
- *   - Delete group (with confirm; CASCADE removes memberships)
+ * Stage 5d: member management is now a two-panel TRANSFER LIST.
+ *   - Left: 已添加成员 (currently in the group) — each row has a remove (X) button
+ *   - Right: 可添加用户 (not in the group) — each row has an add (+) button
+ *   - Each panel has its own search input
  *
- * The user list shows all users, with current members marked. Disabled users
- * are still toggleable — admin can choose to keep them in a group or remove.
+ * Why: a single mixed list of N users (with toggleable state on each row)
+ * doesn't scale — you can't tell who is a member without scanning every row.
+ * Two panels make the "current state" obvious at a glance and let you search
+ * independently on either side.
+ *
+ * Per-row action is still the same API: addMember / removeMember, optimistic
+ * with rollback on failure.
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -38,7 +42,12 @@ const editName = ref('')
 const editDesc = ref('')
 const saving = ref(false)
 const dirty = ref(false)
-const search = ref('')
+
+// Two search inputs — one for each panel — so the admin can find a user in
+// either side independently (e.g. remove a specific member, OR add a specific
+// non-member).
+const memberSearch = ref('')
+const availableSearch = ref('')
 
 const pendingUserId = ref<string | null>(null)
 
@@ -78,50 +87,51 @@ watch(groupId, () => {
 
 onMounted(load)
 
-const filteredUsers = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return allUsers.value
-  return allUsers.value.filter(
-    (u) =>
-      u.name.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q),
-  )
-})
-
-function isMember(userId: string): boolean {
-  return memberIds.value.has(userId)
+/* ─── Partition users by membership + per-panel search filter ─── */
+function matches(u: User, q: string): boolean {
+  if (!q) return true
+  return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
 }
 
-async function toggleMembership(u: User) {
-  if (pendingUserId.value || !group.value) return
-  const wasMember = isMember(u.id)
-  // Optimistic update
-  if (wasMember) {
-    memberIds.value.delete(u.id)
-  } else {
-    memberIds.value.add(u.id)
-  }
-  // Trigger reactivity on Set — Vue tracks Set mutations since 3.0 but assigning
-  // back to a ref makes it clearer.
-  memberIds.value = new Set(memberIds.value)
-  pendingUserId.value = u.id
+const memberUsers = computed(() =>
+  allUsers.value.filter((u) => memberIds.value.has(u.id) && matches(u, memberSearch.value)),
+)
+const availableUsers = computed(() =>
+  allUsers.value.filter((u) => !memberIds.value.has(u.id) && matches(u, availableSearch.value)),
+)
 
+async function addMember(u: User) {
+  if (pendingUserId.value || !group.value) return
+  pendingUserId.value = u.id
+  // Optimistic
+  memberIds.value.add(u.id)
+  memberIds.value = new Set(memberIds.value)
   try {
-    if (wasMember) {
-      await api.admin.groups.removeMember(group.value.id, u.id)
-    } else {
-      const updated = await api.admin.groups.addMember(group.value.id, u.id)
-      memberIds.value = new Set(updated.memberIds ?? [])
-    }
+    const updated = await api.admin.groups.addMember(group.value.id, u.id)
+    memberIds.value = new Set(updated.memberIds ?? [])
   } catch (e) {
     // Rollback
-    if (wasMember) {
-      memberIds.value.add(u.id)
-    } else {
-      memberIds.value.delete(u.id)
-    }
+    memberIds.value.delete(u.id)
     memberIds.value = new Set(memberIds.value)
-    uiStore.setError(e instanceof ApiError ? e.message : '操作失败')
+    uiStore.setError(e instanceof ApiError ? e.message : '添加失败')
+  } finally {
+    pendingUserId.value = null
+  }
+}
+
+async function removeMember(u: User) {
+  if (pendingUserId.value || !group.value) return
+  pendingUserId.value = u.id
+  // Optimistic
+  memberIds.value.delete(u.id)
+  memberIds.value = new Set(memberIds.value)
+  try {
+    await api.admin.groups.removeMember(group.value.id, u.id)
+  } catch (e) {
+    // Rollback
+    memberIds.value.add(u.id)
+    memberIds.value = new Set(memberIds.value)
+    uiStore.setError(e instanceof ApiError ? e.message : '移除失败')
   } finally {
     pendingUserId.value = null
   }
@@ -167,7 +177,7 @@ async function onDelete() {
     // Group delete cascades to spaceGroupAccess; affected users' visible
     // space set may have shrunk — re-fetch pages so the sidebar matches.
     void pagesStore.refresh()
-    void router.push('/manager/groups')
+    void router.push({ name: 'manager-people', query: { tab: 'groups' } })
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '删除失败')
   }
@@ -195,12 +205,12 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 
   <div v-else-if="loadError" class="ge-error">
     <p>{{ loadError }}</p>
-    <button type="button" class="btn ghost" @click="router.push('/manager/groups')">返回列表</button>
+    <button type="button" class="btn ghost" @click="router.push({ name: 'manager-people', query: { tab: 'groups' } })">返回列表</button>
   </div>
 
   <div v-else-if="group" class="group-edit">
     <nav class="ge-breadcrumb" aria-label="面包屑导航">
-      <RouterLink to="/manager/groups">用户组</RouterLink>
+      <RouterLink :to="{ name: 'manager-people', query: { tab: 'groups' } }">用户组</RouterLink>
       <span class="ge-bc-sep" aria-hidden="true">/</span>
       <span class="ge-bc-current">{{ group.name }}</span>
     </nav>
@@ -257,55 +267,106 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
         </div>
       </section>
 
-      <!-- Member list -->
+      <!-- Member transfer list: two panels, each with own search -->
       <section class="ge-card ge-card-members">
-        <h2 class="ge-card-title">成员 ({{ memberIds.size }})</h2>
-        <div class="ge-search-row">
-          <span class="material-symbols-outlined ge-search-icon">search</span>
-          <input
-            v-model="search"
-            type="text"
-            class="ge-search"
-            placeholder="按姓名或邮箱搜索"
-          />
-        </div>
-        <div v-if="filteredUsers.length === 0" class="ge-empty-members">
-          没有匹配的用户
-        </div>
-        <ul v-else class="member-list">
-          <li
-            v-for="u in filteredUsers"
-            :key="u.id"
-            class="member-row"
-            :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
-          >
-            <UserAvatar :size="32" :label="u.name" :color="u.color" />
-            <div class="member-text">
-              <div class="member-name">{{ u.name }}</div>
-              <div class="member-email">{{ u.email }}</div>
+        <h2 class="ge-card-title">成员管理</h2>
+
+        <div class="ge-transfer">
+          <!-- LEFT: current members -->
+          <div class="ge-panel">
+            <div class="ge-panel-head">
+              <span class="ge-panel-title">已添加成员</span>
+              <span class="ge-panel-count">{{ memberIds.size }}</span>
             </div>
-            <span class="status-pill" :class="statusTone(u.status)">{{ statusLabel(u.status) }}</span>
-            <button
-              type="button"
-              class="member-toggle"
-              :class="{ 'in-group': isMember(u.id) }"
-              :disabled="pendingUserId === u.id"
-              :title="isMember(u.id) ? '从组中移除' : '加入组'"
-              @click="toggleMembership(u)"
-            >
-              <span class="material-symbols-outlined">
-                {{ isMember(u.id) ? 'check_circle' : 'add_circle' }}
-              </span>
-            </button>
-          </li>
-        </ul>
+            <div class="ge-search-row">
+              <span class="material-symbols-outlined ge-search-icon">search</span>
+              <input
+                v-model="memberSearch"
+                type="text"
+                class="ge-search"
+                placeholder="在成员中搜索"
+              />
+            </div>
+            <ul v-if="memberUsers.length > 0" class="member-list">
+              <li
+                v-for="u in memberUsers"
+                :key="u.id"
+                class="member-row"
+                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
+              >
+                <UserAvatar :size="28" :label="u.name" :color="u.color" />
+                <div class="member-text">
+                  <div class="member-name">{{ u.name }}</div>
+                  <div class="member-email">{{ u.email }}</div>
+                </div>
+                <span class="status-pill" :class="statusTone(u.status)">{{ statusLabel(u.status) }}</span>
+                <button
+                  type="button"
+                  class="member-action remove"
+                  :disabled="pendingUserId === u.id"
+                  title="从组中移除"
+                  @click="removeMember(u)"
+                >
+                  <span class="material-symbols-outlined">remove</span>
+                </button>
+              </li>
+            </ul>
+            <div v-else class="ge-empty-members">
+              {{ memberSearch ? '没有匹配的成员' : '组里还没有成员' }}
+            </div>
+          </div>
+
+          <!-- RIGHT: available users (not in group) -->
+          <div class="ge-panel">
+            <div class="ge-panel-head">
+              <span class="ge-panel-title">可添加用户</span>
+              <span class="ge-panel-count">{{ allUsers.length - memberIds.size }}</span>
+            </div>
+            <div class="ge-search-row">
+              <span class="material-symbols-outlined ge-search-icon">search</span>
+              <input
+                v-model="availableSearch"
+                type="text"
+                class="ge-search"
+                placeholder="在所有用户中搜索"
+              />
+            </div>
+            <ul v-if="availableUsers.length > 0" class="member-list">
+              <li
+                v-for="u in availableUsers"
+                :key="u.id"
+                class="member-row"
+                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
+              >
+                <UserAvatar :size="28" :label="u.name" :color="u.color" />
+                <div class="member-text">
+                  <div class="member-name">{{ u.name }}</div>
+                  <div class="member-email">{{ u.email }}</div>
+                </div>
+                <span class="status-pill" :class="statusTone(u.status)">{{ statusLabel(u.status) }}</span>
+                <button
+                  type="button"
+                  class="member-action add"
+                  :disabled="pendingUserId === u.id"
+                  title="加入组"
+                  @click="addMember(u)"
+                >
+                  <span class="material-symbols-outlined">add</span>
+                </button>
+              </li>
+            </ul>
+            <div v-else class="ge-empty-members">
+              {{ availableSearch ? '没有匹配的用户' : '所有用户都已在组里' }}
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.group-edit { max-width: 1200px; }
+.group-edit { width: 100%; }
 
 /* ─── Breadcrumb ─── */
 .ge-breadcrumb {
@@ -343,7 +404,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 
 .ge-grid {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 16px;
   align-items: start;
 }
@@ -384,10 +445,45 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 }
 .ge-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
 
-/* ─── Member list ─── */
+/* ─── Transfer list (two-panel member manager) ─── */
+.ge-transfer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.ge-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  padding: 12px;
+}
+.ge-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+}
+.ge-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.ge-panel-count {
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  padding: 1px 8px;
+  font-weight: 500;
+}
+
 .ge-search-row {
   position: relative;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .ge-search-icon {
   position: absolute;
@@ -400,24 +496,23 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 }
 .ge-search {
   width: 100%;
-  height: 36px;
-  padding: 0 12px 0 36px;
-  font-size: 14px;
+  height: 32px;
+  padding: 0 12px 0 32px;
+  font-size: 13px;
   font-family: var(--font-sans, inherit);
   color: var(--text-1);
-  background: var(--bg-canvas);
-  border: 2px solid transparent;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
-  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 .ge-search:focus {
-  background: var(--bg);
   border-color: var(--accent);
 }
 
 .ge-empty-members {
-  padding: 24px;
+  padding: 24px 12px;
   text-align: center;
   color: var(--text-3);
   font-size: 13px;
@@ -427,16 +522,17 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 480px;
+  max-height: 460px;
   overflow-y: auto;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
 }
 .member-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   transition: background var(--duration-fast) var(--ease-out);
@@ -448,7 +544,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 
 .member-text { min-width: 0; flex: 1; }
 .member-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-1);
   white-space: nowrap;
@@ -456,7 +552,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
   text-overflow: ellipsis;
 }
 .member-email {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -465,31 +561,41 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 
 .status-pill {
   display: inline-block;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border-radius: var(--radius-pill, 999px);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .status-pill.good { background: var(--success-soft); color: var(--success); }
 .status-pill.warn { background: var(--warning-soft); color: var(--warning-text); }
 .status-pill.bad { background: var(--danger-soft); color: var(--danger); }
 
-.member-toggle {
+.member-action {
   background: transparent;
-  border: 0;
+  border: 1px solid var(--border);
   cursor: pointer;
-  padding: 4px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   color: var(--text-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: color var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
-.member-toggle:hover:not(:disabled) { color: var(--accent); }
-.member-toggle:disabled { cursor: wait; }
-.member-toggle.in-group { color: var(--success); }
-.member-toggle.in-group:hover:not(:disabled) { color: var(--danger); }
-.member-toggle .material-symbols-outlined { font-size: 22px; }
+.member-action.add:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.member-action.remove:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.member-action:disabled { cursor: wait; opacity: 0.5; }
+.member-action .material-symbols-outlined { font-size: 18px; }
 </style>

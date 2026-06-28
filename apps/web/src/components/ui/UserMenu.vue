@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
 
 function goManager() {
   close()
-  void router.push('/manager/users')
+  void router.push('/manager/people')
 }
 
 async function onLogout() {

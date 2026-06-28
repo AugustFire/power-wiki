@@ -72,6 +72,23 @@ export function useSpacesStore() {
     await init()
   }
 
+  /**
+   * Stage 5d: drop all in-memory state including the persisted active-space
+   * id. Called by auth.logout() / auth.login() so the next user doesn't
+   * inherit the previous user's space selection (which they likely can't
+   * access — would 401 the trash page).
+   */
+  function reset(): void {
+    spaces.value = []
+    activeSpaceId.value = null
+    loaded.value = false
+    loading.value = false
+    loadError.value = null
+    // Wipe the persisted active-space too, so the next init() picks
+    // the first visible space (or null if the new user has none).
+    writeJSON(PERSIST_KEYS.ACTIVE_SPACE, null)
+  }
+
   /** Switch the active space. Caller should ensure the ID is in the visible list. */
   function setActiveSpace(id: string) {
     if (spaces.value.some((s) => s.id === id)) {
@@ -128,6 +145,7 @@ export function useSpacesStore() {
     // actions
     init,
     refresh,
+    reset,
     setActiveSpace,
     upsert,
     createSpace,

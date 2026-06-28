@@ -297,7 +297,7 @@ function formatDate(ts: number): string {
         </div>
         <div v-if="allGroups.length === 0" class="se-empty-groups">
           还没有用户组,先去
-          <router-link to="/manager/groups">用户组管理</router-link>
+          <router-link :to="{ name: 'manager-people', query: { tab: 'groups' } }">用户组管理</router-link>
           创建。
         </div>
         <div v-else-if="filteredGroups.length === 0" class="se-empty-groups">

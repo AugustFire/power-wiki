@@ -68,37 +68,48 @@ const routes: RouteRecordRaw[] = [
     children: [
       {
         path: '',
-        redirect: { name: 'manager-users' },
+        redirect: { name: 'manager-people' },
       },
+      // Stage 5d: combined "人员" page (users + groups in one tabbed view).
+      // Old /users and /groups paths redirect here for backward compat.
       {
-        path: 'users',
-        name: 'manager-users',
-        // Named views: default = list, context = right-side panel. Edit
-        // routes below stay single-component (no context panel).
+        path: 'people',
+        name: 'manager-people',
         components: {
-          default: () => import('@/views/manager/UsersView.vue'),
-          context: () => import('@/views/manager/panels/UsersContextPanel.vue'),
+          default: () => import('@/views/manager/PeopleView.vue'),
+          context: () => import('@/views/manager/panels/PeopleContextPanel.vue'),
         },
       },
       {
-        path: 'users/:id',
+        path: 'people/users/:id',
         name: 'manager-user-edit',
         component: () => import('@/views/manager/UserEditView.vue'),
         props: true,
       },
       {
-        path: 'groups',
-        name: 'manager-groups',
-        components: {
-          default: () => import('@/views/manager/GroupsView.vue'),
-          context: () => import('@/views/manager/panels/GroupsContextPanel.vue'),
-        },
-      },
-      {
-        path: 'groups/:id',
+        path: 'people/groups/:id',
         name: 'manager-group-edit',
         component: () => import('@/views/manager/GroupEditView.vue'),
         props: true,
+      },
+      // Back-compat redirects: old bookmarks (e.g. /manager/users, /manager/users/:id,
+      // /manager/groups, /manager/groups/:id) keep working by landing on the
+      // corresponding tab within /manager/people.
+      {
+        path: 'users',
+        redirect: { name: 'manager-people', query: { tab: 'users' } },
+      },
+      {
+        path: 'users/:id',
+        redirect: (to) => ({ name: 'manager-user-edit', params: { id: to.params.id } }),
+      },
+      {
+        path: 'groups',
+        redirect: { name: 'manager-people', query: { tab: 'groups' } },
+      },
+      {
+        path: 'groups/:id',
+        redirect: (to) => ({ name: 'manager-group-edit', params: { id: to.params.id } }),
       },
       {
         path: 'spaces',

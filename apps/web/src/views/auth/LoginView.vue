@@ -21,7 +21,7 @@ const errorMsg = ref<string | null>(null)
 /**
  * Pick redirect target after login:
  *   1. ?redirect= query string (validated to be a local path only — no open-redirect)
- *   2. Otherwise → /manager/users for admins (so they see their user list
+ *   2. Otherwise → /manager/people for admins (so they see their user list
  *      immediately and can create accounts), or / for regular users
  */
 function resolveRedirect(): string {
@@ -29,7 +29,7 @@ function resolveRedirect(): string {
   if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
     return raw
   }
-  return authStore.isAdmin ? '/manager/users' : '/'
+  return authStore.isAdmin ? '/manager/people' : '/'
 }
 
 async function onSubmit() {
@@ -47,10 +47,12 @@ async function onSubmit() {
     // flash blank. Cleared in the finally after router.replace resolves +
     // one tick, so the destination view has at least started mounting.
     authStore.transitioning = true
-    if (!dest.startsWith('/manager')) {
-      await spacesStore.init()
-      await pagesStore.init()
-    }
+    // Always init the data stores (not just non-admin dests). The topbar's
+    // SpaceSwitcher reads spacesStore.spaces regardless of which route the
+    // user lands on, so skipping init for /manager/* left the topbar empty
+    // for admins.
+    await spacesStore.init()
+    await pagesStore.init()
     await router.replace(dest)
     await new Promise((r) => setTimeout(r, 80))
   } catch (e) {

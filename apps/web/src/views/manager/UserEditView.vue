@@ -185,12 +185,12 @@ const colorPresets = [
 
   <div v-else-if="loadError" class="ue-error">
     <p>{{ loadError }}</p>
-    <button type="button" class="btn ghost" @click="router.push('/manager/users')">返回列表</button>
+    <button type="button" class="btn ghost" @click="router.push('/manager/people')">返回列表</button>
   </div>
 
   <div v-else-if="user" class="user-edit">
     <nav class="ue-breadcrumb" aria-label="面包屑导航">
-      <RouterLink to="/manager/users">用户</RouterLink>
+      <RouterLink to="/manager/people">人员</RouterLink>
       <span class="ue-bc-sep" aria-hidden="true">/</span>
       <span class="ue-bc-current">{{ user.name }}</span>
     </nav>

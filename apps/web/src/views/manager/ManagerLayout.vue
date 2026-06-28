@@ -17,8 +17,13 @@ const route = useRoute()
 
 const section = computed(() => {
   const name = String(route.name ?? '')
-  if (name.startsWith('manager-users')) return '用户'
-  if (name.startsWith('manager-groups')) return '用户组'
+  // People tab covers both user- and group-related sub-routes.
+  if (name === 'manager-people') {
+    const tab = route.query.tab
+    return tab === 'groups' ? '用户组' : '用户'
+  }
+  if (name.startsWith('manager-user-edit')) return '用户'
+  if (name.startsWith('manager-group-edit')) return '用户组'
   if (name.startsWith('manager-spaces')) return '空间'
   if (name.startsWith('manager-trash')) return '回收站'
   return '管理后台'
@@ -31,7 +36,7 @@ const section = computed(() => {
       <div class="breadcrumb">
         <a href="#/">我的知识库</a>
         <span class="sep">/</span>
-        <RouterLink to="/manager/users" class="crumb-item">管理后台</RouterLink>
+        <RouterLink to="/manager/people" class="crumb-item">管理后台</RouterLink>
         <template v-if="section !== '管理后台'">
           <span class="sep">/</span>
           <span class="crumb-item current">{{ section }}</span>
@@ -41,13 +46,9 @@ const section = computed(() => {
 
     <div class="manager-grid">
       <nav class="manager-subnav" aria-label="管理后台导航">
-        <RouterLink to="/manager/users" class="mn-link" active-class="active">
+        <RouterLink to="/manager/people" class="mn-link" active-class="active">
           <span class="material-symbols-outlined mn-icon">group</span>
-          <span>用户</span>
-        </RouterLink>
-        <RouterLink to="/manager/groups" class="mn-link" active-class="active">
-          <span class="material-symbols-outlined mn-icon">workspaces</span>
-          <span>用户组</span>
+          <span>人员</span>
         </RouterLink>
         <RouterLink to="/manager/spaces" class="mn-link" active-class="active">
           <span class="material-symbols-outlined mn-icon">folder</span>
@@ -84,11 +85,25 @@ const section = computed(() => {
 </template>
 
 <style scoped>
+/*
+ * Manager shell — Stage 5d (post-revert).
+ *
+ * Three-column layout that fills the viewport edge-to-edge so 2K screens
+ * get full use of the horizontal real estate. Each list view internally
+ * caps its own content width and centers it (see PeopleView / SpacesView
+ * / TrashView). The right context panel stays at 320px so on 2K its
+ * content needs to be richer (PeopleContextPanel adds 最近登录 + 最近
+ * 活动 to fill the space).
+ */
 .manager-shell { min-height: calc(100vh - var(--topbar-h)); }
 
 .manager-grid {
   display: grid;
-  grid-template-columns: 200px 1fr var(--context-w);
+  /* Subnav width matches the app's --sidebar-w (280) so the content
+     column inside the main area starts at the same X as the editor's
+     `.content-inner` — i.e. the manager page's content area is the
+     same width AND position as ReadView/EditView's content area. */
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
   height: calc(100vh - var(--topbar-h) - var(--sub-h));
   background: var(--bg-canvas);
 }

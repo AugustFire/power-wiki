@@ -23,6 +23,10 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { User } from '@power-wiki/shared'
 import { api } from '@/lib/api'
+import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
+import { useManagerActions } from '@/composables/useManagerActions'
+import { useUiStore } from '@/stores/ui'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -86,6 +90,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(email: string, password: string): Promise<void> {
+    // Clear any in-memory data from the previous session BEFORE setting the
+    // new user. The new session's first view will re-init() the stores, but
+    // until then we don't want stale data leaking (e.g. the sidebar still
+    // showing the old user's page tree).
+    resetSessionState()
     const { user: u, mustResetPassword: mrp } = await api.auth.signIn({ email, password })
     user.value = u
     mustResetPassword.value = mrp
@@ -97,6 +106,23 @@ export const useAuthStore = defineStore('auth', () => {
     await api.auth.signOut()
     user.value = null
     mustResetPassword.value = false
+    // Drop every data store the previous user populated. Without this the
+    // next user would see the old page tree, the old trashed list, and a
+    // 401 from `/api/pages/trash?space=<oldSpaceId>` (because the new user
+    // can't access the previous user's last-selected space).
+    resetSessionState()
+  }
+
+  /**
+   * Stage 5d: wipe all in-memory state tied to the current session.
+   * Called from both login() and logout() so the next user starts with a
+   * clean slate. Idempotent and safe to call on any state.
+   */
+  function resetSessionState(): void {
+    usePagesStore().reset()
+    useSpacesStore().reset()
+    useManagerActions().resetAll()
+    useUiStore().clearError()
   }
 
   async function resetPassword(currentPassword: string, newPassword: string): Promise<void> {
