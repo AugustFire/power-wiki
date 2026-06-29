@@ -104,6 +104,16 @@ export interface Space {
   color: string
   /** material-symbols-outlined 名称,如 'folder', 'description' */
   icon?: string
+  /**
+   * 'shared' (团队空间) | 'personal' (个人空间,每用户一个,ownerId 指向 users.id).
+   * 老空间都是 'shared';新建个人空间由 ensurePersonalSpace 流程产生。
+   */
+  kind?: 'personal' | 'shared'
+  /**
+   * 仅 kind='personal' 有意义,指向 users.id;团队空间永远为 undefined。
+   * 显式不暴露给非 admin(见 apps/api/src/routes/spaces.ts)。
+   */
+  ownerId?: string
   createdAt: number
   updatedAt: number
   /** 当前用户在该 space 下的角色/权限:

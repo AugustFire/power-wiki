@@ -61,6 +61,14 @@ function goManager() {
   void router.push('/manager/people')
 }
 
+function goMySpace() {
+  close()
+  // Use the canonical /me route so the URL reflects the destination —
+  // /me renders MySpaceView which flips the active space to the user's
+  // personal space and bounces to / (HomeView then renders the tree).
+  void router.push('/me')
+}
+
 async function onLogout() {
   close()
   await authStore.logout()
@@ -103,6 +111,17 @@ async function onLogout() {
         </div>
 
         <div class="um-divider"></div>
+
+        <button
+          v-if="authStore.personalSpaceId"
+          type="button"
+          class="um-item"
+          role="menuitem"
+          @click="goMySpace"
+        >
+          <span class="material-symbols-outlined um-icon">cottage</span>
+          <span>我的空间</span>
+        </button>
 
         <button
           v-if="authStore.isAdmin"

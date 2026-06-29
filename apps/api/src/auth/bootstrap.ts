@@ -1,6 +1,6 @@
 /**
  * Bootstrap — runs once on API startup, before the HTTP server starts accepting
- * requests. Stage 4a responsibilities:
+ * requests.
  *
  *  1. Ensure an admin user exists. If the users table is empty:
  *     - Read ADMIN_EMAIL + ADMIN_PASSWORD from env
@@ -9,23 +9,23 @@
  *       the admin bootstraps themselves).
  *
  *  2. Ensure at least one space exists. If the spaces table is empty:
- *     - Create a "默认空间" (Default Space) with the admin as the implicit
- *       owner (we don't have an `owner_id` column on spaces yet — admins
- *       see all spaces via the role check).
- *     - This is the destination for existing pages during the space_id backfill.
+ *     - Create a "默认空间" (Default Space). Admin sees all spaces via the
+ *       role check; this is the destination for the page.space_id backfill.
  *
  *  3. Backfill `pages.space_id` from null → default space id.
  *     Safe to run repeatedly (idempotent: skips rows that already have space_id).
  *
  *  4. Purge expired sessions (best-effort cleanup).
  *
- * Phase 4c will add user_group + space_group_access bootstrap and proper
- * admin-vs-member space filtering.
+ *  5. Personal space backfill. For every user without a `kind='personal'`
+ *     space, create one (1-person group + space + access row + welcome page).
+ *     Idempotent — `ensurePersonalSpace` is a no-op when one already exists.
  */
-import { eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '../db/client'
 import { pages, spaces, users } from '../db/schema'
 import { generatePageId } from '../lib/ids'
+import { ensurePersonalSpace } from '../lib/ensurePersonalSpace'
 import { hashPassword } from './password'
 import { purgeExpiredSessions } from './session'
 
@@ -33,6 +33,7 @@ export interface BootstrapResult {
   adminCreated: boolean
   defaultSpaceId: string
   pagesBackfilled: number
+  personalSpacesProvisioned: number
   expiredSessionsPurged: number
 }
 
@@ -120,7 +121,32 @@ export async function runBootstrap(): Promise<BootstrapResult> {
   const purged = await purgeExpiredSessions()
   if (purged > 0) console.log(`[api] bootstrap: purged ${purged} expired session(s)`)
 
-  return { adminCreated, defaultSpaceId, pagesBackfilled, expiredSessionsPurged: purged }
+  // ─── 5. Personal space backfill ───────────────────────────────────────
+  // For each user (including the just-created admin) without a personal
+  // space, create one. ensurePersonalSpace is idempotent — it short-circuits
+  // when a personal space already exists. We only count newly created spaces
+  // by diffing visible-vs-expected after the loop (cheap; users are few).
+  const allUsers = await db
+    .select({ id: users.id, name: users.name, color: users.color, hasPersonal: spaces.id })
+    .from(users)
+    .leftJoin(
+      spaces,
+      and(eq(spaces.ownerId, users.id), eq(spaces.kind, 'personal')),
+    )
+  let personalSpacesProvisioned = 0
+  for (const u of allUsers) {
+    if (u.hasPersonal) continue
+    await ensurePersonalSpace({ id: u.id, name: u.name, color: u.color })
+    personalSpacesProvisioned++
+    console.log(`[api] bootstrap: ✓ personal space provisioned for ${u.name} (id=${u.id})`)
+  }
+  if (personalSpacesProvisioned > 0) {
+    console.log(
+      `[api] bootstrap: ${personalSpacesProvisioned} personal space(s) provisioned`,
+    )
+  }
+
+  return { adminCreated, defaultSpaceId, pagesBackfilled, personalSpacesProvisioned, expiredSessionsPurged: purged }
 }
 
 /**

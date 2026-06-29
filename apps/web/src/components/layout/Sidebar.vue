@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
+import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import PageTree from './PageTree.vue'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
+const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
 
@@ -18,6 +20,27 @@ const tree = computed(() => pagesStore.getTreeForSpace(spacesStore.activeSpaceId
 
 const totalPages = computed(() => pagesStore.pages.length)
 
+// Active-space quick-nav. Mirrors the topbar's SpaceSwitcher trigger but
+// stays inside the sidebar so users get a "where am I" anchor that scrolls
+// with the page. Replaces the old always-personal-space entry that was
+// confusing when the active space was a shared space — the sidebar now
+// always reflects the active space, full stop.
+const active = computed(() => spacesStore.activeSpace.value)
+const isActivePersonal = computed(() => active.value?.kind === 'personal')
+const activePageCount = computed(() => {
+  const id = active.value?.id
+  if (!id) return 0
+  return pagesStore.pages.filter((p) => p.spaceId === id).length
+})
+
+// Personal-space shortcut: separate from the active-space chip so users have
+// a one-click path back to their drafts when they're working in a shared
+// space. Rendered as a small bottom-anchor link — not a primary nav item.
+const personalSpace = computed(() => spacesStore.personalSpace.value)
+const showMySpaceShortcut = computed(
+  () => personalSpace.value && active.value && !isActivePersonal.value,
+)
+
 async function createRoot() {
   uiStore.closeMenu()
   try {
@@ -27,15 +50,50 @@ async function createRoot() {
     // banner shown by store
   }
 }
+
+function goHome() {
+  // Active space's home — the `/` route renders HomeView for whatever
+  // activeSpaceId is set. Clicking the chip while already on '/' is a no-op.
+  void router.push('/')
+}
+
+function goMySpace() {
+  // Prefer the canonical URL so /me shows up in the address bar and the
+  // browser history — refreshing /me re-runs the redirect, which is what
+  // we want when the personal space id changes (e.g. user renamed).
+  void router.push('/me')
+}
+
+// `authStore` is referenced only to keep the reactivity alive for `user`
+// (avoids HMR-side-effect warnings if we ever inline-reference it). The
+// topbar already surfaces this via the user menu's "我的空间" item, but the
+// sidebar shortcut is a frequent-use target — easier to reach than the
+// avatar dropdown for users who context-switch often.
+void authStore
 </script>
 
 <template>
   <aside class="sidebar">
     <div class="quick-nav">
-      <a class="quick-nav-item" href="#/">
-        <span class="material-symbols-outlined">home</span>
-        <span>首页</span>
-      </a>
+      <!-- Active-space chip: always reflects the currently active space (any
+           kind) so the sidebar's identity matches the topbar. The chip is
+           itself a "home" button — clicking it returns to the active space's
+           home view. Old behavior rendered the personal space here regardless
+           of the active space, which was confusing when working in a team
+           space. -->
+      <button
+        v-if="active"
+        type="button"
+        class="quick-nav-item quick-nav-active"
+        :title="`回到 ${active.name} 首页`"
+        @click="goHome"
+      >
+        <span class="active-avatar" :style="{ background: active.color }" aria-hidden="true">
+          <span class="material-symbols-outlined">{{ active.icon || (isActivePersonal ? 'cottage' : 'workspaces') }}</span>
+        </span>
+        <span class="active-name">{{ active.name }}</span>
+        <span class="active-count">{{ activePageCount }}</span>
+      </button>
     </div>
 
     <div class="sidebar-section">
@@ -63,6 +121,19 @@ async function createRoot() {
           :node="root"
         />
       </div>
+    </div>
+
+    <!-- "我的空间" shortcut: only visible when active is NOT the personal
+         space. The topbar's user menu also has this entry, but the sidebar
+         shortcut is one click away for users who context-switch often. The
+         shortcut is rendered as a quiet bottom-anchor (not a primary nav
+         item) so it doesn't compete with the active-space chip above. -->
+    <div v-if="showMySpaceShortcut" class="sidebar-myspace-anchor">
+      <button type="button" class="msa-btn" @click="goMySpace">
+        <span class="material-symbols-outlined msa-icon">cottage</span>
+        <span class="msa-label">我的空间</span>
+        <span class="msa-hint">{{ personalSpace?.name }}</span>
+      </button>
     </div>
 
     <div class="sidebar-bottom">
@@ -94,6 +165,12 @@ async function createRoot() {
   text-decoration: none;
   transition: all var(--duration-fast);
   position: relative;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  width: 100%;
 }
 .quick-nav-item:hover {
   background: var(--bg-subtle);
@@ -105,6 +182,86 @@ async function createRoot() {
   color: var(--text-3);
 }
 .quick-nav-item:hover .material-symbols-outlined { color: var(--text-1); }
+
+/* Active-space chip: a small colored avatar chip replaces the plain icon
+ * so users can spot the current space at a glance. Mirrors the topbar
+ * SpaceSwitcher's avatar treatment for visual consistency. The chip is
+ * always the active space (any kind), so it doesn't need an "active" state
+ * — it's always in that state. */
+.quick-nav-active {
+  padding: 0 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.quick-nav-active .material-symbols-outlined { color: var(--accent); }
+.active-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm, 3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: white;
+}
+.active-avatar .material-symbols-outlined {
+  font-size: 14px !important;
+  color: white;
+}
+.active-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.active-count {
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.6);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* "我的空间" anchor: a quiet bottom-of-section shortcut back to the user's
+ * personal space when the active space is something else. Rendered as a
+ * small inline button so it doesn't compete with the active-space chip
+ * above or the create-page button at the very bottom. */
+.sidebar-myspace-anchor {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.msa-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.msa-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+.msa-icon { font-size: 16px !important; color: var(--text-3); flex-shrink: 0; }
+.msa-btn:hover .msa-icon { color: var(--text-1); }
+.msa-label { font-weight: 500; }
+.msa-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
 
 .section-icon {
   font-size: 14px !important;

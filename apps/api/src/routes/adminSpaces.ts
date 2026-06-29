@@ -14,6 +14,13 @@
  * setAccess replaces the full group set in a single transaction (delete +
  * bulk insert). The single-toggle UI uses POST/DELETE on /:id/access/:groupId
  * for optimistic per-group updates; PUT stays for batch ops.
+ *
+ * `pg-*` group ids are filtered out of every `accessGroupIds` response —
+ * those rows are auto-created by ensurePersonalSpace() per user to bind
+ * that user to their personal space. Showing them in the admin space-edit
+ * UI as a "1-person auto group" entry would be noise; the binding still
+ * works underneath. Frontend tabs (manager/spaces + manager/trash) filter
+ * personal vs shared by `kind`, which we expose here.
  */
 import { Hono } from 'hono'
 import { eq, inArray, sql, and, asc } from 'drizzle-orm'
@@ -43,9 +50,11 @@ function rowToSpace(row: SpaceRow, accessGroupIds: string[] = []): Space {
     description: row.description ?? undefined,
     color: row.color,
     icon: row.icon ?? undefined,
+    kind: row.kind,
+    ownerId: row.ownerId ?? undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    accessGroupIds,
+    accessGroupIds: accessGroupIds.filter((g) => !g.startsWith('pg-')),
   }
 }
 

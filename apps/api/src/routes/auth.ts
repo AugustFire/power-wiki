@@ -18,14 +18,14 @@
  * enumeration. The error message stays generic ("邮箱或密码错误").
  */
 import { Hono } from 'hono'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import {
   ResetPasswordInputSchema,
   SignInInputSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { users } from '../db/schema'
+import { spaces, users } from '../db/schema'
 import { requireAuth, type Variables } from '../auth/middleware'
 import { hashPassword, verifyPassword } from '../auth/password'
 import { createSession, deleteSession, getSessionUser } from '../auth/session'
@@ -66,9 +66,11 @@ authRouter.post('/sign-in', async (c) => {
     .catch(() => {})
 
   const user = rowToUser(row)
+  const personalSpaceId = await findPersonalSpaceId(row.id)
   return c.json({
     user: UserSchema.parse(user),
     mustResetPassword: user.status === 'must_reset_password',
+    personalSpaceId,
   })
 })
 
@@ -89,9 +91,11 @@ authRouter.get('/session', async (c) => {
   )[0]
   if (!row) return c.json({ error: 'unauthorized' }, 401)
   const full = rowToUser(row)
+  const personalSpaceId = await findPersonalSpaceId(row.id)
   return c.json({
     user: UserSchema.parse(full),
     mustResetPassword: full.status === 'must_reset_password',
+    personalSpaceId,
   })
 })
 
@@ -122,5 +126,20 @@ authRouter.post('/reset-password', requireAuth, async (c) => {
     .where(eq(users.id, me.id))
 
   const updated = (await db.select().from(users).where(eq(users.id, me.id)).limit(1))[0]!
-  return c.json({ user: UserSchema.parse(rowToUser(updated)) })
+  const personalSpaceId = await findPersonalSpaceId(me.id)
+  return c.json({ user: UserSchema.parse(rowToUser(updated)), personalSpaceId })
 })
+
+/**
+ * Look up the user's personal space id (kind='personal' with ownerId=userId).
+ * Returns null if the user doesn't have one (shouldn't happen post-bootstrap,
+ * but be defensive). One SELECT, no transaction needed.
+ */
+async function findPersonalSpaceId(userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: spaces.id })
+    .from(spaces)
+    .where(and(eq(spaces.ownerId, userId), eq(spaces.kind, 'personal')))
+    .limit(1)
+  return row?.id ?? null
+}

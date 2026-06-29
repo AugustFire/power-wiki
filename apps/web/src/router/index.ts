@@ -32,6 +32,15 @@ const routes: RouteRecordRaw[] = [
 
   // ─── Authed app ─────────────────────────────────────────────────────
   {
+    // Stable URL for the current user's personal space. Mounts a thin
+    // redirect-to-"/" component that flips the active space; registered
+    // before `/` so /me always matches this route, not the catch-all.
+    path: '/me',
+    name: 'my-space',
+    component: () => import('@/views/MySpaceView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/',
     name: 'home',
     component: () => import('@/views/HomeView.vue'),

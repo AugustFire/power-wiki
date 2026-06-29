@@ -7,8 +7,13 @@
  *   - Click card → /manager/spaces/:id (SpaceEditView) for member-of-groups +
  *     rename/delete.
  *   - Delete is gated by the server: refuses if the space still has pages.
+ *
+ * Stage 7 cleanup: 个人空间和团队空间分两个 tab (`KindTabs`),默认 团队。
+ * 在 `个人` tab 上**不**显示创建 / 删除按钮 — admin 不主动管理 personal space,
+ * 那是用户的私有草稿区,只读查看就够了。个人空间卡上额外显示"所有者"列
+ * (lookup users 表),方便 admin 知道某人的草稿空间属于谁。
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
@@ -16,7 +21,9 @@ import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
+import KindTabs from '@/components/manager/KindTabs.vue'
 import type { Space, UserGroup } from '@power-wiki/shared'
+import type { User } from '@power-wiki/shared'
 
 const router = useRouter()
 const uiStore = useUiStore()
@@ -26,8 +33,21 @@ const { confirm: askConfirm } = useConfirm()
 
 const spaces = ref<Space[]>([])
 const groups = ref<UserGroup[]>([])
+const users = ref<User[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+
+type KindTab = 'shared' | 'personal'
+const kindTab = ref<KindTab>('shared')
+
+// Tab-filtered lists drive both the card grid and the count badges on the
+// tabs themselves (admin gets an at-a-glance sense of how much is on each
+// side without forcing a click).
+const sharedSpaces = computed(() => spaces.value.filter((s) => s.kind === 'shared'))
+const personalSpaces = computed(() => spaces.value.filter((s) => s.kind === 'personal'))
+const visibleSpaces = computed(() =>
+  kindTab.value === 'shared' ? sharedSpaces.value : personalSpaces.value,
+)
 
 const { showCreateSpace: showCreate } = useManagerActions()
 const createName = ref('')
@@ -73,13 +93,19 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    // Single batch: spaces + groups, then per-space pages for the dense stats.
-    // Previously each space triggered a per-space group fetch — now we use
-    // accessGroupIds from the space response directly, plus one groups.list()
-    // call to resolve group names/colors for the avatar preview.
-    const [s, g] = await Promise.all([api.admin.spaces.list(), api.admin.groups.list()])
+    // Single batch: spaces + groups + users, then per-space pages for the
+    // dense stats. Previously each space triggered a per-space group fetch —
+    // now we use accessGroupIds from the space response directly, plus one
+    // groups.list() call to resolve group names/colors for the avatar preview.
+    // users.list() powers the "所有者" column on personal-space cards.
+    const [s, g, u] = await Promise.all([
+      api.admin.spaces.list(),
+      api.admin.groups.list(),
+      api.admin.users.list(),
+    ])
     spaces.value = s
     groups.value = g
+    users.value = u
     groupById.value = Object.fromEntries(g.map((grp) => [grp.id, grp]))
 
     const pageCounts: Record<string, number> = {}
@@ -183,6 +209,13 @@ function openSpace(s: Space) {
 function formatDate(ts: number): string {
   return new Date(ts).toLocaleString('zh-CN', { dateStyle: 'short' })
 }
+
+// Owner-name lookup for the personal-space "所有者" column. Built lazily so
+// switching tabs doesn't re-render the cards needlessly — it just changes
+// which list is iterated.
+const ownerNameById = computed<Record<string, string>>(() =>
+  Object.fromEntries(users.value.map((u) => [u.id, u.name])),
+)
 </script>
 
 <template>
@@ -191,18 +224,28 @@ function formatDate(ts: number): string {
     <header class="sv-header">
       <div class="sv-header-text">
         <h1 class="sv-title">空间</h1>
-        <p class="sv-sub">共 {{ spaces.length }} 个空间,用于按团队 / 项目组织页面并控制访问权限</p>
+        <p class="sv-sub">共 {{ sharedSpaces.length }} 个团队空间、{{ personalSpaces.length }} 个个人空间 — 用于按团队 / 项目组织页面并控制访问权限</p>
       </div>
       <!-- Create action lives in the main header, not the right context
-           panel (which is read-only info / stats). -->
-      <button
-        type="button"
-        class="sv-action"
-        @click="showCreate = true"
-      >
-        <span class="material-symbols-outlined">create_new_folder</span>
-        <span>创建新空间</span>
-      </button>
+           panel (which is read-only info / stats). Personal-space tab
+           doesn't expose create — personal spaces are auto-created per
+           user, not admin-managed. -->
+      <div class="sv-header-actions">
+        <KindTabs
+          v-model="kindTab"
+          :shared-count="sharedSpaces.length"
+          :personal-count="personalSpaces.length"
+        />
+        <button
+          v-if="kindTab === 'shared'"
+          type="button"
+          class="sv-action"
+          @click="showCreate = true"
+        >
+          <span class="material-symbols-outlined">create_new_folder</span>
+          <span>创建新空间</span>
+        </button>
+      </div>
     </header>
 
     <div v-if="loadError" class="sv-error">{{ loadError }}</div>
@@ -269,9 +312,21 @@ function formatDate(ts: number): string {
       <h3>还没有空间</h3>
       <p>创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。</p>
     </div>
+    <div v-else-if="visibleSpaces.length === 0" class="sv-empty sv-empty-soft">
+      <span class="material-symbols-outlined se-icon">
+        {{ kindTab === 'shared' ? 'workspaces' : 'cottage' }}
+      </span>
+      <h3>{{ kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间' }}</h3>
+      <p v-if="kindTab === 'shared'">
+        创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。
+      </p>
+      <p v-else>
+        每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。
+      </p>
+    </div>
     <div v-else class="sv-grid">
       <div
-        v-for="s in spaces"
+        v-for="s in visibleSpaces"
         :key="s.id"
         class="sv-card"
         role="button"
@@ -289,7 +344,26 @@ function formatDate(ts: number): string {
             <span v-else class="sc-initials">{{ s.name.slice(0, 2) }}</span>
           </span>
           <div class="sc-text">
-            <div class="sc-name">{{ s.name }}</div>
+            <div class="sc-name-row">
+              <span class="sc-name">{{ s.name }}</span>
+              <span
+                v-if="s.kind === 'personal'"
+                class="sc-kind-badge sc-kind-badge-personal"
+                title="个人空间:只有所有者可见,管理员只读"
+              >个人</span>
+              <span
+                v-else
+                class="sc-kind-badge sc-kind-badge-shared"
+                title="团队空间:授权组成员可见"
+              >团队</span>
+            </div>
+            <!-- Owner row only meaningful on personal cards — team spaces
+                 have no ownerId (it's null in the schema). -->
+            <div v-if="s.kind === 'personal' && s.ownerId" class="sc-owner">
+              <span class="material-symbols-outlined sco-icon">person</span>
+              <span class="sco-label">所有者:</span>
+              <span class="sco-name">{{ ownerNameById[s.ownerId] ?? s.ownerId }}</span>
+            </div>
             <div v-if="s.description" class="sc-desc">{{ s.description }}</div>
           </div>
         </div>
@@ -318,11 +392,14 @@ function formatDate(ts: number): string {
         </div>
 
         <!-- Access group avatar preview. Empty state hints at the implication
-             of having no groups (admin-only access). -->
+             of having no groups (admin-only access). For personal spaces the
+             only authorized "group" is the auto-created `pg-<userId>` group,
+             which adminSpaces.ts filters out of `accessGroupIds` — so this
+             row always renders the empty state on personal cards. -->
         <div class="sc-access">
           <span class="sc-access-label">授权组:</span>
           <div v-if="(s.accessGroupIds?.length ?? 0) === 0" class="sc-access-empty">
-            无授权 — 只有管理员可访问
+            {{ s.kind === 'personal' ? '仅所有者可见' : '无授权 — 只有管理员可访问' }}
           </div>
           <div v-else class="sc-access-avatars">
             <span
@@ -341,7 +418,11 @@ function formatDate(ts: number): string {
         </div>
 
         <div class="sc-actions">
+          <!-- Delete is only allowed on team spaces — personal spaces are
+               owned by users and shouldn't be admin-removable. The space
+               is auto-cleaned when the user is disabled via the users API. -->
           <button
+            v-if="s.kind !== 'personal'"
             type="button"
             class="ra-btn"
             title="删除"
@@ -349,6 +430,9 @@ function formatDate(ts: number): string {
           >
             <span class="material-symbols-outlined">delete</span>
           </button>
+          <span v-else class="sc-locked" title="个人空间不可由管理员删除">
+            <span class="material-symbols-outlined">lock</span>
+          </span>
           <span class="sc-open">
             <span class="material-symbols-outlined">arrow_forward</span>
           </span>
@@ -378,6 +462,12 @@ function formatDate(ts: number): string {
   margin-bottom: 20px;
 }
 .sv-header-text { min-width: 0; }
+.sv-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
 .sv-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
 .sv-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 0; }
 .sv-action {
@@ -423,6 +513,12 @@ function formatDate(ts: number): string {
 .sv-empty .se-icon { font-size: 48px; color: var(--text-3); display: block; margin-bottom: 12px; }
 .sv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
 .sv-empty p { margin: 0; }
+/* Soft variant for "no items on this tab" — lighter background so it
+   doesn't compete with the first-time setup empty state. */
+.sv-empty-soft {
+  background: transparent;
+  border: 1px dashed var(--border);
+}
 
 /* ─── Create panel ─── */
 .create-panel {
@@ -529,8 +625,51 @@ function formatDate(ts: number): string {
 .sc-icon { font-size: 22px !important; }
 .sc-initials { letter-spacing: 0.5px; text-transform: uppercase; }
 .sc-text { min-width: 0; }
-.sc-name { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.sc-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sc-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-kind-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  letter-spacing: 0.02em;
+}
+.sc-kind-badge-personal {
+  background: var(--accent-soft, #E9F2FF);
+  color: var(--accent, #0052CC);
+}
+.sc-kind-badge-shared {
+  background: var(--bg-canvas, #F4F5F7);
+  color: var(--text-3, #6B778C);
+}
 .sc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
+.sc-owner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.sco-icon { font-size: 14px !important; color: var(--text-3); }
+.sco-label { color: var(--text-3); }
+.sco-name { color: var(--text-2); font-weight: 600; }
 
 .sc-stats { display: flex; gap: 20px; flex-wrap: wrap; }
 .sc-stat { display: flex; flex-direction: column; min-width: 56px; }
@@ -586,6 +725,16 @@ function formatDate(ts: number): string {
 }
 
 .sc-actions { display: flex; align-items: center; justify-content: space-between; }
+.sc-locked {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+  opacity: 0.5;
+}
+.sc-locked .material-symbols-outlined { font-size: 16px; }
 .ra-btn {
   width: 28px;
   height: 28px;

@@ -12,9 +12,17 @@
  * All routes require admin role. Members are managed via the separate
  * /members sub-resource — the group body itself never carries memberIds in
  * PATCH. Use addMember / removeMember instead.
+ *
+ * `pg-*` prefix is reserved for the personal-group auto-created by
+ * ensurePersonalSpace() (one per user, gives that user access to their own
+ * personal space). These are system artifacts — every endpoint below
+ * either filters them out of list responses or 404s on direct access, so
+ * admin never sees or edits them through /manager/groups. The 1-person
+ * group + space_group_access row keep working underneath; we just hide
+ * the row from the admin UI.
  */
 import { Hono } from 'hono'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, not, like } from 'drizzle-orm'
 import {
   CreateGroupInputSchema,
   UpdateGroupInputSchema,
@@ -30,6 +38,11 @@ import type { UserGroupRow as DbUserGroupRow } from '../db/schema'
 export const adminGroupsRouter = new Hono<{ Variables: Variables }>()
 
 adminGroupsRouter.use('*', requireAdmin)
+
+/** True if the id is the auto-created personal-group for some user. */
+function isPersonalGroupId(id: string): boolean {
+  return id.startsWith('pg-')
+}
 
 /* ─── Row mappers ───────────────────────────────────────────────────── */
 
@@ -56,9 +69,14 @@ function rowToGroupWithMembers(row: DbUserGroupRow, memberIds: string[]): UserGr
 
 /* ─── Routes ────────────────────────────────────────────────────────── */
 
-// GET /api/admin/groups — list all groups (memberIds omitted for compactness)
+// GET /api/admin/groups — list all groups (memberIds omitted for compactness).
+// `pg-*` rows (the auto-created per-user groups for personal-space access)
+// are filtered out — they're system artifacts, not admin-managed groups.
 adminGroupsRouter.get('/', async (c) => {
-  const rows = await db.select().from(userGroups)
+  const rows = await db
+    .select()
+    .from(userGroups)
+    .where(not(like(userGroups.id, 'pg-%')))
   return c.json(rows.map((r) => UserGroupSchema.parse(rowToGroup(r))))
 })
 
@@ -81,9 +99,10 @@ adminGroupsRouter.post('/', async (c) => {
   return c.json(UserGroupSchema.parse(rowToGroup(created)), 201)
 })
 
-// GET /api/admin/groups/:id — single group with members
+// GET /api/admin/groups/:id — single group with members. `pg-*` ids 404.
 adminGroupsRouter.get('/:id', async (c) => {
   const id = c.req.param('id')
+  if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)
   const row = (await db.select().from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]
   if (!row) return c.json({ error: 'not_found' }, 404)
   const memberRows = await db
@@ -95,9 +114,10 @@ adminGroupsRouter.get('/:id', async (c) => {
   )
 })
 
-// PATCH /api/admin/groups/:id — update name/description
+// PATCH /api/admin/groups/:id — update name/description. `pg-*` ids 404.
 adminGroupsRouter.patch('/:id', async (c) => {
   const id = c.req.param('id')
+  if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)
   const body = await c.req.json().catch(() => ({}))
   const parsed = UpdateGroupInputSchema.safeParse(body)
   if (!parsed.success) {
@@ -121,9 +141,12 @@ adminGroupsRouter.patch('/:id', async (c) => {
   return c.json(UserGroupSchema.parse(rowToGroup(updated)))
 })
 
-// DELETE /api/admin/groups/:id
+// DELETE /api/admin/groups/:id — refuses to delete personal groups (system
+// artifact; the owning user's personal space depends on this row, deleting
+// it would silently lock them out of their drafts).
 adminGroupsRouter.delete('/:id', async (c) => {
   const id = c.req.param('id')
+  if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)
   const existing = (await db.select().from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]
   if (!existing) return c.json({ error: 'not_found' }, 404)
   // No FK CASCADE in the schema — sweep the join tables explicitly inside a
@@ -136,9 +159,10 @@ adminGroupsRouter.delete('/:id', async (c) => {
   return c.body(null, 204)
 })
 
-// POST /api/admin/groups/:id/members — add member
+// POST /api/admin/groups/:id/members — add member. `pg-*` groupId 404.
 adminGroupsRouter.post('/:id/members', async (c) => {
   const groupId = c.req.param('id')
+  if (isPersonalGroupId(groupId)) return c.json({ error: 'not_found' }, 404)
   const body = await c.req.json().catch(() => ({}))
   const userId = typeof body?.userId === 'string' ? body.userId : null
   if (!userId) {
@@ -169,9 +193,10 @@ adminGroupsRouter.post('/:id/members', async (c) => {
   )
 })
 
-// DELETE /api/admin/groups/:id/members/:userId
+// DELETE /api/admin/groups/:id/members/:userId — `pg-*` groupId 404.
 adminGroupsRouter.delete('/:id/members/:userId', async (c) => {
   const groupId = c.req.param('id')
+  if (isPersonalGroupId(groupId)) return c.json({ error: 'not_found' }, 404)
   const userId = c.req.param('userId')
   const group = (await db.select({ id: userGroups.id }).from(userGroups).where(eq(userGroups.id, groupId)).limit(1))[0]
   if (!group) return c.json({ error: 'not_found' }, 404)

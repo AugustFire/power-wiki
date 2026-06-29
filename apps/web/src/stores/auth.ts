@@ -31,6 +31,14 @@ import { useUiStore } from '@/stores/ui'
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const mustResetPassword = ref(false)
+  /**
+   * Personal space id for the current user (kind='personal', ownerId=me).
+   * Server returns this from sign-in / session / reset-password responses so
+   * the sidebar and /me route can resolve it without an extra round-trip.
+   * null when the user has no personal space yet (defensive — bootstrap should
+   * always create one).
+   */
+  const personalSpaceId = ref<string | null>(null)
   const status = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const loadError = ref<string | null>(null)
   /**
@@ -60,13 +68,25 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function init(): Promise<void> {
     if (initRef.current) return initRef.current
-    status.value = 'loading'
+    // Only flip status to 'loading' on the FIRST call. After the initial
+    // boot init resolves, status is 'ready' (or 'error'). Subsequent calls
+    // — router.beforeEach re-fires init() on every route change — must
+    // leave status alone, otherwise App.vue's `showBoot` computed (which
+    // keys off status === 'loading') flips to true and unmounts the entire
+    // RouterView, replacing it with the auth-boot spinner. That mid-route
+    // unmount interrupts any in-flight MySpaceView/EditView lifecycle
+    // (e.g. `router.replace('/')` from MySpaceView's onMounted) and causes
+    // an infinite mount → unmount → re-mount loop, manifesting as a hang
+    // when clicking the personal-space sidebar entry.
+    if (status.value === 'idle') status.value = 'loading'
     initRef.current = (async () => {
       try {
         try {
-          const { user: u, mustResetPassword: mrp } = await api.auth.getSession()
+          const { user: u, mustResetPassword: mrp, personalSpaceId: psid } =
+            await api.auth.getSession()
           user.value = u
           mustResetPassword.value = mrp
+          personalSpaceId.value = psid
           status.value = 'ready'
           loadError.value = null
         } catch (e) {
@@ -75,6 +95,7 @@ export const useAuthStore = defineStore('auth', () => {
           if (err.status === 401) {
             user.value = null
             mustResetPassword.value = false
+            personalSpaceId.value = null
             status.value = 'ready'
             loadError.value = null
           } else {
@@ -95,9 +116,11 @@ export const useAuthStore = defineStore('auth', () => {
     // until then we don't want stale data leaking (e.g. the sidebar still
     // showing the old user's page tree).
     resetSessionState()
-    const { user: u, mustResetPassword: mrp } = await api.auth.signIn({ email, password })
+    const { user: u, mustResetPassword: mrp, personalSpaceId: psid } =
+      await api.auth.signIn({ email, password })
     user.value = u
     mustResetPassword.value = mrp
+    personalSpaceId.value = psid
     status.value = 'ready'
     loadError.value = null
   }
@@ -106,6 +129,7 @@ export const useAuthStore = defineStore('auth', () => {
     await api.auth.signOut()
     user.value = null
     mustResetPassword.value = false
+    personalSpaceId.value = null
     // Drop every data store the previous user populated. Without this the
     // next user would see the old page tree, the old trashed list, and a
     // 401 from `/api/pages/trash?space=<oldSpaceId>` (because the new user
@@ -126,15 +150,20 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function resetPassword(currentPassword: string, newPassword: string): Promise<void> {
-    const { user: u } = await api.auth.resetPassword({ currentPassword, newPassword })
+    const { user: u, personalSpaceId: psid } = await api.auth.resetPassword({
+      currentPassword,
+      newPassword,
+    })
     user.value = u
     mustResetPassword.value = false
+    personalSpaceId.value = psid
   }
 
   return {
     // state
     user,
     mustResetPassword,
+    personalSpaceId,
     status,
     loadError,
     transitioning,

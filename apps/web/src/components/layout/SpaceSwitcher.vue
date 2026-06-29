@@ -6,11 +6,18 @@
  * the active space name + an expand_more caret. No avatar, no page count in
  * the trigger — those only show inside the dropdown for each candidate.
  *
+ * Personal spaces are intentionally hidden from this dropdown — the active
+ * space may still be the user's personal space (showing its name in the
+ * trigger is fine), but the only way to *enter* a personal space is via
+ * the sidebar's "我的空间" entry. Switching within the dropdown stays
+ * scoped to team spaces, which keeps the mental model clean: switcher
+ * = team context, sidebar = personal space.
+ *
  * Behaviour:
- *   - Single visible space → trigger renders but click is a no-op.
- *   - Multiple spaces → click opens a 320px dropdown listing every space
- *     visible to the user, with avatar / name / page count per row.
- *   - Zero spaces → empty state with admin CTA (links to /manager/spaces).
+ *   - Single visible team space → trigger renders but click is a no-op.
+ *   - Multiple team spaces → click opens a 320px dropdown listing every
+ *     team space visible to the user, with avatar / name / page count.
+ *   - Zero team spaces → empty state with admin CTA (links to /manager/spaces).
  *
  * Picking a space:
  *   1. setActiveSpace(id) — flips the activeSpaceId store value (persisted).
@@ -36,9 +43,23 @@ const router = useRouter()
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
-const spacesList = computed(() => spacesStore.spaces.value)
+// Personal spaces are intentionally filtered out — see the file-level doc.
+// The trigger still reflects whatever the active space is, which may itself
+// be the user's personal space; only the dropdown list is restricted.
+const spacesList = computed(() => spacesStore.sharedSpaces.value)
 const active = computed(() => spacesStore.activeSpace.value)
 const activeId = computed(() => spacesStore.activeSpaceId.value)
+
+// The trigger label deliberately ignores personal spaces — the topbar's space
+// switcher is a "team context" indicator, not a generic space picker. When
+// the active space is the user's personal space, the switcher shows a
+// neutral placeholder instead of the personal-space name. The user enters
+// the personal space from the top-right user menu (UserMenu.vue → "我的空间"),
+// keeping the personal-vs-shared separation clean at the topbar level.
+const isActiveShared = computed(() => active.value?.kind === 'shared')
+const triggerLabel = computed(() =>
+  isActiveShared.value && active.value ? active.value.name : '选择团队空间',
+)
 
 const pageCountBySpace = computed(() => {
   const map = new Map<string, number>()
@@ -101,11 +122,14 @@ onBeforeUnmount(() => {
       v-if="active"
       type="button"
       class="ss-trigger"
-      :class="{ 'ss-trigger-clickable': spacesList.length > 1 }"
-      :title="spacesList.length > 1 ? '切换空间' : undefined"
+      :class="{
+        'ss-trigger-clickable': spacesList.length > 1,
+        'ss-trigger-neutral': !isActiveShared,
+      }"
+      :title="isActiveShared ? `切换空间 — ${active.name}` : '选择一个团队空间'"
       @click="toggle"
     >
-      <span class="ss-name">{{ active.name }}</span>
+      <span class="ss-name">{{ triggerLabel }}</span>
       <span
         v-if="spacesList.length > 1"
         class="material-symbols-outlined ss-caret"
@@ -184,6 +208,15 @@ onBeforeUnmount(() => {
 }
 .ss-trigger-clickable { cursor: pointer; }
 .ss-trigger-clickable:hover { background: var(--bg-subtle); }
+
+/* Neutral state: the active space is the personal space, so the trigger
+ * shows a placeholder instead of a real name. Subtle muted color so it's
+ * visually distinct from "you're in this team space" — the topbar's space
+ * switcher is a team-context indicator and should not pretend the personal
+ * space is a team. */
+.ss-trigger-neutral { color: var(--text-3); }
+.ss-trigger-neutral .ss-caret { color: var(--text-3); }
+.ss-trigger-neutral:hover { color: var(--text-1); }
 
 .ss-name {
   max-width: 200px;

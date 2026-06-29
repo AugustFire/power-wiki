@@ -30,11 +30,12 @@ import {
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { users } from '../db/schema'
+import { spaces, userGroups, users } from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generateInitialPassword, hashPassword } from '../auth/password'
 import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
+import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
 
 export const adminUsersRouter = new Hono<{ Variables: Variables }>()
 
@@ -84,6 +85,7 @@ adminUsersRouter.post('/', async (c) => {
   const initialPassword = generateInitialPassword()
   const hash = await hashPassword(initialPassword)
   const now = Date.now()
+  const color = pickColorFromEmail(email)
 
   await db.insert(users).values({
     id,
@@ -95,17 +97,30 @@ adminUsersRouter.post('/', async (c) => {
     status: 'must_reset_password',
     // Color: pick a stable hash-based default from the email so the avatar
     // looks distinct from the get-go. The admin can override later via PATCH.
-    color: pickColorFromEmail(email),
+    color,
     createdAt: now,
     updatedAt: now,
     lastLoginAt: null,
   })
+
+  // Provision the user's personal space (1-person group + space + welcome
+  // page). Done after the user insert — if it fails, the user still exists
+  // and the next bootstrap run will fill in their personal space. We log
+  // loudly so the operator notices.
+  let personalSpaceId: string | null = null
+  try {
+    const r = await ensurePersonalSpace({ id, name, color })
+    personalSpaceId = r.spaceId
+  } catch (err) {
+    console.error(`[adminUsers] failed to provision personal space for ${email}:`, err)
+  }
 
   const created = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]!
   return c.json(
     {
       user: UserSchema.parse(rowToUser(created)),
       initialPassword,
+      personalSpaceId,
     },
     201,
   )
@@ -127,10 +142,38 @@ adminUsersRouter.patch('/:id', async (c) => {
   if (!existing) return c.json({ error: 'not_found' }, 404)
 
   const now = Date.now()
+  const newName = parsed.data.name
   await db
     .update(users)
     .set({ ...parsed.data, updatedAt: now })
     .where(eq(users.id, id))
+
+  // If the user's name changed, sync the personal space + group names so they
+  // stay consistent ("<name> 的空间"). Best-effort — log on failure but don't
+  // fail the user update (the space will rename next time the user re-saves
+  // it manually, or on the next bootstrap pass).
+  if (newName && newName !== existing.name) {
+    try {
+      const [personalSpace] = await db
+        .select({ id: spaces.id })
+        .from(spaces)
+        .where(and(eq(spaces.ownerId, id), eq(spaces.kind, 'personal')))
+        .limit(1)
+      if (personalSpace) {
+        await db
+          .update(spaces)
+          .set({ name: `${newName} 的空间`, updatedAt: now })
+          .where(eq(spaces.id, personalSpace.id))
+      }
+      const groupId = personalGroupId(id)
+      await db
+        .update(userGroups)
+        .set({ name: `${newName} 的个人组` })
+        .where(eq(userGroups.id, groupId))
+    } catch (err) {
+      console.error(`[adminUsers] failed to sync personal space name for ${id}:`, err)
+    }
+  }
 
   const updated = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]!
   return c.json(UserSchema.parse(rowToUser(updated)))

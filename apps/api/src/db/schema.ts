@@ -102,6 +102,16 @@ export const spaces = pgTable('spaces', {
   description: text('description'),
   color: text('color').notNull().default('#0052CC'),
   icon: text('icon'),
+  /**
+   * 'shared' (团队空间) | 'personal' (个人空间,每用户一个,ownerId 指向 users.id).
+   * 老行默认 'shared',由 0004 migration 补默认值。
+   */
+  kind: text('kind', { enum: ['personal', 'shared'] }).notNull().default('shared'),
+  /**
+   * 仅 kind='personal' 有意义,指向 users.id;nullable(团队空间为 null)。
+   * No FK — 禁用/删除用户不级联(由 admin bypass 维持 admin 可读)。
+   */
+  ownerId: text('owner_id'),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
 })

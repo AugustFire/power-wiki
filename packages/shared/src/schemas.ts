@@ -96,6 +96,8 @@ export const SpaceSchema = z.object({
   description: z.string().max(500).optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/, '颜色格式必须是 #RGB 或 #RRGGBB'),
   icon: z.string().max(40).optional(),
+  kind: z.enum(['personal', 'shared']).optional(),
+  ownerId: z.string().min(1).optional(),
   createdAt: z.number().int().positive(),
   updatedAt: z.number().int().positive(),
   accessVia: z.enum(['member']).optional(),
@@ -206,6 +208,13 @@ export const MovePageInputSchema = z.object({
    * 把该页插入到第 newOrder 个位置。不传 = 追加到末尾。
    * 后端会重新分配整个 sibling 列表的 sortOrder,无需客户端再批量 PATCH。 */
   newOrder: z.number().int().nonnegative().optional(),
+  /**
+   * 可选:跨空间移动到的目标 space id。
+   * 传 newSpaceId 时,newParentId 必须为 null(移到目标空间根级),
+   * 目标空间必须对当前用户 canAccess(由后端校验)。
+   * admin 写 personal space 会被 personalSpaceGuard 拒为 403。
+   */
+  newSpaceId: PageIdSchema.optional(),
 })
 
 /* ---------- 类型推导(对外的 TS 类型) ---------- */

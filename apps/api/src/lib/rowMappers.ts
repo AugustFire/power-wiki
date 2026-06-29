@@ -8,8 +8,8 @@
  * + optional nullable handling + default). Pulling them apart by entity keeps
  * each function < 20 lines.
  */
-import type { UserRow } from '../db/schema'
-import type { User } from '@power-wiki/shared'
+import type { SpaceRow, UserRow } from '../db/schema'
+import type { Space, User } from '@power-wiki/shared'
 
 export function rowToUser(row: UserRow): User {
   return {
@@ -22,5 +22,27 @@ export function rowToUser(row: UserRow): User {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastLoginAt: row.lastLoginAt ?? null,
+  }
+}
+
+/**
+ * rowToSpace — DB row → API contract. Pass `includeOwner` = true for admin
+ * responses (the sidebar manager UI + /manager/spaces/:id use it to render
+ * the "所有者" field); false for regular users (who don't need to know who
+ * owns a space they have access to).
+ */
+export function rowToSpace(row: SpaceRow, opts: { includeOwner?: boolean } = {}): Space {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? undefined,
+    color: row.color,
+    icon: row.icon ?? undefined,
+    kind: row.kind,
+    // ownerId is admin-only metadata; regular users would otherwise be able to
+    // discover other users' personal space ids.
+    ownerId: opts.includeOwner ? row.ownerId ?? undefined : undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   }
 }

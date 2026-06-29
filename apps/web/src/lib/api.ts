@@ -316,10 +316,11 @@ export const api = {
     /** POST /api/auth/sign-in — returns user + mustResetPassword; sets cookie. */
     signIn: async (input: SignInInput) => {
       const parsed = SignInInputSchema.parse(input)
-      const r = await request<{ user: User; mustResetPassword: boolean }>(
-        '/auth/sign-in',
-        { method: 'POST', body: JSON.stringify(parsed) },
-      )
+      const r = await request<{
+        user: User
+        mustResetPassword: boolean
+        personalSpaceId: string | null
+      }>('/auth/sign-in', { method: 'POST', body: JSON.stringify(parsed) })
       // Drop any cached /auth/session response (e.g. the boot init's 401, or
       // a previous user's session) so the very next init() — typically fired
       // by the router guard after router.replace('/...') — fetches a fresh
@@ -336,6 +337,7 @@ export const api = {
       return {
         user: UserSchema.parse(r.user) as User,
         mustResetPassword: r.mustResetPassword,
+        personalSpaceId: r.personalSpaceId,
       }
     },
     signOut: async () => {
@@ -353,18 +355,21 @@ export const api = {
     },
     /** GET /api/auth/session — returns user + mustResetPassword; 401 if not logged in. */
     getSession: () =>
-      request<{ user: User; mustResetPassword: boolean }>('/auth/session').then(
-        (r) => ({
-          user: UserSchema.parse(r.user) as User,
-          mustResetPassword: r.mustResetPassword,
-        }),
-      ),
+      request<{
+        user: User
+        mustResetPassword: boolean
+        personalSpaceId: string | null
+      }>('/auth/session').then((r) => ({
+        user: UserSchema.parse(r.user) as User,
+        mustResetPassword: r.mustResetPassword,
+        personalSpaceId: r.personalSpaceId,
+      })),
     resetPassword: async (input: ResetPasswordInput) => {
       const parsed = ResetPasswordInputSchema.parse(input)
-      const r = await request<{ user: User }>('/auth/reset-password', {
-        method: 'POST',
-        body: JSON.stringify(parsed),
-      })
+      const r = await request<{ user: User; personalSpaceId: string | null }>(
+        '/auth/reset-password',
+        { method: 'POST', body: JSON.stringify(parsed) },
+      )
       // Server flipped status → 'active', so the next /api/auth/session call
       // would return mustResetPassword=false. Without this invalidation, the
       // cached response (mustResetPassword=true from the pre-reset init())
@@ -373,7 +378,10 @@ export const api = {
       // straight back to /reset-password — forcing them to set the password
       // twice.
       invalidatePath('GET', '/auth/session')
-      return { user: UserSchema.parse(r.user) as User }
+      return {
+        user: UserSchema.parse(r.user) as User,
+        personalSpaceId: r.personalSpaceId,
+      }
     },
   },
 

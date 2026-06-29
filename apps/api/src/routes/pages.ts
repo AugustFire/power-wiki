@@ -47,10 +47,11 @@ import {
   MovePageInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { pages, users } from '../db/schema'
+import { pages, spaces, users } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { type Variables } from '../auth/middleware'
 
 const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/src/lib/id.ts (10 chars)
@@ -186,6 +187,11 @@ pagesRouter.post('/', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
+  // Admin can't write into a personal space (even their own isn't an exception
+  // — Confluence-style: admin supervises, doesn't edit).
+  const blocked = await assertAdminNotWritingPersonalSpace(c, me, input.spaceId)
+  if (blocked) return blocked
+
   // sortOrder: 显式传入则用,否则追加到末尾。
   let sortOrder = input.order
   if (sortOrder === undefined) {
@@ -250,6 +256,11 @@ pagesRouter.patch('/:id', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
+  // Admin can't edit a page that lives in a personal space. (The page's
+  // existing space is the target — moving it would be a separate endpoint.)
+  const blocked = await assertAdminNotWritingPersonalSpace(c, me, existing.spaceId)
+  if (blocked) return blocked
+
   const patch: Partial<typeof pages.$inferInsert> = { updatedAt: Date.now() }
   if (input.title !== undefined) patch.title = input.title
   if (input.contentJSON !== undefined) patch.contentJson = input.contentJSON
@@ -289,27 +300,88 @@ pagesRouter.patch('/:id/move', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
-  // If the new parent is set, it must be in the SAME space as the page being
-  // moved (move only re-parents, doesn't cross spaces — cross-space moves
-  // would need a separate endpoint).
-  if (input.newParentId !== null) {
+  // Cross-space move: newSpaceId optional. When present, the page is moved
+  // to that space's root (newParentId MUST be null in that case — we don't
+  // support re-parenting across a space boundary because target sub-pages
+  // would create confusing cross-space parent chains in the UI).
+  let targetSpaceId = existing.spaceId
+  let targetParentId = input.newParentId
+  if (input.newSpaceId !== undefined) {
+    if (input.newParentId !== null) {
+      return c.json(
+        { error: 'cross_space_no_parent', message: '跨空间移动时 newParentId 必须为 null' },
+        400,
+      )
+    }
+    // Source-side guard: cross-space moves are only allowed from a personal
+    // space (草稿→发布). Team-to-team moves are not part of the personal-space
+    // design — a user wanting to share a page should be in their personal
+    // space first (drag from personal to a team space), not moving between
+    // shared spaces. This keeps the "personal = draft, shared = publish"
+    // mental model intact at the API boundary; the frontend gates the same
+    // condition via `hasMoveTargets` for UX, but the API enforces it.
+    const [sourceSpace] = await db
+      .select({ kind: spaces.kind })
+      .from(spaces)
+      .where(eq(spaces.id, existing.spaceId))
+      .limit(1)
+    if (!sourceSpace || sourceSpace.kind !== 'personal') {
+      return c.json(
+        {
+          error: 'personal_move_only',
+          message: '只有个人空间的页面可以跨空间移动(发布到团队空间)',
+        },
+        403,
+      )
+    }
+    if (input.newSpaceId === existing.spaceId) {
+      // Same-space move via cross-space endpoint — treat as a plain root move.
+      // Skipping newSpaceId in the request is the cleanest way to express
+      // "re-parent to root in same space", but accepting the alias is more
+      // forgiving for the frontend.
+      targetSpaceId = existing.spaceId
+    } else {
+      if (!(await canAccessSpace(me.id, me.role === 'admin', input.newSpaceId))) {
+        return c.json({ error: 'not_found' }, 404)
+      }
+      // Admin can't write into a personal space (admin would be moving INTO it).
+      const blocked = await assertAdminNotWritingPersonalSpace(c, me, input.newSpaceId)
+      if (blocked) return blocked
+      targetSpaceId = input.newSpaceId
+      targetParentId = null
+    }
+  }
+
+  // Same-space: if the new parent is set, it must be in the same space as
+  // the page being moved (cross-space parents would not make sense).
+  if (targetSpaceId === existing.spaceId && targetParentId !== null) {
     const [parent] = await db
       .select({ spaceId: pages.spaceId })
       .from(pages)
-      .where(eq(pages.id, input.newParentId))
+      .where(eq(pages.id, targetParentId))
       .limit(1)
     if (!parent || parent.spaceId !== existing.spaceId) {
       return c.json({ error: 'not_found' }, 404)
     }
   }
 
-  // Cycle protection: can't move into self or a descendant of self.
-  if (input.newParentId !== null && (await isDescendantOrSelf(input.newParentId, id))) {
+  // Cycle protection: can't move into self or a descendant of self. Only
+  // applies to same-space re-parenting (cross-space move lands at root).
+  if (
+    targetSpaceId === existing.spaceId &&
+    targetParentId !== null &&
+    (await isDescendantOrSelf(targetParentId, id))
+  ) {
     return c.json({ error: 'cycle' }, 409)
   }
 
-  const targetSpaceId = existing.spaceId
-  const targetParentId = input.newParentId
+  // Admin edit-blocker for same-space re-parenting of a personal-space page:
+  // the page already lives in a personal space, so the move is a write to it.
+  if (targetSpaceId === existing.spaceId) {
+    const blocked = await assertAdminNotWritingPersonalSpace(c, me, existing.spaceId)
+    if (blocked) return blocked
+  }
+
   const insertAt = input.newOrder ?? Number.MAX_SAFE_INTEGER // sentinel: "append"
 
   // Collect the target parent's current children (excluding self), ordered.
@@ -335,17 +407,30 @@ pagesRouter.patch('/:id/move', async (c) => {
   // One transaction: bump self to a temporary sortOrder (so the loop below
   // doesn't fight itself when reparenting within the same parent), then
   // rewrite every sibling in the target list to its new 0-based order.
+  // For cross-space moves we also flip spaceId + parentId in the same
+  // transaction so a partial failure doesn't leave the page half-moved.
   await db.transaction(async (tx) => {
     await tx
       .update(pages)
-      .set({ parentId: targetParentId, sortOrder: -1, updatedAt: Date.now() })
+      .set({
+        spaceId: targetSpaceId,
+        parentId: targetParentId,
+        sortOrder: -1,
+        updatedAt: Date.now(),
+      })
       .where(eq(pages.id, id))
-    orderedIds.forEach((pageId, i) => {
-      void tx
+    // Sequentially rewrite sibling order — the `await` ensures every UPDATE
+    // commits before the transaction's COMMIT (Drizzle queues tx.update()
+    // calls and awaits them in order). Without `await`, `void tx.update()`
+    // would fire-and-forget, and the post-transaction SELECT below could
+    // observe a row with sortOrder=-1 — which fails the PageNode schema's
+    // `nonnegative` check at the response boundary.
+    for (let i = 0; i < orderedIds.length; i++) {
+      await tx
         .update(pages)
         .set({ sortOrder: i })
-        .where(eq(pages.id, pageId))
-    })
+        .where(eq(pages.id, orderedIds[i]!))
+    }
   })
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, id)).limit(1)
@@ -440,6 +525,13 @@ pagesRouter.delete('/:id', async (c) => {
   }
   if (!(await canAccessSpace(me.id, me.role === 'admin', existing.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
+  }
+
+  // Admin can't soft-delete a personal-space page (purge is fine — admin
+  // recovery / compliance path is explicitly allowed by the design).
+  if (!purge) {
+    const blocked = await assertAdminNotWritingPersonalSpace(c, me, existing.spaceId)
+    if (blocked) return blocked
   }
 
   if (purge) {

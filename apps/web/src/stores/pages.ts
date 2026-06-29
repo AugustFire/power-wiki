@@ -397,6 +397,61 @@ export const usePagesStore = defineStore('pages', () => {
     }
   }
 
+  /**
+   * Cross-space move: relocate a page (with its subtree) from its current
+   * space into a different space as a root-level page. Used by the sidebar
+   * "移动到..." menu to publish a personal-space draft into a team space.
+   *
+   * The backend enforces newParentId === null on cross-space moves (cannot
+   * nest under an arbitrary page in another space, because that parent
+   * might not exist where the page is moving). Locally we replicate the
+   * rule so the optimistic update reflects it.
+   */
+  async function movePageToSpace(id: string, newSpaceId: string): Promise<PageNode> {
+    const idx = pages.value.findIndex((p) => p.id === id)
+    if (idx < 0) throw new Error(`page not found: ${id}`)
+    const snapshot = pages.value[idx]!
+    if (snapshot.spaceId === newSpaceId) {
+      throw new Error('page is already in the target space')
+    }
+    const pagesSnapshot = pages.value.slice()
+
+    // Sibling re-order in the destination's root level: this page goes to
+    // the end of the destination's root list.
+    const destSiblings = pages.value
+      .filter((p) => p.spaceId === newSpaceId && p.parentId === null && p.id !== id)
+      .sort((a, b) => a.order - b.order)
+    const insertAt = destSiblings.length
+
+    pages.value = pages.value.map((p) => {
+      if (p.id === id) {
+        return {
+          ...p,
+          spaceId: newSpaceId,
+          parentId: null,
+          order: insertAt,
+          updatedAt: Date.now(),
+        }
+      }
+      return p
+    })
+
+    try {
+      const real = await api.pages.move(id, {
+        newParentId: null,
+        newOrder: insertAt,
+        newSpaceId,
+      })
+      const i = pages.value.findIndex((p) => p.id === id)
+      if (i >= 0) pages.value[i] = real
+      return real
+    } catch (e) {
+      pages.value = pagesSnapshot
+      ui().setError(`移动到团队空间失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
   function collectDescendantIds(id: string): Set<string> {
     const result = new Set<string>([id])
     let changed = true
@@ -516,6 +571,7 @@ export const usePagesStore = defineStore('pages', () => {
     softDeletePage,
     renamePage,
     movePage,
+    movePageToSpace,
     getTree,
     getTreeForSpace,
     loadTrash,

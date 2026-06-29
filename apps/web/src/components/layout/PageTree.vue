@@ -3,8 +3,10 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
 import { useConfirm } from '@/composables/useConfirm'
-import type { TreeNode } from '@power-wiki/shared'
+import MoveToSpaceMenu from './MoveToSpaceMenu.vue'
+import type { PageNode, TreeNode } from '@power-wiki/shared'
 
 const props = defineProps<{
   node: TreeNode
@@ -13,6 +15,7 @@ const props = defineProps<{
 
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
+const spacesStore = useSpacesStore()
 const route = useRoute()
 const router = useRouter()
 const { confirm } = useConfirm()
@@ -307,6 +310,61 @@ function countLiveDescendants(id: string): number {
 
 const hasLiveChildren = computed(() => countLiveDescendants(props.node.id) > 0)
 
+/**
+ * Cross-space move UI: clicking "移动到..." in the ⋯ menu opens a popover
+ * listing the user's accessible team spaces. The popover is mounted
+ * conditionally as a sibling of the menu backdrop, anchored at the click
+ * coordinates so it visually flows out of the trigger.
+ *
+ * `moveToAnchor` is reused for both left-click (menu trigger) and
+ * right-click (context menu) — both surface the same popover at the
+ * cursor.
+ */
+const moveToOpen = ref(false)
+const moveToAnchor = ref<{ x: number; y: number }>({ x: 0, y: 0 })
+
+function openMoveTo() {
+  // Anchor the popover at the cursor — the menu item that opened it is
+  // already at the same screen position the user is looking at.
+  moveToAnchor.value = { x: uiStore.menuPos.x, y: uiStore.menuPos.y }
+  moveToOpen.value = true
+}
+function closeMoveTo() {
+  moveToOpen.value = false
+}
+
+/**
+ * The "移动到..." menu item is only useful if the user can actually
+ * reach at least one team space. Hide it when:
+ *   - The current space is a team space AND there are no other team spaces
+ *     (moving to "another team space" would only be a no-op rename)
+ *   - The user has zero team spaces at all (admins who only have personal
+ *     spaces wouldn't see this entry — they'd just delete/move within their
+ *     own personal space)
+ *
+ * Pages inside a personal space always have at least one destination
+ * (the user's team spaces), assuming any exist. If they don't, the
+ * popover's own empty state explains how to fix it.
+ */
+const hasMoveTargets = computed(() => {
+  const page = pagesStore.getPage(props.node.id)
+  if (!page) return false
+  // Source-side guard: only pages in a personal space can move across
+  // spaces. Cross-space moves implement the "草稿 → 发布" flow — a user
+  // finishes a draft in their personal space then publishes it into a
+  // shared team space. Team-space pages don't expose the move action at
+  // all; the backend enforces the same rule via `personal_move_only` 403.
+  const sourceSpace = spacesStore.spaces.value.find((s) => s.id === page.spaceId)
+  if (!sourceSpace || sourceSpace.kind !== 'personal') return false
+  return spacesStore.spaces.value.some(
+    (s) => s.kind !== 'personal' && s.id !== page.spaceId,
+  )
+})
+
+const currentPage = computed<PageNode | undefined>(() =>
+  pagesStore.getPage(props.node.id),
+)
+
 // 当外部关闭重命名(比如点别处),把输入值还原
 watch(isRenaming, (val) => {
   if (val) renameValue.value = props.node.title
@@ -381,6 +439,14 @@ watch(isRenaming, (val) => {
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
+        <button
+          v-if="hasMoveTargets"
+          class="menu-item"
+          @click="openMoveTo"
+        >
+          <span class="material-symbols-outlined icon-md">drive_file_move</span>
+          <span>移动到...</span>
+        </button>
         <button class="menu-item" @click="openInNewTab">
           <span class="material-symbols-outlined icon-md">open_in_new</span>
           <span>在新窗口打开</span>
@@ -400,6 +466,12 @@ watch(isRenaming, (val) => {
           <span>删除</span>
         </button>
       </div>
+      <MoveToSpaceMenu
+        v-if="moveToOpen && currentPage"
+        :page="currentPage"
+        :anchor="moveToAnchor"
+        @close="closeMoveTo"
+      />
     </template>
 
     <div v-if="hasChildren && isExpanded" class="tree-children">

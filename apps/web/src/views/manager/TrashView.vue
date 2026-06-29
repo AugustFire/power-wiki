@@ -18,12 +18,26 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
+import KindTabs from '@/components/manager/KindTabs.vue'
 import type { PageNode, User } from '@power-wiki/shared'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const uiStore = useUiStore()
 const { confirm } = useConfirm()
+
+type KindTab = 'shared' | 'personal'
+const kindTab = ref<KindTab>('shared')
+
+// Space list filtered by the active tab — drives both the count badges on
+// the tabs and the `<select>` dropdown. admins see both kinds, but the UX
+// cleanly partitions them so they aren't sifting through every user's draft
+// space to find a shared one.
+const sharedSpaces = computed(() => spacesStore.spaces.value.filter((s) => s.kind === 'shared'))
+const personalSpaces = computed(() => spacesStore.spaces.value.filter((s) => s.kind === 'personal'))
+const tabSpaces = computed(() =>
+  kindTab.value === 'shared' ? sharedSpaces.value : personalSpaces.value,
+)
 
 const selectedSpaceId = ref<string>(spacesStore.activeSpaceId.value ?? '')
 const busy = ref<Set<string>>(new Set())
@@ -38,8 +52,11 @@ const allUsers = ref<User[]>([])
 
 onMounted(async () => {
   if (!spacesStore.loaded) await spacesStore.init()
-  if (!selectedSpaceId.value && spacesStore.spaces.value.length > 0) {
-    selectedSpaceId.value = spacesStore.spaces.value[0]!.id
+  // Default the space picker to a shared-space id (kind='shared') — the
+  // active tab defaults to 'shared'. Falls back to the first space of
+  // any kind if shared is empty.
+  if (!selectedSpaceId.value || !tabSpaces.value.some((s) => s.id === selectedSpaceId.value)) {
+    selectedSpaceId.value = tabSpaces.value[0]?.id ?? spacesStore.spaces.value[0]?.id ?? ''
   }
   if (selectedSpaceId.value) await pagesStore.loadTrash(selectedSpaceId.value)
   // Pull users for the 删除者 filter dropdown (admin-only endpoint).
@@ -47,6 +64,17 @@ onMounted(async () => {
     allUsers.value = await api.admin.users.list()
   } catch {
     /* non-fatal — filter dropdown will just show "all" */
+  }
+})
+
+watch(kindTab, () => {
+  // Switching tab invalidates the previous space selection (it was scoped
+  // to the other kind). Pick the first space of the new tab if available.
+  if (!tabSpaces.value.some((s) => s.id === selectedSpaceId.value)) {
+    selectedSpaceId.value = tabSpaces.value[0]?.id ?? ''
+    if (selectedSpaceId.value) {
+      void pagesStore.loadTrash(selectedSpaceId.value)
+    }
   }
 })
 
@@ -161,10 +189,15 @@ async function onPurge(id: string, title: string) {
         <p class="subtitle">软删除的页面。恢复会按原父级放回;父级也已被删除时,需要先恢复父级。</p>
       </div>
       <div class="controls">
+        <KindTabs
+          v-model="kindTab"
+          :shared-count="sharedSpaces.length"
+          :personal-count="personalSpaces.length"
+        />
         <label class="select-wrap">
           <span>空间</span>
           <select v-model="selectedSpaceId">
-            <option v-for="s in spacesStore.spaces.value" :key="s.id" :value="s.id">
+            <option v-for="s in tabSpaces" :key="s.id" :value="s.id">
               {{ s.name }}
             </option>
           </select>
@@ -213,6 +246,14 @@ async function onPurge(id: string, title: string) {
       <span class="material-symbols-outlined empty-icon">delete_sweep</span>
       <h2>{{ searchText || deletedByFilter !== 'all' ? '没有匹配的页面' : '该空间没有已删除的页面' }}</h2>
       <p>{{ searchText || deletedByFilter !== 'all' ? '试试清除筛选条件。' : '用户删除的页面会出现在这里。' }}</p>
+    </div>
+    <div v-else-if="tabSpaces.length === 0" class="empty">
+      <span class="material-symbols-outlined empty-icon">
+        {{ kindTab === 'shared' ? 'workspaces' : 'cottage' }}
+      </span>
+      <h2>{{ kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间' }}</h2>
+      <p v-if="kindTab === 'shared'">创建空间以按团队 / 项目组织页面。</p>
+      <p v-else>每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。</p>
     </div>
 
     <table v-else class="trash-table">

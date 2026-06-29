@@ -8,6 +8,12 @@
  *   - Delete space (with confirm; backend refuses if pages exist)
  *
  * Optimistic add/remove for group toggles — rollback on failure.
+ *
+ * Personal-space detail (kind='personal'): shows the owner's name in the
+ * header. The name-edit form is still allowed for admins (so they can fix
+ * a typo'd personal-space name), but on the page itself admin write ops
+ * (PATCH /api/pages/:id etc.) are blocked server-side. This view doesn't
+ * write to pages, so we leave it enabled.
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -15,7 +21,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
-import type { Space, UserGroup } from '@power-wiki/shared'
+import type { Space, User, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +33,7 @@ const spaceId = computed(() => String(route.params.id ?? ''))
 
 const space = ref<Space | null>(null)
 const allGroups = ref<UserGroup[]>([])
+const ownerUser = ref<User | null>(null)
 const accessGroupIds = ref<Set<string>>(new Set())
 const loading = ref(false)
 const loadError = ref<string | null>(null)
@@ -56,6 +63,17 @@ async function load() {
     accessGroupIds.value = new Set(s.accessGroupIds ?? [])
     allGroups.value = g
     syncFormFromSpace()
+    // Personal spaces expose ownerId — fetch the owner so the header can
+    // render "所有者: <name>". Skip for team spaces (ownerId is null).
+    if (s.kind === 'personal' && s.ownerId) {
+      try {
+        ownerUser.value = await api.admin.users.get(s.ownerId)
+      } catch {
+        ownerUser.value = null
+      }
+    } else {
+      ownerUser.value = null
+    }
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
       loadError.value = '空间不存在'
@@ -212,11 +230,30 @@ function formatDate(ts: number): string {
             :style="{ background: space.color }"
             aria-hidden="true"
           >
-            <span class="se-initials">{{ space.name.slice(0, 2) }}</span>
+            <span v-if="space.icon" class="material-symbols-outlined se-icon">{{ space.icon }}</span>
+            <span v-else class="se-initials">{{ space.name.slice(0, 2) }}</span>
           </span>
           <h1 class="se-title">{{ space.name }}</h1>
+          <span
+            v-if="space.kind === 'personal'"
+            class="se-kind-badge se-kind-personal"
+            title="个人空间:只有所有者可见,管理员只读"
+          >个人空间</span>
+          <span
+            v-else
+            class="se-kind-badge se-kind-shared"
+            title="团队空间:授权组成员可见"
+          >团队空间</span>
         </div>
-        <p class="se-sub">创建于 {{ formatDate(space.createdAt) }}</p>
+        <p class="se-sub">
+          创建于 {{ formatDate(space.createdAt) }}
+          <template v-if="space.kind === 'personal' && ownerUser">
+            · 所有者:<RouterLink :to="{ name: 'manager-user-edit', params: { id: ownerUser.id } }">{{ ownerUser.name }}</RouterLink>
+          </template>
+          <template v-else-if="space.kind === 'personal' && !ownerUser && space.ownerId">
+            · 所有者 ID:<code>{{ space.ownerId }}</code>
+          </template>
+        </p>
       </div>
     </header>
 
@@ -384,9 +421,38 @@ function formatDate(ts: number): string {
   font-size: 14px;
   flex-shrink: 0;
 }
+.se-icon { font-size: 22px !important; }
 .se-initials { letter-spacing: 0.5px; text-transform: uppercase; }
 .se-title { font-size: 22px; font-weight: 700; color: var(--text-1); margin: 0; }
+.se-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 11px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.se-kind-personal {
+  background: var(--accent-soft, #E9F2FF);
+  color: var(--accent, #0052CC);
+}
+.se-kind-shared {
+  background: var(--bg-canvas, #F4F5F7);
+  color: var(--text-3, #6B778C);
+}
 .se-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 52px; }
+.se-sub a { color: var(--accent); text-decoration: none; }
+.se-sub a:hover { text-decoration: underline; }
+.se-sub code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: var(--bg-canvas, #F4F5F7);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
 
 .se-grid {
   display: grid;

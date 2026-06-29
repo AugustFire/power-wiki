@@ -20,6 +20,7 @@ import { SpaceSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { spaceGroupAccess, spaces } from '../db/schema'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import { rowToSpace } from '../lib/rowMappers'
 import type { Variables } from '../auth/middleware'
 
 export const spacesRouter = new Hono<{ Variables: Variables }>()
@@ -44,13 +45,7 @@ async function listVisibleSpaces(isAdmin: boolean, accessible: string[] | '*') {
     }
     return rows.map((row) =>
       SpaceSchema.parse({
-        id: row.id,
-        name: row.name,
-        description: row.description ?? undefined,
-        color: row.color,
-        icon: row.icon ?? undefined,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
+        ...rowToSpace(row, { includeOwner: true }),
         accessGroupIds: accessBySpace.get(row.id) ?? [],
       }),
     )
@@ -64,17 +59,7 @@ async function listVisibleSpaces(isAdmin: boolean, accessible: string[] | '*') {
     .from(spaces)
     .where(inArray(spaces.id, ids))
     .orderBy(asc(spaces.createdAt))
-  return rows.map((row) =>
-    SpaceSchema.parse({
-      id: row.id,
-      name: row.name,
-      description: row.description ?? undefined,
-      color: row.color,
-      icon: row.icon ?? undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    }),
-  )
+  return rows.map((row) => SpaceSchema.parse(rowToSpace(row, { includeOwner: false })))
 }
 
 /* ─── GET /api/spaces ────────────────────────────────────────────────── */
@@ -109,27 +94,11 @@ spacesRouter.get('/:id', async (c) => {
       .where(eq(spaceGroupAccess.spaceId, id))
     return c.json(
       SpaceSchema.parse({
-        id: row.id,
-        name: row.name,
-        description: row.description ?? undefined,
-        color: row.color,
-        icon: row.icon ?? undefined,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
+        ...rowToSpace(row, { includeOwner: true }),
         accessGroupIds: accessRows.map((r) => r.groupId),
       }),
     )
   }
 
-  return c.json(
-    SpaceSchema.parse({
-      id: row.id,
-      name: row.name,
-      description: row.description ?? undefined,
-      color: row.color,
-      icon: row.icon ?? undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    }),
-  )
+  return c.json(SpaceSchema.parse(rowToSpace(row, { includeOwner: false })))
 })
