@@ -14,10 +14,15 @@
  * = team context, sidebar = personal space.
  *
  * Behaviour:
- *   - Single visible team space → trigger renders but click is a no-op.
- *   - Multiple team spaces → click opens a 320px dropdown listing every
- *     team space visible to the user, with avatar / name / page count.
- *   - Zero team spaces → empty state with admin CTA (links to /manager/spaces).
+ *   - Zero team spaces → trigger renders as an empty-state chip with admin
+ *     CTA (links to /manager/spaces); the button itself isn't shown.
+ *   - One team space AND active is that team space → trigger renders as a
+ *     plain label (no caret, click is a no-op) — nowhere meaningful to go.
+ *   - One team space AND active is personal → trigger shows the
+ *     "选择团队空间" placeholder + caret; click opens the dropdown so the
+ *     user can enter the team space.
+ *   - Multiple team spaces → caret + dropdown listing every team space
+ *     visible to the user, with avatar / name / page count.
  *
  * Picking a space:
  *   1. setActiveSpace(id) — flips the activeSpaceId store value (persisted).
@@ -50,6 +55,17 @@ const spacesList = computed(() => spacesStore.sharedSpaces.value)
 const active = computed(() => spacesStore.activeSpace.value)
 const activeId = computed(() => spacesStore.activeSpaceId.value)
 
+// True when clicking the trigger should actually open the dropdown.
+//   - 0 team spaces → nothing to switch to (trigger renders as a no-op)
+//   - 1 team space AND active is that team space → no other option to pick
+//   - All other cases → open menu (lets the user enter a team space from
+//     a personal-space active state, or pick a different team space)
+const canOpen = computed(
+  () =>
+    spacesList.value.length > 0 &&
+    !(spacesList.value.length === 1 && isActiveShared.value),
+)
+
 // The trigger label deliberately ignores personal spaces — the topbar's space
 // switcher is a "team context" indicator, not a generic space picker. When
 // the active space is the user's personal space, the switcher shows a
@@ -70,7 +86,7 @@ const pageCountBySpace = computed(() => {
 })
 
 function toggle() {
-  if (spacesList.value.length <= 1) return
+  if (!canOpen.value) return
   open.value = !open.value
 }
 
@@ -123,7 +139,7 @@ onBeforeUnmount(() => {
       type="button"
       class="ss-trigger"
       :class="{
-        'ss-trigger-clickable': spacesList.length > 1,
+        'ss-trigger-clickable': canOpen,
         'ss-trigger-neutral': !isActiveShared,
       }"
       :title="isActiveShared ? `切换空间 — ${active.name}` : '选择一个团队空间'"
@@ -131,7 +147,7 @@ onBeforeUnmount(() => {
     >
       <span class="ss-name">{{ triggerLabel }}</span>
       <span
-        v-if="spacesList.length > 1"
+        v-if="canOpen"
         class="material-symbols-outlined ss-caret"
       >expand_more</span>
     </button>
@@ -149,7 +165,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div v-if="open && spacesList.length > 1" class="ss-menu" role="listbox">
+    <div v-if="open && spacesList.length > 0" class="ss-menu" role="listbox">
       <button
         v-for="s in spacesList"
         :key="s.id"
