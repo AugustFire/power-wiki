@@ -325,6 +325,14 @@ export const api = {
       // by the router guard after router.replace('/...') — fetches a fresh
       // response reflecting the new session instead of replaying stale state.
       invalidatePath('GET', '/auth/session')
+      // Wipe the entire GET cache. The cache is keyed by method+path only —
+      // it does NOT know which user the response belongs to. Without this,
+      // the very first authenticated call after sign-in (e.g. `GET /spaces`)
+      // could replay a *previous* user's response, leaving the new user
+      // looking at the old user's accessible spaces and selecting a space
+      // they may not even be authorized for. Cheaper than threading the
+      // user id through every cache key, and equally correct.
+      clearFetchCache()
       return {
         user: UserSchema.parse(r.user) as User,
         mustResetPassword: r.mustResetPassword,
@@ -338,6 +346,10 @@ export const api = {
       // (isAuthed && to.name === 'login' → return '/') swallows the redirect
       // and the user appears stuck until they refresh.
       invalidatePath('GET', '/auth/session')
+      // Wipe the entire cache for the same reason as signIn above: the next
+      // user (or even a back-to-login boot) must not see a previous user's
+      // cached responses (spaces, admin lists, group lists, etc.).
+      clearFetchCache()
     },
     /** GET /api/auth/session — returns user + mustResetPassword; 401 if not logged in. */
     getSession: () =>
