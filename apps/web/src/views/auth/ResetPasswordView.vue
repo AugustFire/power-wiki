@@ -30,10 +30,21 @@ const canSubmit = computed(() =>
   newPassword.value !== currentPassword.value,
 )
 
+/**
+ * Pick redirect target after password reset.
+ *
+ * Same rules as LoginView.resolveRedirect: admins can follow a local
+ * ?redirect= path, regular users always land on / regardless of the query
+ * so a previous user's stale ?redirect= can't strand them on a page from
+ * a space they may not be authorized for.
+ */
 function resolveRedirect(): string {
-  const raw = route.query.redirect
-  if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) return raw
-  return authStore.isAdmin ? '/manager/users' : '/'
+  if (authStore.isAdmin) {
+    const raw = route.query.redirect
+    if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) return raw
+    return '/manager/users'
+  }
+  return '/'
 }
 
 async function onSubmit() {

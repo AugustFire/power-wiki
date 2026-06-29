@@ -16,7 +16,7 @@
  * for optimistic per-group updates; PUT stays for batch ops.
  */
 import { Hono } from 'hono'
-import { eq, inArray, sql, and } from 'drizzle-orm'
+import { eq, inArray, sql, and, asc } from 'drizzle-orm'
 import {
   CreateSpaceInputSchema,
   SetSpaceAccessInputSchema,
@@ -67,7 +67,11 @@ async function countPagesInSpace(spaceId: string): Promise<number> {
 
 /* ─── GET /api/admin/spaces ───────────────────────────────────────────── */
 adminSpacesRouter.get('/', async (c) => {
-  const rows = await db.select().from(spaces)
+  // Stable order by creation time so the manager list (and the topbar
+  // SpaceSwitcher dropdown) doesn't shuffle between refreshes — Postgres
+  // doesn't guarantee an implicit order for a plain SELECT, and nanoid
+  // primary keys are random so the default order is meaningless.
+  const rows = await db.select().from(spaces).orderBy(asc(spaces.createdAt))
   // Pull all access mappings in one query to avoid N+1.
   const accessRows = await db
     .select({ spaceId: spaceGroupAccess.spaceId, groupId: spaceGroupAccess.groupId })

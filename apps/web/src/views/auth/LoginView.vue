@@ -20,16 +20,25 @@ const errorMsg = ref<string | null>(null)
 
 /**
  * Pick redirect target after login:
- *   1. ?redirect= query string (validated to be a local path only — no open-redirect)
- *   2. Otherwise → /manager/people for admins (so they see their user list
- *      immediately and can create accounts), or / for regular users
+ *   1. Admin: ?redirect= query string (validated to be a local path only —
+ *      no open-redirect). Admins can reach any page so honoring the query
+ *      is safe and useful.
+ *   2. Regular user: ALWAYS ignore ?redirect=. A stale tab left open from
+ *      a previous user might still carry their ?redirect=/p/X — following
+ *      it would strand the new user on a page from a space they may not
+ *      even be authorized to view. Landing on / (first authorized space's
+ *      home, per spacesStore.init) is the predictable, safe default.
+ *   3. Otherwise → /manager/people for admins, / for regular users.
  */
 function resolveRedirect(): string {
-  const raw = route.query.redirect
-  if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
-    return raw
+  if (authStore.isAdmin) {
+    const raw = route.query.redirect
+    if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
+      return raw
+    }
+    return '/manager/people'
   }
-  return authStore.isAdmin ? '/manager/people' : '/'
+  return '/'
 }
 
 async function onSubmit() {

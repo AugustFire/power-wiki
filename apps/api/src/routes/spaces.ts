@@ -15,7 +15,7 @@
  */
 
 import { Hono } from 'hono'
-import { eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 import { SpaceSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { spaceGroupAccess, spaces } from '../db/schema'
@@ -31,7 +31,7 @@ export const spacesRouter = new Hono<{ Variables: Variables }>()
  */
 async function listVisibleSpaces(isAdmin: boolean, accessible: string[] | '*') {
   if (isAdmin) {
-    const rows = await db.select().from(spaces)
+    const rows = await db.select().from(spaces).orderBy(asc(spaces.createdAt))
     // Aggregate accessGroupIds in one query to avoid N+1.
     const accessRows = await db
       .select({ spaceId: spaceGroupAccess.spaceId, groupId: spaceGroupAccess.groupId })
@@ -59,7 +59,11 @@ async function listVisibleSpaces(isAdmin: boolean, accessible: string[] | '*') {
   // Non-admin — restrict to accessible. Narrow the union for inArray's typing.
   if (accessible === '*' || accessible.length === 0) return []
   const ids: string[] = accessible
-  const rows = await db.select().from(spaces).where(inArray(spaces.id, ids))
+  const rows = await db
+    .select()
+    .from(spaces)
+    .where(inArray(spaces.id, ids))
+    .orderBy(asc(spaces.createdAt))
   return rows.map((row) =>
     SpaceSchema.parse({
       id: row.id,
