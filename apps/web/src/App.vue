@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted } from 'vue'
-import { RouterView } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
 import TopBar from '@/components/layout/TopBar.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth'
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
 const authStore = useAuthStore()
+const route = useRoute()
 
 const { topSearchOpen, error } = storeToRefs(uiStore)
 const { loading, loaded, loadError } = storeToRefs(pagesStore)
@@ -24,8 +25,11 @@ const { status: authStatus } = storeToRefs(authStore)
  *   1. auth initialising → centered spinner (no topbar, no layout — we don't
  *      yet know if this is /login or a protected route, so don't render
  *      either until the guard decides)
- *   2. unauthed → RouterView only. LoginView / ResetPasswordView render
- *      full-bleed (their own .login-page / .reset-page containers).
+ *   2. unauthed OR on /reset-password → RouterView only. LoginView /
+ *      ResetPasswordView render full-bleed (their own .login-page /
+ *      .reset-page containers). /reset-password takes this branch even when
+ *      authed so the page renders before the pages store hydrates — see
+ *      isResetPasswordRoute below.
  *   3. transitioning → centered spinner. Set by LoginView between
  *      auth.login() resolving and router.replace() settling on the
  *      destination, so the brief unmount frame between LoginView (branch 2)
@@ -39,6 +43,18 @@ const authInitialising = computed(
 const showBoot = computed(
   () => authInitialising.value || (isAuthed.value && authStore.transitioning),
 )
+/**
+ * ResetPasswordView is a full-bleed split layout (brand panel + form), not
+ * a child of the app shell. It must render identically whether the user
+ * arrived at /reset-password from LoginView (unauthed) or from the post-login
+ * redirect (authed with mustResetPassword=true). In the latter case the auth
+ * branch mounts the shell, but the pages store hasn't been init'd yet — so
+ * `loaded` is false and the in-shell `<RouterView v-else-if="loaded">` would
+ * skip rendering entirely, leaving a blank content area under the topbar.
+ * Bypassing the shell for this route avoids that race without coupling the
+ * reset flow to pages-store hydration.
+ */
+const isResetPasswordRoute = computed(() => route.name === 'reset-password')
 
 /**
  * Global ⌘K / `/` shortcut — opens the top search palette from anywhere
@@ -84,8 +100,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
     <div class="ab-spinner" aria-hidden="true"></div>
   </div>
 
-  <!-- 2. unauthed: LoginView / ResetPasswordView render full-bleed -->
-  <RouterView v-else-if="!isAuthed" />
+  <!-- 2. unauthed OR on /reset-password: LoginView / ResetPasswordView render full-bleed -->
+  <RouterView v-else-if="!isAuthed || isResetPasswordRoute" />
 
   <!-- 4. authed: full app shell -->
   <div v-else class="app-shell">

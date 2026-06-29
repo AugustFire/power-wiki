@@ -316,13 +316,19 @@ export const api = {
     /** POST /api/auth/sign-in — returns user + mustResetPassword; sets cookie. */
     signIn: async (input: SignInInput) => {
       const parsed = SignInInputSchema.parse(input)
-      return request<{ user: User; mustResetPassword: boolean }>(
+      const r = await request<{ user: User; mustResetPassword: boolean }>(
         '/auth/sign-in',
         { method: 'POST', body: JSON.stringify(parsed) },
-      ).then((r) => ({
+      )
+      // Drop any cached /auth/session response (e.g. the boot init's 401, or
+      // a previous user's session) so the very next init() — typically fired
+      // by the router guard after router.replace('/...') — fetches a fresh
+      // response reflecting the new session instead of replaying stale state.
+      invalidatePath('GET', '/auth/session')
+      return {
         user: UserSchema.parse(r.user) as User,
         mustResetPassword: r.mustResetPassword,
-      }))
+      }
     },
     signOut: async () => {
       await request<void>('/auth/sign-out', { method: 'POST' })
@@ -343,10 +349,19 @@ export const api = {
       ),
     resetPassword: async (input: ResetPasswordInput) => {
       const parsed = ResetPasswordInputSchema.parse(input)
-      return request<{ user: User }>('/auth/reset-password', {
+      const r = await request<{ user: User }>('/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify(parsed),
-      }).then((r) => ({ user: UserSchema.parse(r.user) as User }))
+      })
+      // Server flipped status → 'active', so the next /api/auth/session call
+      // would return mustResetPassword=false. Without this invalidation, the
+      // cached response (mustResetPassword=true from the pre-reset init())
+      // would be replayed by the next init() in router.beforeEach, the guard
+      // would see needsPasswordReset=true, and the user would be bounced
+      // straight back to /reset-password — forcing them to set the password
+      // twice.
+      invalidatePath('GET', '/auth/session')
+      return { user: UserSchema.parse(r.user) as User }
     },
   },
 
