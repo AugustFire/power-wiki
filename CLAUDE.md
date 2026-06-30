@@ -214,6 +214,9 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
 6. **CRUD 写后必须 sync store/composable** — 新增 / 更新 / 删除后调 `upsertUser` / `upsertGroup` / `removeXxx` 同步 module-level 单例,而不是 `store.value.push(...)` 后让别处自己 refetch。
 7. **登入 / 登出时清缓存** — module-level 单例在 `auth.signIn` / `signOut` 时调 `invalidate()`,避免跨用户泄漏。已实现于 `useManagerStats.invalidate()`。
 8. **dead context panel 删** — 永远没引用的 Vue 组件(0 import)直接删,不留在仓库里。
+9. **批量写回必须按当前用户写权限过滤;能本地算就不要写回** — `Promise.all(items.map(api.update))` 这种"全部跑一遍"的批量回放在 admin 上必踩坑:admin 看得到他人 personal space 页,但 PATCH 会被 `assertAdminNotWritingPersonalSpace` 返 403 `personal_space_readonly`,服务永远收不到,下个冷启动又重跑一批(实测:admin 冷启动 10+ 个 403 PATCH /api/pages/:id)。规则:
+   - 任何批量写回必须先按 `useAuthStore.user.role` + `space.kind` 过滤,只对当前用户**能写**的页面发起请求。
+   - "省得下次重算"的优化型写回,优先评估**完全不写回**是否可接受 ——本地幂等计算(如 HTML → JSON migration)比重启后再算一次的代价低,根本不值得 N 个 RTT 的代价。
 
 ### Loading UX(无空白 flash + chrome 不消失 + 顺滑过渡)
 

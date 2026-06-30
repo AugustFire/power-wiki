@@ -108,9 +108,10 @@ export const usePagesStore = defineStore('pages', () => {
   /**
    * 把 contentJSON 为空 {} 但 contentHTML 非空的页面回填成有效 JSON。
    * 种子页面从后端导入时没有 JSON,首次加载时一次性转换。
+   * 纯本地迁移 — 不写回服务:admin 看得到他人 personal space 页,PATCH 会被
+   * personalSpaceGuard 403 拦下且永远落不了库,反而每冷启动重跑 N 次。
    */
   function migrateEmptyJson(): void {
-    let changed = false
     for (const p of pages.value) {
       const html = (p.contentHTML ?? '').trim()
       if (!isMigratedJSON(p.contentJSON)) {
@@ -119,12 +120,10 @@ export const usePagesStore = defineStore('pages', () => {
             type: 'doc',
             content: [{ type: 'paragraph' }],
           })
-          changed = true
           continue
         }
         try {
           p.contentJSON = stampSchemaVersion(htmlToJson(html))
-          changed = true
         } catch (err) {
           console.warn(`[pages] migrate 失败 page=${p.id}`, err)
         }
@@ -133,31 +132,13 @@ export const usePagesStore = defineStore('pages', () => {
       if (needsRemigrate(p.contentJSON) && html && html !== '<p></p>') {
         try {
           p.contentJSON = stampSchemaVersion(htmlToJson(html))
-          changed = true
         } catch (err) {
           console.warn(`[pages] re-migrate 失败 page=${p.id}`, err)
         }
       } else if (needsRemigrate(p.contentJSON)) {
         p.contentJSON = stampSchemaVersion(p.contentJSON as Record<string, unknown>)
-        changed = true
       }
     }
-    if (!changed) return
-    // 迁移是本地计算(没改 server 端数据),不需要写回 API;但要让 server 的
-    // contentJSON 与本地一致以便下次加载不需要再迁 — 批量写一次。
-    void batchPersistJson()
-  }
-
-  /** 迁移完成后,把所有被改过 contentJSON 的页面 PATCH 回去。仅本地迁移后的批量回写。 */
-  async function batchPersistJson(): Promise<void> {
-    const dirty = pages.value.filter((p) => p.contentJSON && Object.keys(p.contentJSON).length > 0)
-    await Promise.allSettled(
-      dirty.map((p) =>
-        api.pages
-          .update(p.id, { contentJSON: p.contentJSON })
-          .catch((err) => console.warn(`[pages] persist migrated JSON 失败 page=${p.id}`, err)),
-      ),
-    )
   }
 
   // ─────────────────────────────────────────────────────────────────
