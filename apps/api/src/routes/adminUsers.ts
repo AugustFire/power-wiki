@@ -26,6 +26,7 @@ import { Hono } from 'hono'
 import { and, eq, ne } from 'drizzle-orm'
 import {
   CreateUserInputSchema,
+  PaginatedListSchema,
   UpdateUserInputSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
@@ -36,6 +37,7 @@ import { generateInitialPassword, hashPassword } from '../auth/password'
 import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
+import { applyPagination, safeParsePagination } from '../lib/paginate'
 
 export const adminUsersRouter = new Hono<{ Variables: Variables }>()
 
@@ -46,8 +48,15 @@ adminUsersRouter.use('*', requireAdmin)
 
 // ─── GET /api/admin/users ───────────────────────────────────────────────────
 adminUsersRouter.get('/', async (c) => {
-  const rows = await db.select().from(users)
-  return c.json(rows.map((r) => UserSchema.parse(rowToUser(r))))
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+  let q = db.select().from(users).$dynamic()
+  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+  const rows = await q
+  const items = rows.map((r) => UserSchema.parse(rowToUser(r)))
+  const result = applyPagination(items, limit, offset)
+  return c.json(PaginatedListSchema(UserSchema).parse(result))
 })
 
 // ─── GET /api/admin/users/:id ──────────────────────────────────────────────

@@ -16,7 +16,7 @@ import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
-import type { UserGroup, User } from '@power-wiki/shared'
+import type { UserGroup } from '@power-wiki/shared'
 
 const router = useRouter()
 const uiStore = useUiStore()
@@ -24,7 +24,6 @@ const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
 const groups = ref<UserGroup[]>([])
-const users = ref<User[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 
@@ -45,24 +44,14 @@ watch(showCreate, (next, prev) => {
   }
 })
 
-const memberCountByGroup = ref<Record<string, number>>({})
-
 async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const [g, u] = await Promise.all([api.admin.groups.list(), api.admin.users.list()])
-    groups.value = g
-    users.value = u
-    // Fetch member counts in parallel — small N (groups), safe.
-    const counts: Record<string, number> = {}
-    await Promise.all(
-      g.map(async (grp) => {
-        const full = await api.admin.groups.get(grp.id)
-        counts[grp.id] = full.memberIds?.length ?? 0
-      }),
-    )
-    memberCountByGroup.value = counts
+    // memberCount is now aggregated server-side (LEFT JOIN + GROUP BY),
+    // so one round-trip is enough — no per-group `get` calls.
+    const groupsP = await api.admin.groups.list()
+    groups.value = groupsP.items
   } catch (e) {
     loadError.value = e instanceof ApiError ? e.message : '加载用户组失败'
     uiStore.setError(loadError.value)
@@ -96,7 +85,6 @@ async function onSubmitCreate() {
       description: createDesc.value.trim() || undefined,
     })
     groups.value.push(created)
-    memberCountByGroup.value[created.id] = 0
     showCreate.value = false
   } catch (e) {
     createError.value = e instanceof ApiError ? e.message : '创建失败'
@@ -116,7 +104,6 @@ async function onDelete(g: UserGroup) {
   try {
     await api.admin.groups.delete(g.id)
     groups.value = groups.value.filter((x) => x.id !== g.id)
-    delete memberCountByGroup.value[g.id]
     // Group delete cascades to spaceGroupAccess; affected users' visible
     // space set may have shrunk — re-fetch pages so the sidebar matches.
     void pagesStore.refresh()
@@ -208,7 +195,7 @@ function formatDate(ts: number): string {
         </div>
         <div class="gc-stats">
           <div class="gc-stat">
-            <span class="gcs-value">{{ memberCountByGroup[g.id] ?? 0 }}</span>
+            <span class="gcs-value">{{ g.memberCount ?? 0 }}</span>
             <span class="gcs-label">成员</span>
           </div>
           <div class="gc-stat">

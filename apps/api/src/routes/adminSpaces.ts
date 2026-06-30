@@ -26,6 +26,7 @@ import { Hono } from 'hono'
 import { eq, inArray, sql, and, asc } from 'drizzle-orm'
 import {
   CreateSpaceInputSchema,
+  PaginatedListSchema,
   SetSpaceAccessInputSchema,
   SpaceSchema,
   UpdateSpaceInputSchema,
@@ -34,6 +35,8 @@ import { db } from '../db/client'
 import { pages, spaceGroupAccess, spaces, userGroups } from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
+import { applyPagination, safeParsePagination } from '../lib/paginate'
+import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
 import type { Space } from '@power-wiki/shared'
 import type { SpaceRow } from '../db/schema'
 
@@ -58,6 +61,24 @@ function rowToSpace(row: SpaceRow, accessGroupIds: string[] = []): Space {
   }
 }
 
+/** Compose row + access + page-stats into the final DTO.
+ *  `ownerNameMap` is optional — only the admin path passes it (personal
+ *  spaces only). Shared spaces never get an `ownerName` field. */
+function attachStats(
+  space: Space,
+  stats: SpacePageStats | undefined,
+  ownerNameMap?: Map<string, string>,
+): Space {
+  const ownerName = ownerNameMap?.get(space.id)
+  return {
+    ...space,
+    pageCount: stats?.pageCount ?? 0,
+    childPageCount: stats?.childPageCount ?? 0,
+    lastPageUpdatedAt: stats?.lastPageUpdatedAt ?? null,
+    ...(ownerName ? { ownerName } : {}),
+  }
+}
+
 async function getAccessGroupIds(spaceId: string): Promise<string[]> {
   const rows = await db
     .select({ groupId: spaceGroupAccess.groupId })
@@ -76,11 +97,16 @@ async function countPagesInSpace(spaceId: string): Promise<number> {
 
 /* ─── GET /api/admin/spaces ───────────────────────────────────────────── */
 adminSpacesRouter.get('/', async (c) => {
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
   // Stable order by creation time so the manager list (and the topbar
   // SpaceSwitcher dropdown) doesn't shuffle between refreshes — Postgres
   // doesn't guarantee an implicit order for a plain SELECT, and nanoid
   // primary keys are random so the default order is meaningless.
-  const rows = await db.select().from(spaces).orderBy(asc(spaces.createdAt))
+  let q = db.select().from(spaces).orderBy(asc(spaces.createdAt)).$dynamic()
+  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+  const rows = await q
   // Pull all access mappings in one query to avoid N+1.
   const accessRows = await db
     .select({ spaceId: spaceGroupAccess.spaceId, groupId: spaceGroupAccess.groupId })
@@ -91,7 +117,21 @@ adminSpacesRouter.get('/', async (c) => {
     list.push(r.groupId)
     accessBySpace.set(r.spaceId, list)
   }
-  return c.json(rows.map((r) => rowToSpace(r, accessBySpace.get(r.id) ?? [])))
+  // Per-space page stats in one GROUP BY query — replaces the N+1 the
+  // SpacesView would otherwise pay (one pages.list call per space card).
+  const statsBySpace = await getSpacePageStats(rows.map((r) => r.id))
+  // Owner names for personal spaces — one LEFT JOIN, only the personal rows
+  // are looked up. Avoids the manager UI firing N `users/:id` per row.
+  const ownerNameBySpace = await getSpaceOwnerNames(rows.map((r) => r.id))
+  const items = rows.map((r) =>
+    attachStats(
+      rowToSpace(r, accessBySpace.get(r.id) ?? []),
+      statsBySpace.get(r.id),
+      ownerNameBySpace,
+    ),
+  )
+  const result = applyPagination(items, limit, offset)
+  return c.json(PaginatedListSchema(SpaceSchema).parse(result))
 })
 
 /* ─── POST /api/admin/spaces ──────────────────────────────────────────── */
@@ -113,7 +153,8 @@ adminSpacesRouter.post('/', async (c) => {
     updatedAt: now,
   })
   const created = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
-  return c.json(rowToSpace(created), 201)
+  // New space → no pages yet, skip the aggregate query.
+  return c.json(attachStats(rowToSpace(created), undefined), 201)
 })
 
 /* ─── GET /api/admin/spaces/:id ───────────────────────────────────────── */
@@ -122,7 +163,15 @@ adminSpacesRouter.get('/:id', async (c) => {
   const row = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]
   if (!row) return c.json({ error: 'not_found' }, 404)
   const accessGroupIds = await getAccessGroupIds(id)
-  return c.json(rowToSpace(row, accessGroupIds))
+  const statsBySpace = await getSpacePageStats([id])
+  const ownerNameBySpace = await getSpaceOwnerNames([id])
+  return c.json(
+    attachStats(
+      rowToSpace(row, accessGroupIds),
+      statsBySpace.get(id),
+      ownerNameBySpace,
+    ),
+  )
 })
 
 /* ─── PATCH /api/admin/spaces/:id ─────────────────────────────────────── */
@@ -148,7 +197,15 @@ adminSpacesRouter.patch('/:id', async (c) => {
   await db.update(spaces).set(patch).where(eq(spaces.id, id))
   const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
   const accessGroupIds = await getAccessGroupIds(id)
-  return c.json(rowToSpace(updated, accessGroupIds))
+  const statsBySpace = await getSpacePageStats([id])
+  const ownerNameBySpace = await getSpaceOwnerNames([id])
+  return c.json(
+    attachStats(
+      rowToSpace(updated, accessGroupIds),
+      statsBySpace.get(id),
+      ownerNameBySpace,
+    ),
+  )
 })
 
 /* ─── DELETE /api/admin/spaces/:id ────────────────────────────────────── */
@@ -224,7 +281,15 @@ adminSpacesRouter.put('/:id/access', async (c) => {
   })
 
   const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
-  return c.json(rowToSpace(updated, groupIds))
+  const statsBySpace = await getSpacePageStats([id])
+  const ownerNameBySpace = await getSpaceOwnerNames([id])
+  return c.json(
+    attachStats(
+      rowToSpace(updated, groupIds),
+      statsBySpace.get(id),
+      ownerNameBySpace,
+    ),
+  )
 })
 
 /* ─── POST /api/admin/spaces/:id/access/:groupId ──────────────────────── */
@@ -262,7 +327,15 @@ adminSpacesRouter.post('/:id/access/:groupId', async (c) => {
 
   const accessGroupIds = await getAccessGroupIds(id)
   const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
-  return c.json(rowToSpace(updated, accessGroupIds))
+  const statsBySpace = await getSpacePageStats([id])
+  const ownerNameBySpace = await getSpaceOwnerNames([id])
+  return c.json(
+    attachStats(
+      rowToSpace(updated, accessGroupIds),
+      statsBySpace.get(id),
+      ownerNameBySpace,
+    ),
+  )
 })
 
 /* ─── DELETE /api/admin/spaces/:id/access/:groupId ───────────────────── */
@@ -289,7 +362,15 @@ adminSpacesRouter.delete('/:id/access/:groupId', async (c) => {
 
   const accessGroupIds = await getAccessGroupIds(id)
   const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
-  return c.json(rowToSpace(updated, accessGroupIds))
+  const statsBySpace = await getSpacePageStats([id])
+  const ownerNameBySpace = await getSpaceOwnerNames([id])
+  return c.json(
+    attachStats(
+      rowToSpace(updated, accessGroupIds),
+      statsBySpace.get(id),
+      ownerNameBySpace,
+    ),
+  )
 })
 
 // Re-export for tests / introspection.

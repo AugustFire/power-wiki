@@ -55,7 +55,7 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    users.value = await api.admin.users.list()
+    users.value = (await api.admin.users.list()).items
   } catch (e) {
     loadError.value = e instanceof ApiError ? e.message : '加载用户列表失败'
     uiStore.setError(loadError.value)

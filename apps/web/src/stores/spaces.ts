@@ -65,7 +65,7 @@ export function useSpacesStore() {
     loading.value = true
     loadError.value = null
     try {
-      spaces.value = await api.spaces.list()
+      spaces.value = (await api.spaces.list()).items
       const auth = useAuthStore()
       // Active space resolution priority:
       //   1. First-login override: if the user just arrived (no persisted

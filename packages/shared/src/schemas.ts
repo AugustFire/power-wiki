@@ -86,6 +86,9 @@ export const UserGroupSchema = z.object({
   name: z.string().min(1).max(64),
   description: z.string().max(500).optional(),
   createdAt: z.number().int().positive(),
+  /** list 路径聚合返,代表 user_group_members 行数。
+   *  `:id` 路径同时还返 memberIds[];list 因为不返 ids,所以才有这个 count 字段。 */
+  memberCount: z.number().int().nonnegative().optional(),
   memberIds: z.array(z.string()).optional(),
 })
 
@@ -102,6 +105,16 @@ export const SpaceSchema = z.object({
   updatedAt: z.number().int().positive(),
   accessVia: z.enum(['member']).optional(),
   accessGroupIds: z.array(z.string()).optional(),
+  /** 该空间下的非删除页数,由 GET /api/spaces 与 /api/admin/spaces 一并返回,
+   *  避免前端为了渲染卡片再发一次 pages.list。 */
+  pageCount: z.number().int().nonnegative().optional(),
+  /** 该空间下有父级(parentId != null)的非删除页数。 */
+  childPageCount: z.number().int().nonnegative().optional(),
+  /** 该空间下任意页面的最新 updatedAt;空空间为 null(回退到 space.updatedAt 显示)。 */
+  lastPageUpdatedAt: z.number().int().positive().nullable().optional(),
+  /** 仅 admin 路径 + kind='personal' 时返:所有者的显示名。
+   *  避免前端为每个 personal space 再发一次 users/:id。 */
+  ownerName: z.string().min(1).optional(),
 })
 
 /* ---------- Auth API 输入 schema ---------- */
@@ -217,6 +230,29 @@ export const MovePageInputSchema = z.object({
   newSpaceId: PageIdSchema.optional(),
 })
 
+/* ---------- 列表分页 ---------- */
+
+/**
+ * GET list 端点的 query schema。`limit` 范围 1-200(防止无限制拉取),
+ * `offset` ≥ 0。两端都 optional — 不传 = 后端走"全量"分支,保持 stores
+ * 那种"一次拉所有"调用方的向后兼容。
+ *
+ * 走 `.partial()` 解析时同时支持两个字段缺失 / 仅缺失一个的场景。
+ */
+export const PaginatedQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+})
+
+/** 列表端点的统一响应包装。`limit`/`offset` 是实际生效值(无参 = items.length / 0)。 */
+export const PaginatedListSchema = <T extends z.ZodTypeAny>(item: T) =>
+  z.object({
+    items: z.array(item),
+    limit: z.number(),
+    offset: z.number(),
+    hasMore: z.boolean(),
+  })
+
 /* ---------- 类型推导(对外的 TS 类型) ---------- */
 
 export type PageNodeFromSchema = z.infer<typeof PageNodeSchema>
@@ -224,6 +260,8 @@ export type TreeNodeFromSchema = z.infer<typeof TreeNodeSchema>
 export type UserFromSchema = z.infer<typeof UserSchema>
 export type UserGroupFromSchema = z.infer<typeof UserGroupSchema>
 export type SpaceFromSchema = z.infer<typeof SpaceSchema>
+export type PaginatedQuery = z.infer<typeof PaginatedQuerySchema>
+export type Paginated<T> = { items: T[]; limit: number; offset: number; hasMore: boolean }
 export type CreatePageInput = z.infer<typeof CreatePageInputSchema>
 export type UpdatePageInput = z.infer<typeof UpdatePageInputSchema>
 export type MovePageInput = z.infer<typeof MovePageInputSchema>

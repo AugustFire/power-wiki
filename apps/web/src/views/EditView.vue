@@ -8,6 +8,7 @@ import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
+import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -63,15 +64,21 @@ onMounted(async () => {
       return
     }
   }
+  // Stage B.3: 新建页面用客户端 nanoid 立即跳,不等后端 round-trip。
+  // 之前要等 200-500ms createPage 返回才有 localId,URL 才会更新,编辑器
+  // 一直空着。现在 id 立刻拿到 → router.replace 同步执行 → 用户马上可写。
+  // 后端会复用同一个 id(Pages POST 入参 id 可选,见 schemas.ts),所以
+  // 不会因为 id 漂移触发后续 reload。
+  const clientId = newId()
+  localId.value = clientId
+  localTitle.value = DEFAULT_TITLE
+  router.replace(`/p/${clientId}/edit`)
+  // 编辑器立刻可用
+  requestAnimationFrame(() => titleInputRef.value?.focus())
   try {
-    const p = await pagesStore.createPage({ parentId: props.parentId ?? null })
-    localId.value = p.id
-    localTitle.value = p.title
-    router.replace(`/p/${p.id}/edit`)
-    // 新建页面同样聚焦标题
-    requestAnimationFrame(() => titleInputRef.value?.focus())
+    await pagesStore.createPage({ id: clientId, parentId: props.parentId ?? null })
   } catch {
-    // store 已经弹 banner,这里把路由退回首页
+    // store 已经弹 banner;把路由退回首页,避免后续 PATCH 一个不存在的 id
     router.replace('/')
   }
 })

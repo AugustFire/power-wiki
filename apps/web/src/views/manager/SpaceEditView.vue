@@ -17,11 +17,12 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
-import type { Space, User, UserGroup } from '@power-wiki/shared'
+import type { Space, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,7 +34,6 @@ const spaceId = computed(() => String(route.params.id ?? ''))
 
 const space = ref<Space | null>(null)
 const allGroups = ref<UserGroup[]>([])
-const ownerUser = ref<User | null>(null)
 const accessGroupIds = ref<Set<string>>(new Set())
 const loading = ref(false)
 const loadError = ref<string | null>(null)
@@ -55,25 +55,18 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const [s, g] = await Promise.all([
+    const [s, groupsP] = await Promise.all([
       api.admin.spaces.get(spaceId.value),
-      api.admin.groups.list(),
+      // B.3: ?limit=200 caps the payload. The full group set is needed
+      // for the access-toggle list — real teams have < 200 groups.
+      api.admin.groups.list({ limit: 200 }),
     ])
     space.value = s
     accessGroupIds.value = new Set(s.accessGroupIds ?? [])
-    allGroups.value = g
+    allGroups.value = groupsP.items
     syncFormFromSpace()
-    // Personal spaces expose ownerId — fetch the owner so the header can
-    // render "所有者: <name>". Skip for team spaces (ownerId is null).
-    if (s.kind === 'personal' && s.ownerId) {
-      try {
-        ownerUser.value = await api.admin.users.get(s.ownerId)
-      } catch {
-        ownerUser.value = null
-      }
-    } else {
-      ownerUser.value = null
-    }
+    // Personal spaces expose ownerName in the DTO (B.3 aggregation in
+    // `getSpaceOwnerNames`) — no need to fetch the user record separately.
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
       loadError.value = '空间不存在'
@@ -208,21 +201,18 @@ function formatDate(ts: number): string {
 </script>
 
 <template>
-  <div v-if="loading" class="se-loading">加载中…</div>
-
-  <div v-else-if="loadError" class="se-error">
-    <p>{{ loadError }}</p>
-    <button type="button" class="btn ghost" @click="router.push('/manager/spaces')">返回列表</button>
-  </div>
-
-  <div v-else-if="space" class="space-edit">
+  <div class="space-edit">
     <nav class="se-breadcrumb" aria-label="面包屑导航">
       <RouterLink to="/manager/spaces">空间</RouterLink>
       <span class="se-bc-sep" aria-hidden="true">/</span>
-      <span class="se-bc-current">{{ space.name }}</span>
+      <span class="se-bc-current">
+        <Skeleton v-if="loading" width="120px" height="14px" />
+        <template v-else-if="space">{{ space.name }}</template>
+        <template v-else>—</template>
+      </span>
     </nav>
 
-    <header class="se-header">
+    <header class="se-header" v-if="space">
       <div class="se-header-text">
         <div class="se-title-row">
           <span
@@ -247,17 +237,67 @@ function formatDate(ts: number): string {
         </div>
         <p class="se-sub">
           创建于 {{ formatDate(space.createdAt) }}
-          <template v-if="space.kind === 'personal' && ownerUser">
-            · 所有者:<RouterLink :to="{ name: 'manager-user-edit', params: { id: ownerUser.id } }">{{ ownerUser.name }}</RouterLink>
+          <template v-if="space.kind === 'personal' && space.ownerName">
+            · 所有者:<RouterLink :to="{ name: 'manager-user-edit', params: { id: space.ownerId } }">{{ space.ownerName }}</RouterLink>
           </template>
-          <template v-else-if="space.kind === 'personal' && !ownerUser && space.ownerId">
+          <template v-else-if="space.kind === 'personal' && !space.ownerName && space.ownerId">
             · 所有者 ID:<code>{{ space.ownerId }}</code>
           </template>
         </p>
       </div>
     </header>
 
-    <div class="se-grid">
+    <header v-else-if="loading" class="se-header">
+      <div class="se-header-text">
+        <div class="se-title-row">
+          <Skeleton width="40px" height="40px" radius="6px" />
+          <Skeleton width="200px" height="22px" />
+          <Skeleton width="80px" height="20px" radius="999px" />
+        </div>
+        <p class="se-sub">
+          <Skeleton width="240px" height="12px" />
+        </p>
+      </div>
+    </header>
+
+    <div v-if="loadError" class="se-error">
+      <p>{{ loadError }}</p>
+      <button type="button" class="btn ghost" @click="router.push('/manager/spaces')">返回列表</button>
+    </div>
+
+    <template v-else-if="loading">
+      <div class="se-grid">
+        <section class="se-card">
+          <Skeleton width="100px" height="18px" />
+          <div class="se-fields">
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+            <div class="se-color-row">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton width="240px" height="28px" />
+            </div>
+          </div>
+          <div class="se-card-actions">
+            <Skeleton width="80px" height="32px" />
+            <Skeleton width="80px" height="32px" />
+          </div>
+        </section>
+        <section class="se-card">
+          <Skeleton width="100px" height="18px" />
+          <div class="se-group-list">
+            <Skeleton :count="6" height="40px" />
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <div v-else-if="space" class="se-grid">
       <!-- Edit form -->
       <section class="se-card">
         <h2 class="se-card-title">基本信息</h2>

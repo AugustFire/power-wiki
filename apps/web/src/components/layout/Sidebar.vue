@@ -5,6 +5,7 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { newId } from '@/lib/id'
 import PageTree from './PageTree.vue'
 
 const pagesStore = usePagesStore()
@@ -43,11 +44,15 @@ const showMySpaceShortcut = computed(
 
 async function createRoot() {
   uiStore.closeMenu()
+  // Stage B.3: same client-side nanoid pattern as EditView. URL jumps
+  // immediately to /p/<id>/edit before the server round-trip
+  // completes — no blank flash waiting for the create to return.
+  const clientId = newId()
+  router.push(`/p/${clientId}/edit`)
   try {
-    const p = await pagesStore.createPage({ parentId: null })
-    router.push(`/p/${p.id}/edit`)
+    await pagesStore.createPage({ id: clientId, parentId: null })
   } catch {
-    // banner shown by store
+    // store already shows the error banner; user can retry or close the editor
   }
 }
 
@@ -100,7 +105,7 @@ void authStore
       <div class="sidebar-section-title">
         <span>
           <span class="material-symbols-outlined section-icon">layers</span>
-          页面树
+          此空间的页面
         </span>
         <span class="count">{{ tree.length }}</span>
       </div>
@@ -132,7 +137,7 @@ void authStore
       <button type="button" class="msa-btn" @click="goMySpace">
         <span class="material-symbols-outlined msa-icon">cottage</span>
         <span class="msa-label">我的空间</span>
-        <span class="msa-hint">{{ personalSpace?.name }}</span>
+        <!-- <span class="msa-hint">{{ personalSpace?.name }}</span> -->
       </button>
     </div>
 

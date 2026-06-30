@@ -22,6 +22,7 @@
 import {
   CreatePageInputSchema,
   PageNodeSchema,
+  PaginatedListSchema,
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
@@ -32,6 +33,8 @@ import type {
   CreatePageInput,
   MovePageInput,
   PageNode,
+  Paginated,
+  PaginatedQuery,
   ResetPasswordInput,
   SignInInput,
   Space,
@@ -232,9 +235,20 @@ async function getOnePage(path: string, init?: RequestInit): Promise<PageNode> {
   return PageNodeSchema.parse(raw) as PageNode
 }
 
-async function getManyPages(path: string): Promise<PageNode[]> {
-  const raw = await request<PageNode[]>(path)
-  return raw.map((p) => PageNodeSchema.parse(p) as PageNode)
+/**
+ * Paginated page list (Stage B.1). Validates the wrapper shape, then validates
+ * each item with PageNodeSchema so a backend/frontend contract drift still
+ * surfaces here, not at the component layer.
+ */
+async function getManyPages(path: string): Promise<Paginated<PageNode>> {
+  const raw = await request<Paginated<PageNode>>(path)
+  const wrapped = PaginatedListSchema(PageNodeSchema).parse(raw)
+  return {
+    items: wrapped.items,
+    limit: wrapped.limit,
+    offset: wrapped.offset,
+    hasMore: wrapped.hasMore,
+  }
 }
 
 async function getOneUser<TUser>(path: string, init?: RequestInit): Promise<TUser> {
@@ -242,12 +256,45 @@ async function getOneUser<TUser>(path: string, init?: RequestInit): Promise<TUse
   return UserSchema.parse(raw) as TUser
 }
 
+/**
+ * Generic paginated list wrapper for `T` schemas. Same shape as getManyPages
+ * but parameterised so admin endpoints (User / UserGroup / Space) reuse it.
+ *
+ * `schema` is typed loosely here because `PaginatedListSchema` requires a
+ * `z.ZodTypeAny`, but we only use its `.parse()` at runtime — the loose
+ * `{ parse: (v: unknown) => T }` shape is enough for the consumer side.
+ * Cast at the call site keeps the type narrowing.
+ */
+async function getManyPaginated<T>(
+  path: string,
+  schema: { parse: (v: unknown) => T },
+): Promise<Paginated<T>> {
+  const raw = await request<Paginated<T>>(path)
+  const wrapped = PaginatedListSchema(
+    schema as unknown as Parameters<typeof PaginatedListSchema>[0],
+  ).parse(raw)
+  return {
+    items: wrapped.items,
+    limit: wrapped.limit,
+    offset: wrapped.offset,
+    hasMore: wrapped.hasMore,
+  }
+}
+
 /* ─── Endpoint groups ──────────────────────────────────────────────────── */
 
 export const api = {
   pages: {
-    list: (query?: { space?: string }) => {
-      const qs = query?.space ? `?space=${encodeURIComponent(query.space)}` : ''
+    /**
+     * List pages. `space` scopes to one space; `limit`/`offset` paginate.
+     * Omitting both returns ALL pages (back-compat for stores/Sidebar tree).
+     */
+    list: (query?: PaginatedQuery & { space?: string }): Promise<Paginated<PageNode>> => {
+      const params = new URLSearchParams()
+      if (query?.space) params.set('space', query.space)
+      if (query?.limit !== undefined) params.set('limit', String(query.limit))
+      if (query?.offset !== undefined) params.set('offset', String(query.offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
       return getManyPages(`/pages${qs}`)
     },
     get: (id: string) => getOnePage(`/pages/${encodeURIComponent(id)}`),
@@ -268,11 +315,15 @@ export const api = {
     /**
      * Stage 5: trash listing (admin only).
      * `?space=<id>` is required by the backend; we surface the 400 as-is
-     * and let the caller decide what to do.
+     * and let the caller decide what to do. `limit`/`offset` paginate.
      */
     trash: {
-      list: (spaceId: string) =>
-        getManyPages(`/pages/trash?space=${encodeURIComponent(spaceId)}`),
+      list: (spaceId: string, q?: PaginatedQuery): Promise<Paginated<PageNode>> => {
+        const params = new URLSearchParams({ space: spaceId })
+        if (q?.limit !== undefined) params.set('limit', String(q.limit))
+        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        return getManyPages(`/pages/trash?${params.toString()}`)
+      },
     },
     /**
      * Stage 5: restore a single trashed page (admin only).
@@ -302,9 +353,12 @@ export const api = {
   },
 
   spaces: {
-    list: async (): Promise<Space[]> => {
-      const raw = await request<Space[]>('/spaces')
-      return raw.map((s) => SpaceSchema.parse(s) as Space)
+    list: (q?: PaginatedQuery): Promise<Paginated<Space>> => {
+      const params = new URLSearchParams()
+      if (q?.limit !== undefined) params.set('limit', String(q.limit))
+      if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      return getManyPaginated(`/spaces${qs}`, SpaceSchema)
     },
     get: async (id: string): Promise<Space> => {
       const raw = await request<Space>(`/spaces/${encodeURIComponent(id)}`)
@@ -389,9 +443,12 @@ export const api = {
   // without waiting for the manager UI to land.
   admin: {
     users: {
-      list: async (): Promise<User[]> => {
-        const raw = await request<User[]>('/admin/users')
-        return raw.map((u) => UserSchema.parse(u) as User)
+      list: (q?: PaginatedQuery): Promise<Paginated<User>> => {
+        const params = new URLSearchParams()
+        if (q?.limit !== undefined) params.set('limit', String(q.limit))
+        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        return getManyPaginated(`/admin/users${qs}`, UserSchema)
       },
       get: (id: string) => getOneUser<User>(`/admin/users/${encodeURIComponent(id)}`),
       create: async (
@@ -441,9 +498,12 @@ export const api = {
       },
     },
     groups: {
-      list: async (): Promise<UserGroup[]> => {
-        const raw = await request<UserGroup[]>('/admin/groups')
-        return raw.map((g) => UserGroupSchema.parse(g) as UserGroup)
+      list: (q?: PaginatedQuery): Promise<Paginated<UserGroup>> => {
+        const params = new URLSearchParams()
+        if (q?.limit !== undefined) params.set('limit', String(q.limit))
+        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        return getManyPaginated(`/admin/groups${qs}`, UserGroupSchema)
       },
       get: async (id: string): Promise<UserGroup> => {
         const raw = await request<UserGroup>(`/admin/groups/${encodeURIComponent(id)}`)
@@ -488,9 +548,12 @@ export const api = {
       },
     },
     spaces: {
-      list: async (): Promise<Space[]> => {
-        const raw = await request<Space[]>('/admin/spaces')
-        return raw.map((s) => SpaceSchema.parse(s) as Space)
+      list: (q?: PaginatedQuery): Promise<Paginated<Space>> => {
+        const params = new URLSearchParams()
+        if (q?.limit !== undefined) params.set('limit', String(q.limit))
+        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        return getManyPaginated(`/admin/spaces${qs}`, SpaceSchema)
       },
       get: async (id: string): Promise<Space> => {
         const raw = await request<Space>(

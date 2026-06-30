@@ -18,6 +18,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -55,13 +56,15 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const [g, u] = await Promise.all([
+    const [g, usersP] = await Promise.all([
       api.admin.groups.get(groupId.value),
-      api.admin.users.list(),
+      // B.3: ?limit=200 caps the payload. Full user list is needed for
+      // the "available users" transfer list. Real orgs have < 200 users.
+      api.admin.users.list({ limit: 200 }),
     ])
     group.value = g
     memberIds.value = new Set(g.memberIds ?? [])
-    allUsers.value = u
+    allUsers.value = usersP.items
     syncFormFromGroup()
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
@@ -201,28 +204,73 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 </script>
 
 <template>
-  <div v-if="loading" class="ge-loading">加载中…</div>
-
-  <div v-else-if="loadError" class="ge-error">
-    <p>{{ loadError }}</p>
-    <button type="button" class="btn ghost" @click="router.push({ name: 'manager-people', query: { tab: 'groups' } })">返回列表</button>
-  </div>
-
-  <div v-else-if="group" class="group-edit">
+  <div class="group-edit">
     <nav class="ge-breadcrumb" aria-label="面包屑导航">
       <RouterLink :to="{ name: 'manager-people', query: { tab: 'groups' } }">用户组</RouterLink>
       <span class="ge-bc-sep" aria-hidden="true">/</span>
-      <span class="ge-bc-current">{{ group.name }}</span>
+      <span class="ge-bc-current">
+        <Skeleton v-if="loading" width="120px" height="14px" />
+        <template v-else-if="group">{{ group.name }}</template>
+        <template v-else>—</template>
+      </span>
     </nav>
 
     <header class="ge-header">
       <div class="ge-header-text">
-        <h1 class="ge-title">{{ group.name }}</h1>
-        <p class="ge-sub">{{ memberIds.size }} 个成员</p>
+        <h1 class="ge-title">
+          <Skeleton v-if="loading" width="180px" height="22px" />
+          <template v-else-if="group">{{ group.name }}</template>
+        </h1>
+        <p class="ge-sub">
+          <template v-if="group">{{ memberIds.size }} 个成员</template>
+          <template v-else-if="loading"><Skeleton width="80px" height="12px" /></template>
+        </p>
       </div>
     </header>
 
-    <div class="ge-grid">
+    <div v-if="loadError" class="ge-error">
+      <p>{{ loadError }}</p>
+      <button type="button" class="btn ghost" @click="router.push({ name: 'manager-people', query: { tab: 'groups' } })">返回列表</button>
+    </div>
+
+    <template v-else-if="loading">
+      <div class="ge-grid">
+        <section class="ge-card">
+          <Skeleton width="100px" height="18px" />
+          <div class="ge-fields">
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+          </div>
+          <div class="ge-card-actions">
+            <Skeleton width="80px" height="32px" />
+            <Skeleton width="80px" height="32px" />
+          </div>
+        </section>
+        <section class="ge-card ge-card-members">
+          <Skeleton width="100px" height="18px" />
+          <div class="ge-transfer">
+            <div class="ge-panel">
+              <Skeleton width="120px" height="14px" />
+              <Skeleton height="32px" />
+              <Skeleton :count="3" height="44px" />
+            </div>
+            <div class="ge-panel">
+              <Skeleton width="120px" height="14px" />
+              <Skeleton height="32px" />
+              <Skeleton :count="3" height="44px" />
+            </div>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <div v-else-if="group" class="ge-grid">
       <!-- Edit form -->
       <section class="ge-card">
         <h2 class="ge-card-title">基本信息</h2>

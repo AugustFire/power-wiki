@@ -28,6 +28,18 @@ export const usePagesStore = defineStore('pages', () => {
    */
   const trashed = ref<PageNode[]>([])
   const trashLoaded = ref(false)
+  /** B.1: pagination state for trashed list. */
+  const TRASH_PAGE_SIZE = 50
+  const trashOffset = ref(0)
+  const trashHasMore = ref(false)
+  const trashLoadingMore = ref(false)
+  /**
+   * B.3: true while a full `loadTrash` round-trip is in flight (drives the
+   * refresh button's disabled + spinning state and the top progress bar).
+   * Distinct from `trashLoadingMore` which only tracks "load next page"
+   * requests triggered by the load-more button.
+   */
+  const trashLoading = ref(false)
 
   function ui() {
     return useUiStore()
@@ -56,8 +68,8 @@ export const usePagesStore = defineStore('pages', () => {
     loading.value = true
     loadError.value = null
     try {
-      const list = await api.pages.list()
-      pages.value = list
+      const { items } = await api.pages.list()
+      pages.value = items
       // 一次性回填存量页面的 contentJSON(种子页只有 HTML 没有 JSON,Editor 需要 JSON)
       migrateEmptyJson()
       loaded.value = true
@@ -81,8 +93,8 @@ export const usePagesStore = defineStore('pages', () => {
    */
   async function refresh(): Promise<void> {
     try {
-      const list = await api.pages.list()
-      pages.value = list
+      const { items } = await api.pages.list()
+      pages.value = items
       // Re-run migration in case any fetched pages are still missing JSON —
       // this is a no-op for already-migrated pages.
       migrateEmptyJson()
@@ -153,9 +165,13 @@ export const usePagesStore = defineStore('pages', () => {
   //  snapshot 模式:先快照本地状态 → 立即变更 UI → 调 API → 失败就还原 + banner
   // ─────────────────────────────────────────────────────────────────
 
-  async function createPage(opts: { parentId?: string | null; title?: string } = {}): Promise<PageNode> {
+  async function createPage(
+    opts: { id?: string; parentId?: string | null; title?: string } = {},
+  ): Promise<PageNode> {
     const parentId = opts.parentId ?? null
-    const id = newId()
+    // Stage B.3: caller may pass a client-generated id (for instant URL
+    // jump in EditView). Otherwise we mint one here as before.
+    const id = opts.id ?? newId()
     const now = Date.now()
     const siblings = pages.value.filter((p) => p.parentId === parentId)
     // Stage 4: every page belongs to a space. New pages go into the active space.
@@ -277,8 +293,8 @@ export const usePagesStore = defineStore('pages', () => {
       // Restore may also restore other rows if the backend lifted a
       // subtree, but our spec is single-row restore. Refresh everything
       // to be safe — pages.list is cheap and not cached.
-      const list = await api.pages.list()
-      pages.value = list
+      const { items } = await api.pages.list()
+      pages.value = items
       migrateEmptyJson()
     } catch (e) {
       // Re-fetch trash to resync the optimistic drop with truth.
@@ -309,15 +325,46 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
-   * Stage 5: load trashed pages for the active space. Called by TrashView
-   * on mount; idempotent. Re-running it refetches and overwrites.
+   * Stage 5 / B.1: load trashed pages for the active space. Called by
+   * TrashView on mount + when switching spaces. Resets pagination state.
+   * `loadMoreTrash(spaceId)` appends the next batch via the same API.
    */
   async function loadTrash(spaceId: string): Promise<void> {
+    trashLoading.value = true
+    trashOffset.value = 0
+    trashHasMore.value = false
     try {
-      trashed.value = await api.pages.trash.list(spaceId)
+      const { items, hasMore } = await api.pages.trash.list(spaceId, { limit: TRASH_PAGE_SIZE, offset: 0 })
+      trashed.value = items
+      trashOffset.value = items.length
+      trashHasMore.value = hasMore
       trashLoaded.value = true
     } catch (e) {
       ui().setError(`加载回收站失败: ${errorMessage(e)}`)
+    } finally {
+      trashLoading.value = false
+    }
+  }
+
+  /**
+   * B.1: append the next page of trashed pages to the existing list. No-op
+   * while a previous load is in flight, or once the server reports no more.
+   */
+  async function loadMoreTrash(spaceId: string): Promise<void> {
+    if (trashLoadingMore.value || !trashHasMore.value) return
+    trashLoadingMore.value = true
+    try {
+      const { items, hasMore } = await api.pages.trash.list(spaceId, {
+        limit: TRASH_PAGE_SIZE,
+        offset: trashOffset.value,
+      })
+      trashed.value.push(...items)
+      trashOffset.value += items.length
+      trashHasMore.value = hasMore
+    } catch (e) {
+      ui().setError(`加载更多回收站失败: ${errorMessage(e)}`)
+    } finally {
+      trashLoadingMore.value = false
     }
   }
 
@@ -560,6 +607,10 @@ export const usePagesStore = defineStore('pages', () => {
     loadError,
     trashed,
     trashLoaded,
+    trashOffset,
+    trashHasMore,
+    trashLoadingMore,
+    trashLoading,
     tree,
     init,
     refresh,
@@ -575,6 +626,7 @@ export const usePagesStore = defineStore('pages', () => {
     getTree,
     getTreeForSpace,
     loadTrash,
+    loadMoreTrash,
     restorePage,
     purgePage,
   }

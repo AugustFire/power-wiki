@@ -6,88 +6,57 @@
  * GroupsContextPanel. Both create-entity buttons are here (the active
  * tab's button is highlighted); the tab itself controls which form
  * opens in the main pane.
+ *
+ * B.3 refactor: shared with PeopleView via `useManagerStats()` —
+ * module-level cache that wraps `api.admin.{users,groups}.list({ limit: 200 })`
+ * with a promise cache. First call (from whichever view mounts first)
+ * fetches; subsequent calls hit the cache. Net effect on /manager/people
+ * mount: 1 `users?limit=200` + 1 `groups?limit=200` total — vs the old
+ * 1 main `users?limit=50` + 2 panel `?limit=200` calls.
  */
-import { computed, onMounted, ref } from 'vue'
-import { api, ApiError } from '@/lib/api'
-import { useUiStore } from '@/stores/ui'
+import { computed, onMounted } from 'vue'
+import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
-import type { User, UserGroup, PageNode } from '@power-wiki/shared'
+import type { User, UserGroup } from '@power-wiki/shared'
 import ContextPanel from '@/components/manager/ContextPanel.vue'
 import StatBlock from '@/components/manager/StatBlock.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { useManagerStats } from '@/composables/useManagerStats'
 
-const uiStore = useUiStore()
+const stats = useManagerStats()
 const router = useRouter()
-
-const users = ref<User[]>([])
-const groups = ref<UserGroup[]>([])
-const memberCountByGroup = ref<Record<string, number>>({})
-const recentPages = ref<PageNode[]>([])
-const loading = ref(false)
-
-async function load() {
-  loading.value = true
-  try {
-    const [u, g] = await Promise.all([api.admin.users.list(), api.admin.groups.list()])
-    users.value = u
-    groups.value = g
-    const counts: Record<string, number> = {}
-    await Promise.all(
-      g.map(async (grp) => {
-        const full = await api.admin.groups.get(grp.id)
-        counts[grp.id] = full.memberIds?.length ?? 0
-      }),
-    )
-    memberCountByGroup.value = counts
-    // Recent activity = top 5 most recently updated pages (admin sees all
-    // spaces). Lightweight fetch; admin is the only viewer here so this
-    // is fine to do alongside the user/group queries.
-    try {
-      const allPages = await api.pages.list({})
-      recentPages.value = [...allPages]
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 5)
-    } catch {
-      recentPages.value = []
-    }
-  } catch (e) {
-    uiStore.setError(e instanceof ApiError ? e.message : '加载人员统计失败')
-  } finally {
-    loading.value = false
-  }
-}
-onMounted(load)
+const pagesStore = usePagesStore()
 
 /* ─── user stats (lifted from old UsersContextPanel) ─── */
-const totalUsers = computed(() => users.value.length)
-const adminCount = computed(() => users.value.filter((u) => u.role === 'admin').length)
-const regularUserCount = computed(() => users.value.filter((u) => u.role === 'user').length)
-const activeCount = computed(() => users.value.filter((u) => u.status === 'active').length)
+const totalUsers = computed(() => stats.users.value.length)
+const adminCount = computed(() => stats.users.value.filter((u) => u.role === 'admin').length)
+const regularUserCount = computed(() => stats.users.value.filter((u) => u.role === 'user').length)
+const activeCount = computed(() => stats.users.value.filter((u) => u.status === 'active').length)
 const mustResetCount = computed(
-  () => users.value.filter((u) => u.status === 'must_reset_password').length,
+  () => stats.users.value.filter((u) => u.status === 'must_reset_password').length,
 )
-const disabledCount = computed(() => users.value.filter((u) => u.status === 'disabled').length)
+const disabledCount = computed(() => stats.users.value.filter((u) => u.status === 'disabled').length)
 const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000
 const recentlyActiveCount = computed(
-  () => users.value.filter((u) => u.lastLoginAt && Date.now() - u.lastLoginAt < SEVEN_DAYS).length,
+  () => stats.users.value.filter((u) => u.lastLoginAt && Date.now() - u.lastLoginAt < SEVEN_DAYS).length,
 )
-const neverLoggedInCount = computed(() => users.value.filter((u) => !u.lastLoginAt).length)
+const neverLoggedInCount = computed(() => stats.users.value.filter((u) => !u.lastLoginAt).length)
 
 /* ─── group stats (lifted from old GroupsContextPanel) ─── */
-const totalGroups = computed(() => groups.value.length)
+const totalGroups = computed(() => stats.groups.value.length)
 const totalMemberSlots = computed(() =>
-  Object.values(memberCountByGroup.value).reduce((a, b) => a + b, 0),
+  stats.groups.value.reduce((sum, g) => sum + (g.memberCount ?? 0), 0),
 )
 const averageMembers = computed(() =>
   totalGroups.value === 0 ? 0 : Math.round(totalMemberSlots.value / totalGroups.value),
 )
 const emptyGroupsCount = computed(
-  () => groups.value.filter((g) => (memberCountByGroup.value[g.id] ?? 0) === 0).length,
+  () => stats.groups.value.filter((g) => (g.memberCount ?? 0) === 0).length,
 )
 const largestGroup = computed(() => {
   let best: { name: string; count: number } | null = null
-  for (const g of groups.value) {
-    const c = memberCountByGroup.value[g.id] ?? 0
+  for (const g of stats.groups.value) {
+    const c = g.memberCount ?? 0
     if (!best || c > best.count) best = { name: g.name, count: c }
   }
   return best
@@ -95,9 +64,17 @@ const largestGroup = computed(() => {
 
 /* ─── New in 5d: 最近登录 + 最近活动 (right panel fillers for 2K) ─── */
 const topLoggedIn = computed(() =>
-  [...users.value]
+  [...stats.users.value]
     .filter((u) => u.lastLoginAt)
     .sort((a, b) => (b.lastLoginAt ?? 0) - (a.lastLoginAt ?? 0))
+    .slice(0, 5),
+)
+// Read recent pages from the shared pagesStore (already loaded by the
+// sidebar / main page tree). Avoids a dedicated `pages.list({ limit: 5 })`
+// round-trip per /manager/people mount.
+const recentPages = computed(() =>
+  [...pagesStore.pages]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 5),
 )
 
@@ -116,6 +93,14 @@ function relativeShort(ts: number): string {
 function openPage(id: string) {
   void router.push(`/p/${id}`)
 }
+
+onMounted(async () => {
+  // Stats panel + main table share the same fetch. ensureLoaded() guards
+  // against double-fire: if PeopleView's usePaginatedList already kicked
+  // off a fetch, we await the same in-flight promise instead of starting
+  // a second request.
+  await Promise.all([stats.ensureUsersLoaded(), stats.ensureGroupsLoaded()])
+})
 </script>
 
 <template>

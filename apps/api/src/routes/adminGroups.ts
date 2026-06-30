@@ -22,9 +22,10 @@
  * the row from the admin UI.
  */
 import { Hono } from 'hono'
-import { and, eq, not, like } from 'drizzle-orm'
+import { and, eq, not, like, sql } from 'drizzle-orm'
 import {
   CreateGroupInputSchema,
+  PaginatedListSchema,
   UpdateGroupInputSchema,
   UserGroupSchema,
 } from '@power-wiki/shared/schemas'
@@ -32,6 +33,7 @@ import { db } from '../db/client'
 import { spaceGroupAccess, userGroupMembers, userGroups, users } from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
+import { applyPagination, safeParsePagination } from '../lib/paginate'
 import type { UserGroup } from '@power-wiki/shared'
 import type { UserGroupRow as DbUserGroupRow } from '../db/schema'
 
@@ -46,23 +48,28 @@ function isPersonalGroupId(id: string): boolean {
 
 /* ─── Row mappers ───────────────────────────────────────────────────── */
 
-/** DB row → API DTO (without memberIds; used by list endpoint). */
-function rowToGroup(row: DbUserGroupRow): UserGroup {
+/** DB row → API DTO (without memberIds; used by list endpoint).
+ *  Pass `memberCount` from the LEFT JOIN aggregate. */
+function rowToGroup(row: DbUserGroupRow, memberCount: number): UserGroup {
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? undefined,
     createdAt: row.createdAt,
+    memberCount,
   }
 }
 
-/** DB row + memberIds → API DTO (used by get endpoint). */
+/** DB row + memberIds → API DTO (used by get endpoint).
+ *  memberCount mirrors memberIds.length — gives the UI a number without
+ *  re-deriving it client-side. */
 function rowToGroupWithMembers(row: DbUserGroupRow, memberIds: string[]): UserGroup {
   return {
     id: row.id,
     name: row.name,
     description: row.description ?? undefined,
     createdAt: row.createdAt,
+    memberCount: memberIds.length,
     memberIds,
   }
 }
@@ -72,12 +79,36 @@ function rowToGroupWithMembers(row: DbUserGroupRow, memberIds: string[]): UserGr
 // GET /api/admin/groups — list all groups (memberIds omitted for compactness).
 // `pg-*` rows (the auto-created per-user groups for personal-space access)
 // are filtered out — they're system artifacts, not admin-managed groups.
+// memberCount comes from a single LEFT JOIN + GROUP BY (no N+1).
 adminGroupsRouter.get('/', async (c) => {
-  const rows = await db
-    .select()
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+  let q = db
+    .select({
+      id: userGroups.id,
+      name: userGroups.name,
+      description: userGroups.description,
+      createdAt: userGroups.createdAt,
+      memberCount: sql<number>`COUNT(${userGroupMembers.userId})::int`,
+    })
     .from(userGroups)
+    .leftJoin(userGroupMembers, eq(userGroupMembers.groupId, userGroups.id))
     .where(not(like(userGroups.id, 'pg-%')))
-  return c.json(rows.map((r) => UserGroupSchema.parse(rowToGroup(r))))
+    .groupBy(userGroups.id)
+    .$dynamic()
+  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+  const rows = await q
+  const items = rows.map((r) =>
+    UserGroupSchema.parse(
+      rowToGroup(
+        r as Pick<DbUserGroupRow, 'id' | 'name' | 'description' | 'createdAt'>,
+        r.memberCount,
+      ),
+    ),
+  )
+  const result = applyPagination(items, limit, offset)
+  return c.json(PaginatedListSchema(UserGroupSchema).parse(result))
 })
 
 // POST /api/admin/groups — create
@@ -96,7 +127,7 @@ adminGroupsRouter.post('/', async (c) => {
     createdAt: now,
   })
   const created = (await db.select().from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]!
-  return c.json(UserGroupSchema.parse(rowToGroup(created)), 201)
+  return c.json(UserGroupSchema.parse(rowToGroup(created, 0)), 201)
 })
 
 // GET /api/admin/groups/:id — single group with members. `pg-*` ids 404.
@@ -138,7 +169,7 @@ adminGroupsRouter.patch('/:id', async (c) => {
     })
     .where(eq(userGroups.id, id))
   const updated = (await db.select().from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]!
-  return c.json(UserGroupSchema.parse(rowToGroup(updated)))
+  return c.json(UserGroupSchema.parse(rowToGroup(updated, 0)))
 })
 
 // DELETE /api/admin/groups/:id — refuses to delete personal groups (system

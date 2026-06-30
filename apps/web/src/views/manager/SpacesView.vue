@@ -21,6 +21,8 @@ import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
+import { useManagerStats } from '@/composables/useManagerStats'
+import { usePaginatedList } from '@/composables/usePaginatedList'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import type { Space, UserGroup } from '@power-wiki/shared'
 import type { User } from '@power-wiki/shared'
@@ -31,11 +33,44 @@ const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
 
-const spaces = ref<Space[]>([])
-const groups = ref<UserGroup[]>([])
-const users = ref<User[]>([])
+/**
+ * Spaces is the main list — paginated with `usePaginatedList`. Groups +
+ * users are auxiliary (the access-group preview + the personal-space
+ * "所有者" column) and are loaded once as full sets because they need
+ * to resolve names for every visible space.
+ *
+ * Stage B.3: both auxiliary lists come from `useManagerStats()` —
+ * shared with PeopleView / PeopleContextPanel via the module-level
+ * singleton + promise-cache. First caller fires the request; subsequent
+ * callers (including SpacesView mounted later in the same SPA session)
+ * await the in-flight promise instead of starting a second request.
+ */
+const {
+  items: spaces,
+  hasMore: spacesHasMore,
+  loading: spacesListLoading,
+  error: spacesListError,
+  loadMore: loadMoreSpaces,
+  reset: resetSpaces,
+} = usePaginatedList<Space>(
+  (q) => api.admin.spaces.list(q),
+  { pageSize: 50 },
+)
+const {
+  groups,
+  users: statsUsers,
+  ensureGroupsLoaded,
+  ensureUsersLoaded,
+} = useManagerStats()
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+/**
+ * `users` here is the legacy reactive view-local alias for the panel —
+ * each row in the table needs to look up `ownerName` by ownerId. The
+ * composable already serves the data via `statsUsers`, so this view
+ * just forwards it.
+ */
+const users = statsUsers
 
 type KindTab = 'shared' | 'personal'
 const kindTab = ref<KindTab>('shared')
@@ -73,10 +108,14 @@ const COLOR_PALETTE = [
   '#403294', '#0065FF', '#36B37E', '#6554C0',
 ]
 
-const pageCountBySpace = ref<Record<string, number>>({})
-const childCountBySpace = ref<Record<string, number>>({})
-const lastUpdateBySpace = ref<Record<string, number>>({})
-const accessGroupCountBySpace = ref<Record<string, number>>({})
+/**
+ * No by-space stat maps: as of Stage B.2, Space DTO carries pageCount /
+ * childPageCount / lastPageUpdatedAt / accessGroupIds from the server
+ * (single GROUP BY aggregate query), so we read those directly off `s` in the
+ * template. The earlier Promise.all(spaces.map(...)) was an N+1 firing one
+ * `pages?space=<id>` request per space — visible in the browser Network panel
+ * for any admin with many personal spaces.
+ */
 const groupById = ref<Record<string, UserGroup>>({})
 
 function relativeTime(ts: number): string {
@@ -93,40 +132,28 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    // Single batch: spaces + groups + users, then per-space pages for the
-    // dense stats. Previously each space triggered a per-space group fetch —
-    // now we use accessGroupIds from the space response directly, plus one
-    // groups.list() call to resolve group names/colors for the avatar preview.
-    // users.list() powers the "所有者" column on personal-space cards.
-    const [s, g, u] = await Promise.all([
-      api.admin.spaces.list(),
-      api.admin.groups.list(),
-      api.admin.users.list(),
+    // Phase 1 (parallel): paginated spaces + group set (always needed
+    // for the access-group avatar preview). Per-space stats now come
+    // inside the spaces DTO, so no per-space stat fetch is needed.
+    // `ensureGroupsLoaded` is shared with PeopleView / PeopleContextPanel
+    // — first caller fires the request, subsequent await reuses the
+    // same in-flight promise.
+    const [, ] = await Promise.all([
+      resetSpaces(),
+      ensureGroupsLoaded(),
     ])
-    spaces.value = s
-    groups.value = g
-    users.value = u
-    groupById.value = Object.fromEntries(g.map((grp) => [grp.id, grp]))
+    if (spacesListError.value) {
+      throw spacesListError.value
+    }
+    groupById.value = Object.fromEntries(groups.value.map((grp) => [grp.id, grp]))
 
-    const pageCounts: Record<string, number> = {}
-    const childCounts: Record<string, number> = {}
-    const lastUpdates: Record<string, number> = {}
-    await Promise.all(
-      s.map(async (sp) => {
-        accessGroupCountBySpace.value[sp.id] = sp.accessGroupIds?.length ?? 0
-        const pages = await api.pages.list({ space: sp.id }).catch(() => [])
-        pageCounts[sp.id] = pages.length
-        // Child pages = pages with a non-null parentId in this space.
-        childCounts[sp.id] = pages.filter((p) => p.parentId != null).length
-        // Last update = max(updatedAt) over pages in this space, or the
-        // space's own updatedAt as a fallback.
-        const pageMax = pages.reduce((m, p) => Math.max(m, p.updatedAt), 0)
-        lastUpdates[sp.id] = pageMax || sp.updatedAt
-      }),
-    )
-    pageCountBySpace.value = pageCounts
-    childCountBySpace.value = childCounts
-    lastUpdateBySpace.value = lastUpdates
+    // Phase 2 (conditional): the user set is only needed when admin
+    // actually views personal-space cards (the "所有者" column needs
+    // owner display names). Skip entirely if no personal spaces exist.
+    // plan §B7.7. Also shared with PeopleView / PeopleContextPanel.
+    if (spaces.value.some((s) => s.kind === 'personal')) {
+      await ensureUsersLoaded()
+    }
   } catch (e) {
     loadError.value = e instanceof ApiError ? e.message : '加载空间失败'
     uiStore.setError(loadError.value)
@@ -161,8 +188,6 @@ async function onSubmitCreate() {
       color: createColor.value,
     })
     spaces.value.push(created)
-    pageCountBySpace.value[created.id] = 0
-    accessGroupCountBySpace.value[created.id] = 0
     // Sync the spaces store so the sidebar switcher reflects the new space
     // immediately if admin switches away from manager.
     spacesStore.upsert(created)
@@ -185,8 +210,6 @@ async function onDelete(s: Space) {
   try {
     await api.admin.spaces.delete(s.id)
     spaces.value = spaces.value.filter((x) => x.id !== s.id)
-    delete pageCountBySpace.value[s.id]
-    delete accessGroupCountBySpace.value[s.id]
     // Mirror to the sidebar store — if the deleted space was the active one,
     // the store already auto-shifts; otherwise just drop it.
     await spacesStore.refresh()
@@ -370,19 +393,19 @@ const ownerNameById = computed<Record<string, string>>(() =>
 
         <div class="sc-stats">
           <div class="sc-stat">
-            <span class="scs-value">{{ pageCountBySpace[s.id] ?? 0 }}</span>
+            <span class="scs-value">{{ s.pageCount ?? 0 }}</span>
             <span class="scs-label">页面</span>
           </div>
           <div class="sc-stat">
-            <span class="scs-value">{{ childCountBySpace[s.id] ?? 0 }}</span>
+            <span class="scs-value">{{ s.childPageCount ?? 0 }}</span>
             <span class="scs-label">子页</span>
           </div>
           <div class="sc-stat">
-            <span class="scs-value">{{ accessGroupCountBySpace[s.id] ?? 0 }}</span>
+            <span class="scs-value">{{ s.accessGroupIds?.length ?? 0 }}</span>
             <span class="scs-label">授权组</span>
           </div>
           <div class="sc-stat">
-            <span class="scs-value">{{ lastUpdateBySpace[s.id] ? relativeTime(lastUpdateBySpace[s.id]!) : '—' }}</span>
+            <span class="scs-value">{{ s.lastPageUpdatedAt ? relativeTime(s.lastPageUpdatedAt) : '—' }}</span>
             <span class="scs-label">最近更新</span>
           </div>
           <div class="sc-stat">
@@ -438,6 +461,19 @@ const ownerNameById = computed<Record<string, string>>(() =>
           </span>
         </div>
       </div>
+    </div>
+
+    <div v-if="visibleSpaces.length > 0" class="load-more-row">
+      <button
+        v-if="spacesHasMore"
+        type="button"
+        class="btn ghost load-more-btn"
+        :disabled="spacesListLoading"
+        @click="loadMoreSpaces"
+      >
+        {{ spacesListLoading ? '加载中…' : '加载更多' }}
+      </button>
+      <div v-else class="load-more-end">— 已加载全部 —</div>
     </div>
     </div>
   </div>
@@ -752,4 +788,25 @@ const ownerNameById = computed<Record<string, string>>(() =>
 .ra-btn .material-symbols-outlined { font-size: 18px; }
 .sc-open { color: var(--text-3); display: inline-flex; }
 .sc-open .material-symbols-outlined { font-size: 18px; }
+
+/* "Load more" footer (Stage B.1) — shared with PeopleView. */
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 8px;
+}
+.load-more-btn {
+  min-width: 200px;
+  height: 36px;
+  padding: 0 18px;
+}
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.load-more-end {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 24px 0 8px;
+}
 </style>

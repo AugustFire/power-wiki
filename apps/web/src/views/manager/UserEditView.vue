@@ -12,6 +12,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
@@ -181,36 +182,86 @@ const colorPresets = [
 </script>
 
 <template>
-  <div v-if="loading" class="ue-loading">加载中…</div>
-
-  <div v-else-if="loadError" class="ue-error">
-    <p>{{ loadError }}</p>
-    <button type="button" class="btn ghost" @click="router.push('/manager/people')">返回列表</button>
-  </div>
-
-  <div v-else-if="user" class="user-edit">
+  <div class="user-edit">
     <nav class="ue-breadcrumb" aria-label="面包屑导航">
       <RouterLink to="/manager/people">人员</RouterLink>
       <span class="ue-bc-sep" aria-hidden="true">/</span>
-      <span class="ue-bc-current">{{ user.name }}</span>
+      <span class="ue-bc-current">
+        <Skeleton v-if="loading" width="120px" height="14px" />
+        <template v-else-if="user">{{ user.name }}</template>
+        <template v-else>—</template>
+      </span>
     </nav>
 
     <header class="ue-header">
-      <UserAvatar :size="56" :label="user.name" :color="user.color" />
+      <Skeleton v-if="loading" width="56px" height="56px" radius="50%" />
+      <UserAvatar v-else-if="user" :size="56" :label="user.name" :color="user.color" />
       <div class="ue-header-text">
-        <h1 class="ue-title">{{ user.name }}</h1>
+        <h1 class="ue-title">
+          <Skeleton v-if="loading" width="180px" height="22px" />
+          <template v-else-if="user">{{ user.name }}</template>
+        </h1>
         <div class="ue-meta">
-          <span class="status-pill" :class="statusTone(user.status)">{{ statusLabel(user.status) }}</span>
-          <span class="role-pill" :class="user.role">
-            {{ user.role === 'admin' ? '管理员' : '普通用户' }}
-          </span>
-          <span class="ue-email">{{ user.email }}</span>
+          <template v-if="user">
+            <span class="status-pill" :class="statusTone(user.status)">{{ statusLabel(user.status) }}</span>
+            <span class="role-pill" :class="user.role">
+              {{ user.role === 'admin' ? '管理员' : '普通用户' }}
+            </span>
+            <span class="ue-email">{{ user.email }}</span>
+          </template>
+          <template v-else-if="loading">
+            <Skeleton width="60px" height="20px" radius="999px" />
+            <Skeleton width="60px" height="20px" radius="999px" />
+            <Skeleton width="180px" height="14px" />
+          </template>
         </div>
       </div>
     </header>
 
+    <div v-if="loadError" class="ue-error">
+      <p>{{ loadError }}</p>
+      <button type="button" class="btn ghost" @click="router.push('/manager/people')">返回列表</button>
+    </div>
+
+    <template v-else-if="loading">
+      <div class="ue-grid">
+        <section class="ue-card">
+          <Skeleton width="120px" height="18px" />
+          <div class="ue-fields">
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+            <div class="field">
+              <Skeleton width="60px" height="12px" />
+              <Skeleton width="180px" height="28px" />
+            </div>
+            <div class="field">
+              <Skeleton width="40px" height="12px" />
+              <Skeleton height="36px" />
+            </div>
+          </div>
+          <div class="ue-card-actions">
+            <Skeleton width="80px" height="32px" />
+            <Skeleton width="80px" height="32px" />
+          </div>
+        </section>
+        <section class="ue-card">
+          <Skeleton width="100px" height="18px" />
+          <div class="ue-action-list">
+            <Skeleton height="64px" />
+            <Skeleton height="64px" />
+          </div>
+        </section>
+      </div>
+    </template>
+
     <!-- One-time password banner (after admin-initiated reset). -->
-    <div v-if="oneTimePassword" class="otp-banner" role="alert">
+    <div v-if="user && oneTimePassword" class="otp-banner" role="alert">
       <div class="otp-row">
         <span class="material-symbols-outlined otp-icon">key</span>
         <div class="otp-text">
@@ -236,7 +287,7 @@ const colorPresets = [
       </div>
     </div>
 
-    <div class="ue-grid">
+    <div v-if="user" class="ue-grid">
       <!-- Edit form -->
       <section class="ue-card">
         <h2 class="ue-card-title">基本信息</h2>

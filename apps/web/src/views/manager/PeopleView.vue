@@ -19,6 +19,7 @@ import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
+import { useManagerStats } from '@/composables/useManagerStats'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -39,12 +40,38 @@ function switchTab(t: Tab) {
   void router.replace({ name: 'manager-people', query: { tab: t } })
 }
 
-/* ─── Shared data needed by both tabs + the context panel ──────────── */
-const users = ref<User[]>([])
-const groups = ref<UserGroup[]>([])
-const memberCountByGroup = ref<Record<string, number>>({})
-const usersLoading = ref(false)
-const groupsLoading = ref(false)
+/* ─── Shared data (Stage B.3) ─────────────────────────────────────────
+ * Both this view's main table AND the right-side PeopleContextPanel
+ * read from `useManagerStats()`. Module-level singleton + promise-
+ * cached fetch: first caller triggers the request, the second caller's
+ * await resolves against the same in-flight promise. Net effect:
+ * /manager/people mount fires `users?limit=200` + `groups?limit=200`
+ * exactly ONCE total — no per-component fanout.
+ *
+ * `loadMore` chains onto the same array with offset management; the
+ * "load more" button at the bottom of each table uses it. CRUD ops
+ * upsert in-place via the sync helpers so both consumers stay aligned.
+ */
+const {
+  users,
+  groups,
+  usersLoading,
+  groupsLoading,
+  usersHasMore,
+  groupsHasMore,
+  usersError: usersListError,
+  groupsError: groupsListError,
+  ensureUsersLoaded,
+  ensureGroupsLoaded,
+  loadMoreUsers,
+  loadMoreGroups,
+  refreshUsers,
+  refreshGroups,
+  upsertUser,
+  removeUser,
+  upsertGroup,
+  removeGroup,
+} = useManagerStats()
 
 /* ─── User state ───────────────────────────────────────────────────── */
 const { showCreateUser } = useManagerActions()
@@ -71,15 +98,14 @@ watch(showCreateUser, (next, prev) => {
 })
 
 async function loadUsers() {
-  usersLoading.value = true
   userLoadError.value = null
-  try {
-    users.value = await api.admin.users.list()
-  } catch (e) {
-    userLoadError.value = e instanceof ApiError ? e.message : '加载用户列表失败'
+  await refreshUsers()
+  if (usersListError.value) {
+    userLoadError.value =
+      usersListError.value instanceof ApiError
+        ? usersListError.value.message
+        : '加载用户列表失败'
     uiStore.setError(userLoadError.value)
-  } finally {
-    usersLoading.value = false
   }
 }
 
@@ -97,7 +123,7 @@ async function submitCreateUser() {
       name: createUserName.value.trim(),
       role: createUserRole.value,
     })
-    users.value.push(user)
+    upsertUser(user)
     otpUser.value = user
     otpPassword.value = initialPassword
     otpCopied.value = false
@@ -146,8 +172,7 @@ async function toggleDisableUser(u: User) {
     const updated = u.status === 'disabled'
       ? await api.admin.users.enable(u.id)
       : await api.admin.users.disable(u.id)
-    const idx = users.value.findIndex((x) => x.id === u.id)
-    if (idx >= 0) users.value[idx] = updated
+    upsertUser(updated)
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '操作失败')
   }
@@ -221,26 +246,17 @@ watch(showCreateGroup, (next, prev) => {
 })
 
 async function loadGroups() {
-  groupsLoading.value = true
   groupLoadError.value = null
-  try {
-    const g = await api.admin.groups.list()
-    groups.value = g
-    // Fetch member counts in parallel — small N, safe.
-    const counts: Record<string, number> = {}
-    await Promise.all(
-      g.map(async (grp) => {
-        const full = await api.admin.groups.get(grp.id)
-        counts[grp.id] = full.memberIds?.length ?? 0
-      }),
-    )
-    memberCountByGroup.value = counts
-  } catch (e) {
-    groupLoadError.value = e instanceof ApiError ? e.message : '加载用户组失败'
+  await refreshGroups()
+  if (groupsListError.value) {
+    groupLoadError.value =
+      groupsListError.value instanceof ApiError
+        ? groupsListError.value.message
+        : '加载用户组失败'
     uiStore.setError(groupLoadError.value)
-  } finally {
-    groupsLoading.value = false
+    return
   }
+  // memberCount is aggregated server-side; no per-group `get` calls.
 }
 
 async function submitCreateGroup() {
@@ -256,8 +272,7 @@ async function submitCreateGroup() {
       name: createGroupName.value.trim(),
       description: createGroupDesc.value.trim() || undefined,
     })
-    groups.value.push(created)
-    memberCountByGroup.value[created.id] = 0
+    upsertGroup(created)
     showCreateGroup.value = false
   } catch (e) {
     createGroupError.value = e instanceof ApiError ? e.message : '创建失败'
@@ -276,8 +291,7 @@ async function deleteGroup(g: UserGroup) {
   if (!ok) return
   try {
     await api.admin.groups.delete(g.id)
-    groups.value = groups.value.filter((x) => x.id !== g.id)
-    delete memberCountByGroup.value[g.id]
+    removeGroup(g.id)
     void pagesStore.refresh()
   } catch (e) {
     uiStore.setError(e instanceof ApiError ? e.message : '删除失败')
@@ -292,10 +306,25 @@ function formatDate(ts: number): string {
   return new Date(ts).toLocaleString('zh-CN', { dateStyle: 'short' })
 }
 
-/* ─── Master load: kick off both, each tab hydrates lazily too ─────── */
+/* ─── Tab loading — Mount loads only the active tab; switching tabs
+ *     triggers the other side on first switch. ensure*Loaded() is
+ *     idempotent: if the cache already has data, it returns immediately
+ *     and shares with the right-side PeopleContextPanel. ─── */
+async function loadActiveTab() {
+  if (activeTab.value === 'users') {
+    await ensureUsersLoaded()
+  } else {
+    await ensureGroupsLoaded()
+  }
+}
+
 onMounted(() => {
-  void loadUsers()
-  void loadGroups()
+  void loadActiveTab()
+})
+
+/** Switch tabs — fetch the other side on first activation. */
+watch(activeTab, (t) => {
+  void loadActiveTab()
 })
 </script>
 
@@ -462,6 +491,19 @@ onMounted(() => {
         </tbody>
       </table>
       <div v-else class="uv-empty">还没有用户。</div>
+
+      <div v-if="users.length > 0" class="load-more-row">
+        <button
+          v-if="usersHasMore"
+          type="button"
+          class="btn ghost load-more-btn"
+          :disabled="usersLoading"
+          @click="loadMoreUsers"
+        >
+          {{ usersLoading ? '加载中…' : '加载更多' }}
+        </button>
+        <div v-else class="load-more-end">— 已加载全部 —</div>
+      </div>
     </section>
 
     <!-- ─── Groups pane ─── -->
@@ -514,7 +556,7 @@ onMounted(() => {
           </div>
           <div class="gc-stats">
             <div class="gc-stat">
-              <span class="gcs-value">{{ memberCountByGroup[g.id] ?? 0 }}</span>
+              <span class="gcs-value">{{ g.memberCount ?? 0 }}</span>
               <span class="gcs-label">成员</span>
             </div>
             <div class="gc-stat">
@@ -529,6 +571,19 @@ onMounted(() => {
             <span class="gc-open"><span class="material-symbols-outlined">arrow_forward</span></span>
           </div>
         </div>
+      </div>
+
+      <div v-if="groups.length > 0" class="load-more-row">
+        <button
+          v-if="groupsHasMore"
+          type="button"
+          class="btn ghost load-more-btn"
+          :disabled="groupsLoading"
+          @click="loadMoreGroups"
+        >
+          {{ groupsLoading ? '加载中…' : '加载更多' }}
+        </button>
+        <div v-else class="load-more-end">— 已加载全部 —</div>
       </div>
     </section>
     </div>
@@ -861,4 +916,26 @@ onMounted(() => {
 .gc-actions { display: flex; align-items: center; justify-content: space-between; }
 .gc-open { color: var(--text-3); display: inline-flex; }
 .gc-open .material-symbols-outlined { font-size: 18px; }
+
+/* "Load more" footer (Stage B.1) — shared between users tab + groups tab.
+ * Centered button + end-of-list marker. Tokens from tokens.css. */
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 8px;
+}
+.load-more-btn {
+  min-width: 200px;
+  height: 36px;
+  padding: 0 18px;
+}
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.load-more-end {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 24px 0 8px;
+}
 </style>

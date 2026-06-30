@@ -49,6 +49,32 @@ type SortKey = 'newest' | 'oldest' | 'title-asc' | 'title-desc'
 const sortKey = ref<SortKey>('newest')
 
 const allUsers = ref<User[]>([])
+/** Lazy-load all users for the 删除者 filter on first focus — admins
+ *  rarely need this list, so we skip the round-trip when the dropdown
+ *  is never opened. */
+const allUsersLoaded = ref(false)
+async function ensureAllUsersLoaded() {
+  if (allUsersLoaded.value) return
+  allUsersLoaded.value = true
+  try {
+    // B.3: ?limit=200 caps the payload (no real team has 200+ users
+    // — admin-side UI users are a small set). The full admin user
+    // list is needed for the "filter by delete-r" dropdown.
+    allUsers.value = (await api.admin.users.list({ limit: 200 })).items
+  } catch {
+    /* non-fatal — filter dropdown will just show "all" */
+  }
+}
+
+// Trash loads exactly once per selectedSpaceId change. We don't use
+// `watch(..., { immediate: true })` because at mount time `selectedSpaceId`
+// may be the stale localStorage activeSpaceId (often admin's personal space)
+// — the onMounted hook below then re-picks the first shared space, and
+// the watch fires AGAIN. That's 2 redundant /api/pages/trash calls.
+// Instead: loadTrash runs only from onMounted + kindTab/space-id watchers.
+async function loadTrashFor(id: string) {
+  if (id) await pagesStore.loadTrash(id)
+}
 
 onMounted(async () => {
   if (!spacesStore.loaded) await spacesStore.init()
@@ -58,13 +84,8 @@ onMounted(async () => {
   if (!selectedSpaceId.value || !tabSpaces.value.some((s) => s.id === selectedSpaceId.value)) {
     selectedSpaceId.value = tabSpaces.value[0]?.id ?? spacesStore.spaces.value[0]?.id ?? ''
   }
-  if (selectedSpaceId.value) await pagesStore.loadTrash(selectedSpaceId.value)
-  // Pull users for the 删除者 filter dropdown (admin-only endpoint).
-  try {
-    allUsers.value = await api.admin.users.list()
-  } catch {
-    /* non-fatal — filter dropdown will just show "all" */
-  }
+  // Run the initial load exactly once.
+  void loadTrashFor(selectedSpaceId.value)
 })
 
 watch(kindTab, () => {
@@ -72,14 +93,14 @@ watch(kindTab, () => {
   // to the other kind). Pick the first space of the new tab if available.
   if (!tabSpaces.value.some((s) => s.id === selectedSpaceId.value)) {
     selectedSpaceId.value = tabSpaces.value[0]?.id ?? ''
-    if (selectedSpaceId.value) {
-      void pagesStore.loadTrash(selectedSpaceId.value)
-    }
   }
 })
 
-watch(selectedSpaceId, async (id) => {
-  if (id) await pagesStore.loadTrash(id)
+watch(selectedSpaceId, (id) => {
+  // Skip the initial fire — onMounted already loaded trash for whatever
+  // selectedSpaceId resolved to. Subsequent changes (tab switch, user
+  // picker change) DO trigger reload.
+  if (id) void loadTrashFor(id)
 })
 
 /* ─── Filtered + sorted view of the store's trashed list ─── */
@@ -202,8 +223,15 @@ async function onPurge(id: string, title: string) {
             </option>
           </select>
         </label>
-        <button class="refresh-btn" @click="pagesStore.loadTrash(selectedSpaceId)">
-          <span class="material-symbols-outlined icon-md">refresh</span>
+        <button
+          class="refresh-btn"
+          :disabled="pagesStore.trashLoading"
+          @click="pagesStore.loadTrash(selectedSpaceId)"
+        >
+          <span
+            class="material-symbols-outlined icon-md"
+            :class="{ 'is-loading': pagesStore.trashLoading }"
+          >refresh</span>
           刷新
         </button>
       </div>
@@ -222,7 +250,7 @@ async function onPurge(id: string, title: string) {
       </div>
       <label class="tt-select">
         <span>删除者</span>
-        <select v-model="deletedByFilter">
+        <select v-model="deletedByFilter" @focus="ensureAllUsersLoaded">
           <option value="all">全部</option>
           <option value="unknown">未知</option>
           <option v-for="u in allUsers" :key="u.id" :value="u.id">{{ u.name }}</option>
@@ -307,6 +335,19 @@ async function onPurge(id: string, title: string) {
         </tr>
       </tbody>
     </table>
+
+    <div v-if="rows.length > 0" class="load-more-row">
+      <button
+        v-if="pagesStore.trashHasMore"
+        type="button"
+        class="btn ghost load-more-btn"
+        :disabled="pagesStore.trashLoadingMore"
+        @click="pagesStore.loadMoreTrash(selectedSpaceId)"
+      >
+        {{ pagesStore.trashLoadingMore ? '加载中…' : '加载更多' }}
+      </button>
+      <div v-else class="load-more-end">— 已加载全部 —</div>
+    </div>
     </div>
   </div>
 </template>
@@ -378,6 +419,14 @@ async function onPurge(id: string, title: string) {
   font-family: inherit;
 }
 .refresh-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
+.refresh-btn:disabled { opacity: 0.7; cursor: wait; }
+.refresh-btn .icon-md.is-loading {
+    animation: refresh-spin 0.9s linear infinite;
+}
+@keyframes refresh-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
 
 /* ─── Toolbar ─── */
 .trash-toolbar {
@@ -522,4 +571,25 @@ async function onPurge(id: string, title: string) {
 .row-btn.danger:hover:not(:disabled) { background: var(--danger, #DE350B); color: white; }
 .row-btn.restore { color: var(--accent); border-color: var(--accent); }
 .row-btn.restore:hover:not(:disabled) { background: var(--accent-soft); }
+
+/* "Load more" footer (Stage B.1) — shared with PeopleView / SpacesView. */
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 8px;
+}
+.load-more-btn {
+  min-width: 200px;
+  height: 36px;
+  padding: 0 18px;
+}
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.load-more-end {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 24px 0 8px;
+}
 </style>

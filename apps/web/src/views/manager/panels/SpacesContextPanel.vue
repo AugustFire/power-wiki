@@ -2,58 +2,48 @@
 /**
  * SpacesContextPanel — right-side panel for SpacesView.
  *
- * Loads spaces + per-space page counts. Same data fetch as SpacesView.
+ * Reads from the shared `spacesStore` instead of firing its own
+ * `api.admin.spaces.list()`. The store is loaded once at app boot
+ * (`main.ts` → `useSpacesStore().init()`) and admin gets the full
+ * visible-spaces list — which for admin role == "all spaces", same data
+ * the panel used to fetch separately. SpacesView writes back via
+ * `spacesStore.upsert/refresh` after CRUD, so this panel stays in sync
+ * with no extra wiring.
+ *
+ * Stats per space come straight off the Space DTO (pageCount /
+ * accessGroupIds are server-aggregated; see `getSpacePageStats` in
+ * `apps/api/src/lib/spaceStats.ts`).
  */
-import { computed, onMounted, ref } from 'vue'
-import { api, ApiError } from '@/lib/api'
-import { useUiStore } from '@/stores/ui'
-import type { Space } from '@power-wiki/shared'
+import { computed } from 'vue'
+import { useSpacesStore } from '@/stores/spaces'
 import ContextPanel from '@/components/manager/ContextPanel.vue'
 import StatBlock from '@/components/manager/StatBlock.vue'
 
-const uiStore = useUiStore()
-const spaces = ref<Space[]>([])
-const pageCountBySpace = ref<Record<string, number>>({})
-const loading = ref(false)
+const spacesStore = useSpacesStore()
 
-async function load() {
-  loading.value = true
-  try {
-    const s = await api.admin.spaces.list()
-    spaces.value = s
-    const counts: Record<string, number> = {}
-    await Promise.all(
-      s.map(async (sp) => {
-        const pages = await api.pages.list({ space: sp.id }).catch(() => [])
-        counts[sp.id] = pages.length
-      }),
-    )
-    pageCountBySpace.value = counts
-  } catch (e) {
-    uiStore.setError(e instanceof ApiError ? e.message : '加载空间统计失败')
-  } finally {
-    loading.value = false
-  }
-}
-onMounted(load)
-
-const totalSpaces = computed(() => spaces.value.length)
+const totalSpaces = computed(() => spacesStore.spaces.value.length)
 const totalPages = computed(() =>
-  Object.values(pageCountBySpace.value).reduce((a, b) => a + b, 0),
+  spacesStore.spaces.value.reduce((sum: number, sp) => sum + (sp.pageCount ?? 0), 0),
 )
 const totalAccessRels = computed(() =>
-  spaces.value.reduce((sum, sp) => sum + (sp.accessGroupIds?.length ?? 0), 0),
+  spacesStore.spaces.value.reduce(
+    (sum: number, sp) => sum + (sp.accessGroupIds?.length ?? 0),
+    0,
+  ),
 )
 const emptySpacesCount = computed(
-  () => spaces.value.filter((sp) => (pageCountBySpace.value[sp.id] ?? 0) === 0).length,
+  () =>
+    spacesStore.spaces.value.filter((sp) => (sp.pageCount ?? 0) === 0).length,
 )
 const unauthorizedSpacesCount = computed(
-  () => spaces.value.filter((sp) => (sp.accessGroupIds?.length ?? 0) === 0).length,
+  () =>
+    spacesStore.spaces.value.filter((sp) => (sp.accessGroupIds?.length ?? 0) === 0)
+      .length,
 )
 const biggestSpace = computed(() => {
   let best: { name: string; count: number; color: string } | null = null
-  for (const sp of spaces.value) {
-    const c = pageCountBySpace.value[sp.id] ?? 0
+  for (const sp of spacesStore.spaces.value) {
+    const c = sp.pageCount ?? 0
     if (!best || c > best.count) best = { name: sp.name, count: c, color: sp.color }
   }
   return best

@@ -43,6 +43,7 @@ import { and, eq, getTableColumns, inArray, isNotNull, isNull, ne, sql, type SQL
 import {
   CreatePageInputSchema,
   PageNodeSchema,
+  PaginatedListSchema,
   UpdatePageInputSchema,
   MovePageInputSchema,
 } from '@power-wiki/shared/schemas'
@@ -52,6 +53,7 @@ import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
+import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
 const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/src/lib/id.ts (10 chars)
@@ -92,17 +94,23 @@ function selectPagesWithAuthor(
  *  Optional ?space=<id> scopes the list to a single space. The space must be
  *  visible to the current user, otherwise we 404 (not 403) to avoid leaking
  *  the existence of spaces the user shouldn't see.
+ *
+ *  Pagination: `?limit=` (1-200) + `?offset=`. 不传 limit = 全量(保持
+ *  stores/Sidebar 的向后兼容 — page 树需要看到所有页才能渲染)。
  */
 pagesRouter.get('/', async (c) => {
   const me = c.get('user')
   const querySpace = c.req.query('space')
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
 
   // Build the WHERE clause. For admin, skip the filter entirely.
   if (me.role !== 'admin') {
     const visible = await getAccessibleSpaceIds(me.id, false)
     if (visible === '*' || visible.length === 0) {
       // Shouldn't happen for non-admin, but be defensive.
-      return c.json([])
+      return c.json({ items: [], limit: 0, offset: 0, hasMore: false })
     }
 
     if (querySpace) {
@@ -110,21 +118,29 @@ pagesRouter.get('/', async (c) => {
       if (!visible.includes(querySpace)) {
         return c.json({ error: 'not_found' }, 404)
       }
-      const rows = await selectPagesWithAuthor(eq(pages.spaceId, querySpace))
-      return c.json(rows.map(rowToPageNode))
+      let q = selectPagesWithAuthor(eq(pages.spaceId, querySpace)).$dynamic()
+      if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+      const rows = await q
+      const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+      return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
     }
 
-    const rows = await selectPagesWithAuthor(inArray(pages.spaceId, visible))
-    return c.json(rows.map(rowToPageNode))
+    let q = selectPagesWithAuthor(inArray(pages.spaceId, visible)).$dynamic()
+    if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+    const rows = await q
+    const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+    return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
   }
 
   // Admin path.
-  if (querySpace) {
-    const rows = await selectPagesWithAuthor(eq(pages.spaceId, querySpace))
-    return c.json(rows.map(rowToPageNode))
-  }
-  const rows = await selectPagesWithAuthor()
-  return c.json(rows.map(rowToPageNode))
+  let q = (querySpace
+    ? selectPagesWithAuthor(eq(pages.spaceId, querySpace))
+    : selectPagesWithAuthor()
+  ).$dynamic()
+  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+  const rows = await q
+  const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+  return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
 })
 
 /* ─── GET /api/pages/trash ─────────────────────────────────────────────
@@ -143,11 +159,17 @@ pagesRouter.get('/trash', async (c) => {
   if (!querySpace) {
     return c.json({ error: 'space_required' }, 400)
   }
-  const rows = await selectPagesWithAuthor(
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+  let q = selectPagesWithAuthor(
     and(eq(pages.spaceId, querySpace), isNotNull(pages.deletedAt)),
     { includeDeleted: true },
-  ).orderBy(sql`${pages.deletedAt} DESC`)
-  return c.json(rows.map(rowToPageNode))
+  ).orderBy(sql`${pages.deletedAt} DESC`).$dynamic()
+  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+  const rows = await q
+  const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+  return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
 })
 
 /* ─── GET /api/pages/:id ──────────────────────────────────────────────

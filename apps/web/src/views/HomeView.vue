@@ -4,6 +4,7 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
+import { newId } from '@/lib/id'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
@@ -69,11 +70,15 @@ function goPage(id: string) {
 }
 
 async function createRoot() {
+  // Stage B.3: client-side nanoid + immediate URL push + async create.
+  // Mirrors Sidebar's createRoot — URL is stable by the time the
+  // editor mounts, no blank flash waiting on POST.
+  const clientId = newId()
+  router.push(`/p/${clientId}/edit`)
   try {
-    const p = await pagesStore.createPage({ parentId: null })
-    router.push(`/p/${p.id}/edit`)
+    await pagesStore.createPage({ id: clientId, parentId: null })
   } catch {
-    // banner shown by store
+    // store already shows the error banner
   }
 }
 

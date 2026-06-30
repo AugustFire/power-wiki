@@ -91,6 +91,9 @@ export interface UserGroup {
   name: string
   description?: string
   createdAt: number
+  /** list 路径聚合返,代表 user_group_members 行数。
+   *  `:id` 路径同时还返 memberIds[];list 因为不返 ids,所以才有这个 count 字段。 */
+  memberCount?: number
   /** 关联的 user.id 列表(完整 group 信息时返回) */
   memberIds?: string[]
 }
@@ -123,6 +126,18 @@ export interface Space {
   accessVia?: 'member'
   /** 当前用户所属可访问该 space 的组 id 列表 */
   accessGroupIds?: string[]
+  /** 该空间下非删除页面的总数。Space list/get 时由服务端一次聚合查询给出,
+   *  减少前端 N+1 请求。原来由前端 Promise.all(spaces.map(...)) 拉全量 page
+   *  列表算出来,现在改成 DTO 字段。 */
+  pageCount?: number
+  /** 该空间下有父级(parentId != null)的非删除页面数。 */
+  childPageCount?: number
+  /** 该空间下页面中最新的 updatedAt;无页面时为 null(前端回退到 space.updatedAt)。
+   *  Number(ms since epoch) 或 null。 */
+  lastPageUpdatedAt?: number | null
+  /** 仅 admin 路径 + kind='personal' 时返:所有者的显示名。
+   *  避免前端为每个 personal space 再发一次 users/:id。 */
+  ownerName?: string
 }
 
 /**
@@ -134,3 +149,11 @@ export interface Space {
  *   - 运行时值:`import { PERSIST_KEYS } from '@power-wiki/shared/keys'`
  */
 export type { PersistKey } from './keys'
+
+/**
+ * 重新导出分页相关类型 — 这样 `import type { Paginated, PaginatedQuery } from '@power-wiki/shared'`
+ * 能直接拿到,不用再走 `schemas` 子路径(避免误带 zod 运行时)。
+ *
+ * 源 schema 在 `./schemas.ts`,这里是纯类型转发。
+ */
+export type { Paginated, PaginatedQuery } from './schemas'
