@@ -4,7 +4,9 @@ This file provides guidance for Claude Code (claude.ai/code) when working with c
 
 ## 项目
 
-power-wiki 是一个开源的 Confluence 风格团队知识库 wiki。**项目结构是 pnpm workspaces monorepo**:`apps/web`(Vue 3 前端,监听 5173)+ `apps/api`(Hono + Drizzle + Postgres 后端,监听 8787)+ `packages/shared`(前后端共享 types + zod schemas)。**Stage 4 已完成**:全量登录鉴权(自研薄 auth + argon2 + DB sessions)+ admin 后台(`/manager`)+ 用户组 + Space + 页面按可见 space 过滤。`/api/auth/sign-in` → 拿到 HTTP-only cookie → 其余 API 强制 requireAuth → admin 路由 requireAdmin。前端 `stores/pages.ts` 走 API(Stage 3 已完成),不再用 localStorage。视觉设计由 `design/wiki-edit.html` 和 `design/wiki-read.html` 两个静态原型固定(Atlassian "Atlas" 风格),三栏布局:260px 侧边栏 / 860px 内容 / 220px 目录。设计视口 2560×1440(24" 2K 显示器),最小宽度 1280px — 仅桌面端。
+power-wiki 是一个开源的 Confluence 风格团队知识库 wiki。**项目结构是 pnpm workspaces monorepo**:`apps/web`(Vue 3 前端,监听 5173)+ `apps/api`(Hono + Drizzle + Postgres 后端,监听 8787)+ `packages/shared`(前后端共享 types + zod schemas)。
+
+**当前已实现的能力**:全量登录鉴权(自研薄 auth + argon2 + DB sessions)+ admin 后台(`/manager`)+ 用户组 + Space + 页面按可见 space 过滤 + **个人/共享空间分离** + **软删除回收站**。`/api/auth/sign-in` → 拿到 HTTP-only cookie → 其余 API 强制 requireAuth → admin 路由 requireAdmin。前端 `stores/pages.ts` 走 API,不再用 localStorage 存业务数据。视觉设计由 `design/wiki-edit.html` 和 `design/wiki-read.html` 两个静态原型固定(Atlassian "Atlas" 风格),三栏布局:280px 侧边栏 / 1100px 内容 / 240px 目录。设计视口 2560×1440(24" 2K 显示器),最小宽度 1280px — 仅桌面端。
 
 ## 目录结构
 
@@ -14,45 +16,58 @@ power-wiki/
 │   ├── web/                # @power-wiki/web — Vue 3 + Vite 6 前端(5173)
 │   │   ├── public/              # favicon.svg + 16/32/180 PNG,BrandLogo 的源 SVG
 │   │   └── src/
-│   │       ├── stores/           # pages.ts / spaces.ts / auth.ts(Pinia setup store)
+│   │       ├── stores/           # pages.ts / ui.ts / auth.ts / spaces.ts(Pinia setup store)
 │   │       ├── views/
+│   │       │   ├── HomeView / ReadView / EditView / MySpaceView / NotFoundView
 │   │       │   ├── auth/         # LoginView / ResetPasswordView(split layout 品牌区)
-│   │       │   └── manager/      # ManagerLayout + Users/Groups/Spaces × List + Edit
+│   │       │   └── manager/      # ManagerLayout + PeopleView / SpacesView / TrashView
+│   │       │                      # + UserEditView / SpaceEditView / GroupEditView
+│   │       │                      # + UsersView / GroupsView(back-compat redirect)
+│   │       │                      # + panels/(3 个 context side panel)
 │   │       └── components/
-│   │           ├── ui/           # UserAvatar / UserMenu / BrandLogo(唯一品牌资产)
-│   │           └── layout/       # SpaceSwitcher / Sidebar / TopSearch
+│   │           ├── ui/           # UserAvatar / UserMenu / BrandLogo / ConfirmDialog / IconBtn
+│   │           ├── layout/       # TopBar / TopSearch / Sidebar / PageTree / TocPanel / SpaceSwitcher
+│   │           └── editor/       # RichEditor / EditorToolbar / SlashMenu / BubbleMenu
+│   │                              # + 6 个 NodeView + 6 个 Popover
 │   └── api/                # @power-wiki/api — Hono 后端(8787)
 │       └── src/
-│           ├── index.ts            # Hono entry,CORS + middleware 顺序 + 启动时自动 migrate(dev)
+│           ├── index.ts            # Hono entry,CORS + middleware 顺序 + 启动时自动 migrate + bootstrap
 │           ├── db/
 │           │   ├── schema.ts       # Drizzle schema(7 张表,无 FK)
 │           │   ├── client.ts       # drizzle(pool, { schema })
-│           │   ├── bootstrap.ts    # 启动检测:建 admin + 默认 space + backfill pages.spaceId
-│           │   └── migrations/     # drizzle-kit generate 产物(0000/0001/0002)
+│           │   ├── bootstrap.ts    # 启动检测:建 admin + 默认 space + 给每个用户 ensurePersonalSpace
+│           │   └── migrations/     # drizzle-kit generate 产物(0000/0001/0002/0003/0004)
 │           ├── auth/
 │           │   ├── password.ts     # argon2 hash/verify + initialPassword()
 │           │   ├── session.ts      # createSession / getSession / deleteSession / killSessionsForUser
-│           │   └── middleware.ts   # requireAuth / requireAdmin → Hono 中间件
+│           │   ├── middleware.ts   # requireAuth / requireAdmin → Hono 中间件
+│           │   └── bootstrap.ts    # auth 模块的启动期初始化
 │           ├── routes/
-│           │   ├── auth.ts         # sign-in / sign-out / session / reset-password
-│           │   ├── pages.ts        # 6 路由,GET 自动按可见 space 过滤,POST 必填 spaceId
+│           │   ├── auth.ts         # sign-in / sign-out / session / reset-password(4 路由)
+│           │   ├── pages.ts        # 8 路由(list/trash/get/create/update/move/restore/delete),GET 按可见 space 过滤,POST 必填 spaceId,DELETE 默认软删(`?purge=true` 走硬删)
 │           │   ├── spaces.ts       # GET 当前用户可见 spaces
 │           │   ├── adminUsers.ts   # admin CRUD + disable / enable / reset-password
 │           │   ├── adminGroups.ts  # admin CRUD + addMember / removeMember
-│           │   └── adminSpaces.ts  # admin CRUD + setAccess(整组替换)
+│           │   └── adminSpaces.ts  # admin CRUD + setAccess(整组替换)+ addAccess + removeAccess
 │           └── lib/
 │               ├── rowToPageNode.ts # snake_case row → camelCase PageNode
+│               ├── rowMappers.ts    # 其他表行映射
 │               ├── ids.ts          # isDescendantOrSelf(递归 CTE)+ generateSessionId
-│               └── accessibleSpaceIds.ts # 根据 userId 查可见 space id 列表(join group_members × space_group_access)
+│               ├── accessibleSpaceIds.ts # 根据 userId 查可见 space id 列表(join group_members × space_group_access)
+│               ├── ensurePersonalSpace.ts # 给用户建 personal space + pg-* 组 + 欢迎页
+│               └── personalSpaceGuard.ts  # admin 不能写 personal space 的反向保护
 ├── packages/
 │   └── shared/             # @power-wiki/shared — types + zod + persist keys
 ├── design/                 # 设计原型(只读)
-├── scripts/                # Playwright 验收脚本(已 gitignore)
+├── scripts/                # Playwright 验收脚本(本地用)
 ├── docker-compose.yml      # postgres:16-alpine(5432)
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json      # 跨 workspace 共享 TS 选项
 ├── tsconfig.json           # 根项目引用
-└── package.json            # 顶层:workspaces + 编排脚本
+├── package.json            # 顶层:workspaces + 编排脚本
+├── README.md               # 用户向文档(快速上手 / 功能矩阵 / API 端点)
+├── CHANGELOG.md            # 版本变更历史
+└── CLAUDE.md               # 本文件(给 AI 协作者的详细规约)
 ```
 
 > `apps/web/src/` 即原根目录 src 目录的整体平移(目录搬家,源码内 import 不变)。`@` alias 在 `apps/web/vite.config.ts` 和 `apps/web/tsconfig.app.json` 中继续指向 `apps/web/src`,**源码内 `import '@/...'` 不需要改一个字**。
@@ -83,7 +98,7 @@ docker compose down       # 停 Postgres(数据保留)
 
 ## 技术栈
 
-Vue 3(`<script setup>`)+ TypeScript + Vite 6 + Vue Router 4(hash 模式)+ Pinia(setup store)+ Tiptap 2(StarterKit + 大量官方扩展 + 6 个自定义扩展)+ lowlight/highlight.js + DOMPurify + nanoid。
+Vue 3(`<script setup>`)+ TypeScript + Vite 6 + Vue Router 4(hash 模式)+ Pinia(setup store,4 个 store: pages / ui / auth / spaces)+ Tiptap 2(StarterKit + 大量官方扩展 + 6 个自定义扩展)+ lowlight/highlight.js + DOMPurify + nanoid。
 
 `@` 在 `apps/web/vite.config.ts` 和 `apps/web/tsconfig.app.json` 中都别名指向 `apps/web/src/`。
 
@@ -91,13 +106,24 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
 
 ## 架构
 
-**入口 / 启动** — `apps/web/src/main.ts` 创建 app,安装 Pinia + Router,然后 `router.isReady()` 触发 `pagesStore.init()` 和 `uiStore` 实例化。首次启动时若不存在 `power-wiki:tree-expanded` 则写入空数组。
+**入口 / 启动** — `apps/web/src/main.ts` 创建 app,安装 Pinia + Router,然后 `router.isReady()` 触发 `authStore.init()`(幂等,module-scoped `initRef` 防 HMR 漏)。`pagesStore` / `spacesStore` / `uiStore` 首次访问时初始化。
 
-**路由** — `apps/web/src/router/index.ts`(hash 历史,`scrollBehavior` 优先 `savedPosition` → `to.hash` → 顶部)。路由表:`/`(HomeView)、`/p/:id`(ReadView)、`/p/:id/edit`(EditView)、`/new?parent=:id`(EditView,接收 `parentId` prop)、catch-all 404。
+**路由** — `apps/web/src/router/index.ts`(hash 历史,`scrollBehavior` 优先 `savedPosition` → `to.hash` → 顶部)。完整路由表:
+- `/login` (LoginView) / `/reset-password` (ResetPasswordView) — 公开
+- `/` (HomeView) / `/me` (MySpaceView) / `/p/:id` (ReadView) / `/p/:id/edit` (EditView) / `/new?parent=:id` (EditView) — 需登录
+- `/manager/*` (ManagerLayout + 子路由) — 需 admin
+  - `/manager/people` / `/manager/people/users/:id` / `/manager/people/groups/:id`
+  - `/manager/spaces` / `/manager/spaces/:id`
+  - `/manager/trash`
+  - `/manager/users` / `/manager/users/:id` / `/manager/groups` / `/manager/groups/:id`(back-compat redirect)
+- catch-all 404
+- 守卫顺序:idempotent auth init → public pass-through → mustResetPassword 强制重置 → requiresAdmin 走 NotFound(不暴露 /manager 存在)→ requiresAuth 走 /login。
 
-**状态管理** — `apps/web/src/stores/` 下两个 Pinia setup store:
-- `apps/web/src/stores/pages.ts` — `PageNode[]` 数组,持久化到 `power-wiki:pages`。包含 CRUD(`createPage`、`updatePage`、`deletePage` 通过 `collectDescendantIds` 级联删除子节点、`renamePage`、`movePage` 带循环保护)、树构建(`getTree` 返回排好序的 `TreeNode[]`)、一次性 `migrateEmptyJson()`(为种子页面回填 `contentJSON`、重新打 schema 版本号)。通过 `watch(pages, …, { deep: true })` 自动保存。底部有 `seedPages()` 一次性写入 14 篇种子页面(6 根 + 8 子),覆盖所有编辑器能力。
-- `apps/web/src/stores/ui.ts` — 树节点展开状态(持久化到 `power-wiki:tree-expanded`)、节点上下文菜单(`openMenuId` / `menuPos` — 全树共享,同一时刻只有一个菜单)、重命名状态(`renamingId`)。
+**状态管理** — `apps/web/src/stores/` 下四个 Pinia setup store:
+- `apps/web/src/stores/pages.ts` — `PageNode[]` 数组,业务数据走 API(乐观更新 + 失败回滚)。包含 CRUD(`createPage`、`updatePage`、`softDeletePage` / `restorePage` / `purgePage`、`movePage` 带循环保护)、树构建(`getTree` 返回排好序的 `TreeNode[]`)、本地 `trashed` 状态(由 TrashView 维护)。通过 `api.pages.*` 同步。
+- `apps/web/src/stores/ui.ts` — 树节点展开状态(持久化到 `power-wiki:tree-expanded`)、节点上下文菜单(`openMenuId` / `menuPos` — 全树共享,同一时刻只有一个菜单)、重命名状态(`renamingId`)、全局 error banner。
+- `apps/web/src/stores/auth.ts` — 当前 user / `isAuthed` / `isAdmin` / `needsPasswordReset`、`status: 'idle'|'loading'|'ready'|'error'` 状态机、`init()` 幂等。401 = "未登录"(不报错),其他 = 真的错误。
+- `apps/web/src/stores/spaces.ts` — 可见 space 列表、`activeSpaceId`(持久化到 `power-wiki:active-space`)、`setActive(id)` 触发侧边栏 / 树重新渲染。
 
 **编辑器流水线** — `apps/web/src/components/editor/RichEditor.vue` 用 `useEditor` 挂载扩展(来自 `apps/web/src/editor/extensions.ts`),防抖 800ms 把 `getJSON()` + `getHTML()` emit 给父组件(`apps/web/src/views/EditView.vue`)。`EditView.vue` 持有本地 title/JSON/HTML 引用、`isDirty`、`saveState`;`onMounted` 时若无 `id` 则新建页面,然后 `router.replace` 到 `/p/:id/edit`。"已保存" 提示通过定时器自动隐藏。
 
@@ -117,7 +143,7 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
 
 **阅读视图** — `apps/web/src/views/ReadView.vue` 通过 `v-html`(在 `apps/web/src/lib/sanitize.ts` 中预先 sanitize)渲染 `contentHTML`。`TocPanel.vue` 用 `IntersectionObserver` 做 scroll-spy,点击目录项滚动到锚点;锚点由 `apps/web/src/lib/headingAnchors.ts` 在 `v-html` 渲染后注入(因为 `v-html` 不在 ProseMirror 管辖范围)。
 
-**持久化层**(Stage 2 之后) — `apps/web/src/lib/storage.ts` 暂时保留作为离线降级;页面数据现在由 `apps/api`(Hono)持久化到 Postgres。`apps/web/src/lib/api.ts` 待 Stage 3 引入,封装 `api.pages.list/get/create/update/move/delete`,前端 `stores/pages.ts` 把 `readJSON/writeJSON` 换成 `await api.pages.*`。所有 `power-wiki:*` 前缀的 localStorage key 常量集中在 `packages/shared/src/keys.ts`。
+**持久化层** — 业务数据走 Postgres(经 `apps/api` Hono 路由),前端 `stores/pages.ts` 调 `apps/web/src/lib/api.ts` 的 `api.pages.*`。`apps/web/src/lib/storage.ts` 保留作为离线降级兜底(目前未用)。localStorage 只剩 2 个 key:`power-wiki:tree-expanded`(`ui` store)+ `power-wiki:active-space`(`spaces` store),都集中在 `packages/shared/src/keys.ts`。
 
 **API**(`apps/api`,监听 8787,前端通过 Vite proxy 走 5173/api,所有非 auth/health 路由 `requireAuth`):
 - **Auth**(`/api/auth/*` 不走 requireAuth):
@@ -125,22 +151,27 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
   - `POST /api/auth/sign-out` → 204
   - `GET  /api/auth/session` → 200 `{user, mustResetPassword}` 或 401
   - `POST /api/auth/reset-password` body `{currentPassword,newPassword}` → 200 user
-- **Pages**(`/api/pages`,普通用户自动按可见 space 过滤,admin 看过全部):
-  - `GET    /api/pages` / `GET /api/pages?space=<id>` → `PageNode[]`
+- **Pages**(`/api/pages`,普通用户自动按可见 space 过滤,admin 看全部):
+  - `GET    /api/pages?space=<id>` → `PageNode[]`
+  - `GET    /api/pages/trash?space=<id>` → `PageNode[]`(admin only,软删除列表)
   - `GET    /api/pages/:id` → `PageNode`(404 走 `{"error":"not_found"}`,不可见 space 也返回 404 防越权猜测)
   - `POST   /api/pages` body `{parentId?,title?,icon?,spaceId,...}` → 201 + `PageNode`(spaceId 必填)
   - `PATCH  /api/pages/:id` body `{title?,contentJSON?,contentHTML?,icon?,starred?}` → `PageNode`
   - `PATCH  /api/pages/:id/move` body `{newParentId,newOrder?}` → `PageNode`(409 cycle)
-  - `DELETE /api/pages/:id` → 204(递归 CTE 一次删完整子树,因为 schema 无 FK CASCADE)
+  - `POST   /api/pages/:id/restore` → 恢复软删除页(admin only)
+  - `DELETE /api/pages/:id` → 204 软删除(递归 CTE 一次删完整子树,因为 schema 无 FK CASCADE)
+  - `DELETE /api/pages/:id?purge=true` → 204 硬删除(admin only)
 - **Spaces**(普通用户):
   - `GET /api/spaces` → 当前用户可见 space 列表
   - `GET /api/spaces/:id` → 单个
 - **Admin**(`/api/admin/*` 全部 `requireAdmin`):
-  - `users` / `groups` / `spaces` 三套 CRUD + 各自的成员/访问管理端点
+  - **users**: `GET/POST /`、`GET/PATCH /:id`、`POST /:id/{disable,enable,reset-password}`
+  - **groups**: `GET/POST /`、`GET/PATCH/DELETE /:id`、`POST /:id/members`、`DELETE /:id/members/:userId`
+  - **spaces**: `GET/POST /`、`GET/PATCH/DELETE /:id`、`PUT /:id/access`(整组替换)、`POST /:id/access/:groupId`、`DELETE /:id/access/:groupId`
 
-所有路由用 `apps/api/src/lib/rowToPageNode.ts` 把 Drizzle row(snake_case)转成 `PageNode`(camelCase),再用 `PageNodeSchema.parse(...)` 在响应边界校验 schema 是否和 `@power-wiki/shared` 漂移。move 路由的循环保护走 `apps/api/src/lib/ids.ts` 的 recursive CTE(`isDescendantOrSelf`),一次往返拿到全部后代;DELETE 路由用同模式的 recursive CTE 把整棵子树一次性删除(替代 FK CASCADE,因为 schema 不允许 FK)。
+所有路由用 `apps/api/src/lib/rowToPageNode.ts` / `rowMappers.ts` 把 Drizzle row(snake_case)转成 `PageNode`(camelCase),再用 `PageNodeSchema.parse(...)` 在响应边界校验 schema 是否和 `@power-wiki/shared` 漂移。move 路由的循环保护走 `apps/api/src/lib/ids.ts` 的 recursive CTE(`isDescendantOrSelf`),一次往返拿到全部后代;DELETE 路由用同模式的 recursive CTE 把整棵子树一次性删除(替代 FK CASCADE,因为 schema 不允许 FK)。
 
-**Auth 自研**(理由见 plan):argon2id(`@node-rs/argon2`)+ DB sessions 表 + HTTP-only cookie(`pw_session`, `SameSite=Lax`, 30 天滑动过期)。`auth/session.ts` 的 `killSessionsForUser(userId)` 在 admin 禁用 / 重置密码时被 `adminUsers.ts` 调用,负责清理该用户的所有 session。
+**Auth 自研**(理由见 plan):argon2id(`@node-rs/argon2`)+ DB sessions 表 + HTTP-only cookie(`pw_session`, `SameSite=Lax`, 30 天固定过期,启动时 `purgeExpiredSessions` 清理)。`auth/session.ts` 的 `killSessionsForUser(userId)` 在 admin 禁用 / 重置密码时被调用,负责清理该用户的所有 session。
 
 **设计令牌** — `apps/web/src/styles/tokens.css` 是视觉的唯一事实来源(从原型复制)。`base.css` 是 reset,`components.css` 是组件类。新增颜色/间距必须从这里取 — 不要自己造十六进制色值。
 
@@ -152,7 +183,7 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
 - **不要移动端适配。** 不写 `@media` 断点。`index.html` 的 viewport 锁死 `1280`,全局最小宽度 1280px。仅桌面端。
 - **不要图片功能。** 不接 Tiptap Image 扩展、不做 URL 粘贴、不做文件上传。工具栏和 slash 菜单里都不能出现图片项。
 - **键盘快捷键放开。** Tiptap StarterKit 默认 keymap 全开(格式、撤销重做、列表、引用、代码块等)。仅 Cmd/Ctrl+S 拦截以防浏览器「保存网页」对话框。
-- 暂时不要文档协同
+- **暂时不要文档协同。** Yjs / y-prosemirror / y-tiptap 依赖已装,留待未来启用。
 - **Drizzle schema 不许用外键约束。** `apps/api/src/db/schema.ts` 里所有表都不写 `.references()`,所有 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` 类的 DDL 都不写。级联删除必须显式在路由里完成:
   - 删 page 子树 → `pages.ts` DELETE 走 recursive CTE
   - 删 group → `adminGroups.ts` DELETE 在事务里先扫 `userGroupMembers` + `spaceGroupAccess`
@@ -169,12 +200,12 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
 - 焦点环:仅键盘聚焦时显示(`#4C9AFF`),鼠标点击不出现。
 - 图标:`material-symbols-outlined`。字体:Plus Jakarta Sans + PingFang SC 后备 + JetBrains Mono。
 
-## 启动顺序(Stage 4 起)
+## 启动顺序
 
 1. `docker compose up -d`(Postgres 5432)
 2. 首次启动前确认 `apps/api/.env` 有 `ADMIN_EMAIL` + `ADMIN_PASSWORD`(首次启动用 env 建 admin,若 users 表为空却缺 env 则启动失败)
-3. `pnpm dev`(同时起 web 5173 + api 8787,API 启动时会自动 `db:migrate` + `db/bootstrap.ts`)
-4. 浏览器访问 `http://127.0.0.1:5173` → 自动跳 `/login` → admin 登录 → `/manager/users` 创用户 → 复制初始密码 → 隐身窗口用新用户登录(强制重置)→ 进首页
+3. `pnpm dev`(同时起 web 5173 + api 8787,API 启动时会自动 `db:migrate` + `db/bootstrap.ts`,给每个无 personal space 的用户跑 `ensurePersonalSpace`)
+4. 浏览器访问 `http://127.0.0.1:5173` → 自动跳 `/login` → admin 登录 → `/manager/people` 创用户 → 复制初始密码 → 隐身窗口用新用户登录(强制重置)→ 进首页
 
 ## 验收脚本
 
