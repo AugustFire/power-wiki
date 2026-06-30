@@ -157,3 +157,18 @@ export type { PersistKey } from './keys'
  * 源 schema 在 `./schemas.ts`,这里是纯类型转发。
  */
 export type { Paginated, PaginatedQuery } from './schemas'
+
+/**
+ * Stage 6 (评论 / @mention / 通知) — 全部走 z.infer 转发,
+ * 源 schema 一处定义、单一事实来源。这样 schema 字段增减时 types 自动跟随,
+ * 不会出现"两个文件不同步"。
+ */
+export type {
+  Comment,
+  MentionCandidate,
+  Notification,
+  CreateCommentInput,
+  UpdateCommentInput,
+  MarkReadInput,
+  MentionCandidatesQuery,
+} from './schemas'

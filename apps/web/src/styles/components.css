@@ -659,21 +659,39 @@
 .reaction-pill:hover { background: var(--bg-subtle); }
 .reaction-pill.add { color: var(--text-3); border-style: dashed; }
 
-/* comments */
-.comments {
-    margin-top: 32px;
-    padding-top: 24px;
-    border-top: 1px solid var(--border);
+/* =========================
+   Comments (Stage 6)
+   =========================
+   The legacy `.comments { … }` + `.comment-input { … }` rules were removed:
+   the dead code in ReadView.vue line 278 was upgraded to the live
+   <CommentsSection> component, which scopes its own styles. The Tail of
+   this file used to terminate the dead section with one blank line. */
+
+/* @mention chip (Stage 6) — single source of truth across all three render
+   paths: Tiptap editor live (MentionView.vue NodeView), saved HTML read by
+   ReadView.vue via v-html, and CommentItem.vue wrapping typed `@name`
+   references. The three paths used to have three divergent declarations;
+   consolidated here so the chip looks identical everywhere. */
+.mention-chip {
+  display: inline-block;
+  padding: 0 6px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background: rgba(0, 82, 204, 0.12);
+  color: var(--accent, #0052cc);
+  font-weight: 600;
+  cursor: default;
+  user-select: all;
+  text-decoration: none;
+  white-space: nowrap;
 }
-.comment-input {
-    width: 100%;
-    min-height: 80px;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--text-1);
-    resize: vertical;
+.mention-chip[data-mention="0"] {
+  /* CommentItem wraps any `@xxx` literally found in markdown for visual hint
+   * even when the user isn't in mentionedUserIds. The dim style hints
+   * "this is just text, not a real notification target". */
+  background: transparent;
+  color: var(--text-2, #42526e);
+  font-weight: 500;
 }
 
 /* =========================

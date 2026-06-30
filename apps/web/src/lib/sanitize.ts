@@ -44,6 +44,8 @@ const ALLOWED_ATTR = [
   'datetime', // <time datetime="..."> 行内日期扩展用
   'data-date-mode', // DateInline:now / fixed 模式标记
   'data-date', // DateInline:ISO 时间冗余存储(DOMPurify 友好)
+  'data-user-id', // @mention(Stage 6):mention 节点的 userId,read 端解析 + 通知跳转锚点
+  'data-label', // @mention(Stage 6):显示用 label(DOMPurify 友好形式)
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等

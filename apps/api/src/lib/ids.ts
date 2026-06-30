@@ -47,3 +47,26 @@ export async function isDescendantOrSelf(targetId: string, candidateAncestorId: 
   const first = rows.rows[0]
   return first?.ok === true
 }
+
+/**
+ * Returns every page id in the subtree rooted at `rootId` (root included).
+ *
+ * Used by `pages` DELETE purges (Stage 5 + Stage 6) to cascade comments
+ * and notifications in one transaction. Keeps the recursive walk out of
+ * route handlers — same query as `isDescendantOrSelf` but materializes
+ * all ids, not just an existence check.
+ *
+ * Returns an empty array if `rootId` doesn't exist (handler should
+ * treat that as 404).
+ */
+export async function getPageSubtree(rootId: string): Promise<string[]> {
+  const rows = await db.execute<{ id: string }>(sql`
+    WITH RECURSIVE subtree AS (
+      SELECT id FROM pages WHERE id = ${rootId}
+      UNION ALL
+      SELECT p.id FROM pages p INNER JOIN subtree s ON p.parent_id = s.id
+    )
+    SELECT id FROM subtree
+  `)
+  return rows.rows.map((r) => r.id)
+}

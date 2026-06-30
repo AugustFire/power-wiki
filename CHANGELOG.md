@@ -9,7 +9,25 @@
 
 ## [Unreleased]
 
+### Added
+- **Stage 6: 评论 / @mention / 通知**:`comments` + `notifications` 两张表 + 5 + 4 个端点
+  - **评论区**:嵌在 `ReadView` 末尾(替换原死代码 `<div class="comments">`);`/api/comments?pageId=X` 列表 + POST / PATCH / DELETE;支持二级嵌套(顶 + replies);v0 内嵌 section,v0.1 可升级右抽屉(uiStore 预留 `commentsOpen/commentsPageId` state)
+  - **@mention**:Tiptap `Mention` 扩展 + Suggestion 弹层;`@` 触发,**候选人限定为该 page 所在 space 的访问组成员**(`space_group_access × user_group_members × users WHERE status='active'`,符合用户硬约束);SlashMenu 加 `mention` item
+  - **Bell 通知**:TopBar `.topbar-right` 加 `<NotificationBell />`(在 `<UserMenu />` 之前);badge 红点 + 弹层前 N 条预览;30s 轮询 `unread-count`(`useNotifications` 模块级 composable + Pinia store,照 `useManagerStats` 范式);`/notifications` 顶级 view 列出全部;`/api/notifications`:`list` / `unread-count` / `mark-read` / `clear-all`,**只看自己的(`WHERE user_id=me.id`,无 admin bypass)**
+  - **通知触发**:`POST /api/comments` 同一事务内调 `enqueueNotifications(tx, ...)`;三种 kind `mention` / `reply` / `comment_on_my_page`,作者与目标相同时不发;`enqueueNotifications` 是写 notifications 的唯一入口
+  - **删除级联**:`DELETE /api/pages/:id?purge=true` 扩成 recursive CTE 扫 `notifications` + `comments` + `pages`(`getPageSubtree` 三表三步 transaction);`stripeMarkdown` 在写时抽 `content_text`,通知预览直接读
+- **新依赖**:`@tiptap/suggestion@2.27.2`(2.x 跟现有 tiptap core 对齐)
+- **新 lib**:`apps/api/src/lib/{mentionCandidates, stripMarkdown, notify, commentGuards, commentRowMappers}.ts`;`ids.ts` 加 `getPageSubtree`
+
+### Security
+- 评论 / 通知的可见性完整沿用 pages 404-not-403 策略 + `assertAdminNotWritingPersonalSpace`:admin 对 personal space 的 page 评论被拦为 `personal_space_readonly`
+- mention 候选人 = 当前 page space 的访问组成员并集去重,前端 composer 再 `actor !== self` 过滤;后端 POST 在事务前 re-verify,伪造的 mention userId 会被丢弃
+
 ### Changed
+- `apps/api/src/db/schema.ts`:加 `comments` + `notifications` 表 + RowTypes;`pnpm -F api db:generate` 出 `0005_cheerful_starjammers.sql`(无 FK,索引齐全)
+- `packages/shared/src/schemas.ts` / `types.ts`:加 `Comment` / `Notification` / `MentionCandidate` + 4 个 Input + `MarkReadInput` + `UnreadCountResponseSchema`,类型走 `z.infer` 重导出
+- `apps/web/src/lib/api.ts` 增 `api.comments.*` + `api.notifications.*` namespace
+- `apps/web/src/styles/components.css` 删 `.comments` / `.comment-input` 死样式
 - 修正过期文档(README / CLAUDE.md / CHANGELOG):去除文档里的旧里程碑编号,改写为"功能 + 状态"描述;token 速查表与 `tokens.css` 对齐;补全 admin / manager 章节;API 端点列表与代码 1:1
 
 ---

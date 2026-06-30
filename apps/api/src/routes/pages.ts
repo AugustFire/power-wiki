@@ -48,9 +48,9 @@ import {
   MovePageInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { pages, spaces, users } from '../db/schema'
+import { pages, spaces, users, comments as commentsTable, notifications as notificationsTable } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
-import { generatePageId, isDescendantOrSelf } from '../lib/ids'
+import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
@@ -560,19 +560,21 @@ pagesRouter.delete('/:id', async (c) => {
     if (existing.deletedAt == null) {
       return c.json({ error: 'not_trashed' }, 409)
     }
-    // Recursive CTE: hard-delete the subtree (admin-only path). The CTE
-    // doesn't filter deleted_at because an admin purging a parent may
-    // also be purging descendants that were individually trashed.
-    const result = await db.execute<{ deleted: number }>(sql`
-      WITH RECURSIVE subtree AS (
-        SELECT id FROM pages WHERE id = ${id}
-        UNION ALL
-        SELECT p.id FROM pages p INNER JOIN subtree s ON p.parent_id = s.id
-      )
-      DELETE FROM pages WHERE id IN (SELECT id FROM subtree)
-    `)
-    const deleted = (result as unknown as { rowCount?: number }).rowCount ?? 0
-    if (deleted === 0) return c.json({ error: 'not_found' }, 404)
+    // Stage 6 extension: page purge must also wipe its comments and
+    // notifications. The id join uses `getPageSubtree` (Stage 5 recursive
+    // CTE) so descendants that were individually trashed earlier still
+    // belong to this root and get wiped too.
+    const subtreeIds = await getPageSubtree(id)
+    if (subtreeIds.length === 0) return c.json({ error: 'not_found' }, 404)
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(notificationsTable)
+        .where(inArray(notificationsTable.pageId, subtreeIds))
+      await tx
+        .delete(commentsTable)
+        .where(inArray(commentsTable.pageId, subtreeIds))
+      await tx.delete(pages).where(inArray(pages.id, subtreeIds))
+    })
     return c.body(null, 204)
   }
 

@@ -7,6 +7,7 @@ import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useActivePageId } from '@/composables/useActivePageId'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
@@ -17,6 +18,7 @@ const props = defineProps<{ id?: string; parentId?: string | null }>()
 const pagesStore = usePagesStore()
 const router = useRouter()
 const { confirm } = useConfirm()
+const { set: setActivePageId } = useActivePageId()
 
 const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
@@ -58,6 +60,11 @@ onMounted(async () => {
       localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
       localHTML.value = p.contentHTML ?? EMPTY_HTML
       isDirty.value = false
+      // Stage 6: make this page id available to the Mention extension's
+      // Suggestion plugin so @-mentions resolve against THIS page's space,
+      // not the last-edited page. We re-set it whenever localId changes too
+      // (see watch below) so PATCH-then-replace-title flows stay correct.
+      setActivePageId(p.id)
       // 进入编辑页直接聚焦标题,用户不用先点一下
       // 等下一帧让 Tiptap 完成挂载,避免抢焦点导致 editor blur
       requestAnimationFrame(() => titleInputRef.value?.focus())
@@ -72,6 +79,7 @@ onMounted(async () => {
   const clientId = newId()
   localId.value = clientId
   localTitle.value = DEFAULT_TITLE
+  setActivePageId(clientId)
   router.replace(`/p/${clientId}/edit`)
   // 编辑器立刻可用
   requestAnimationFrame(() => titleInputRef.value?.focus())
@@ -233,6 +241,10 @@ watch([localTitle, localJSON, localHTML], () => {
 onBeforeUnmount(() => {
   if (saveTimer) window.clearTimeout(saveTimer)
   if (savedHideTimer) window.clearTimeout(savedHideTimer)
+  // Stage 6: clear active page id so a stray Suggestion that fires after
+  // route unmount (e.g. async callback still pending) sees an empty id and
+  // bails out instead of polluting the next page's Mention candidates.
+  setActivePageId(null)
 })
 </script>
 

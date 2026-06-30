@@ -20,34 +20,47 @@
  */
 
 import {
+  CommentSchema,
+  CreateCommentInputSchema,
   CreatePageInputSchema,
+  MarkReadInputSchema,
+  MentionCandidateSchema,
+  NotificationSchema,
   PageNodeSchema,
   PaginatedListSchema,
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
+  UnreadCountResponseSchema,
+  UpdateCommentInputSchema,
   UserGroupSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import type {
+  Comment,
+  CreateCommentInput,
+  CreateGroupInput,
   CreatePageInput,
+  CreateSpaceInput,
+  CreateUserInput,
+  MarkReadInput,
+  MentionCandidate,
   MovePageInput,
+  Notification,
   PageNode,
   Paginated,
   PaginatedQuery,
   ResetPasswordInput,
+  SetSpaceAccessInput,
   SignInInput,
   Space,
+  UpdateCommentInput,
+  UpdateGroupInput,
   UpdatePageInput,
+  UpdateSpaceInput,
+  UpdateUserInput,
   User,
   UserGroup,
-  CreateUserInput,
-  UpdateUserInput,
-  CreateGroupInput,
-  UpdateGroupInput,
-  CreateSpaceInput,
-  UpdateSpaceInput,
-  SetSpaceAccessInput,
 } from '@power-wiki/shared'
 
 export class ApiError extends Error {
@@ -607,6 +620,98 @@ export const api = {
         invalidatePrefix('/admin/spaces')
         return SpaceSchema.parse(s) as Space
       },
+    },
+  },
+
+  /**
+   * Stage 6 — Comments. List returns a flat array of top-level comments with
+   * embedded `replies: Comment[]` (NOT `Paginated<Comment>`) — see
+   * apps/api/src/routes/comments.ts GET /. The border parse uses an inline
+   * schema because the embedded-replies shape isn't a registered export yet;
+   * if the backend ever flips back to a flat paginated list, swap to
+   * PaginatedListSchema(CommentSchema).
+   */
+  comments: {
+    list: async (pageId: string, q?: PaginatedQuery): Promise<{
+      items: (Comment & { replies: Comment[] })[]
+      limit: number
+      offset: number
+      hasMore: boolean
+    }> => {
+      const params = new URLSearchParams({ pageId })
+      if (q?.limit !== undefined) params.set('limit', String(q.limit))
+      if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      const raw = await request<{
+        items: (Comment & { replies?: Comment[] })[]
+        limit: number
+        offset: number
+        hasMore: boolean
+      }>(`/comments?${params.toString()}`)
+      return {
+        items: raw.items.map((c) => ({ ...CommentSchema.parse(c), replies: c.replies ?? [] })),
+        limit: raw.limit,
+        offset: raw.offset,
+        hasMore: raw.hasMore,
+      }
+    },
+    mentionCandidates: async (pageId: string, query = ''): Promise<MentionCandidate[]> => {
+      const params = new URLSearchParams({ pageId })
+      if (query) params.set('q', query)
+      const raw = await request<unknown[]>(`/comments/mention-candidates?${params.toString()}`)
+      return raw.map((c) => MentionCandidateSchema.parse(c) as MentionCandidate)
+    },
+    create: async (input: CreateCommentInput): Promise<Comment> => {
+      const parsed = CreateCommentInputSchema.parse(input)
+      const r = await request<Comment>('/comments', { method: 'POST', body: JSON.stringify(parsed) })
+      invalidatePrefix('/pages')
+      return CommentSchema.parse(r) as Comment
+    },
+    update: async (id: string, input: UpdateCommentInput): Promise<Comment> => {
+      const parsed = UpdateCommentInputSchema.parse(input)
+      const r = await request<Comment>(`/comments/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(parsed),
+      })
+      invalidatePrefix('/pages')
+      return CommentSchema.parse(r) as Comment
+    },
+    delete: async (id: string): Promise<void> => {
+      await request<void>(`/comments/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      invalidatePrefix('/pages')
+    },
+  },
+
+  /**
+   * Stage 6 — Notifications. Recipient-private (no admin bypass). Bell poll
+   * uses `unreadCount()` on a 30s interval from useNotifications composable.
+   * `list` includes read rows so users can scroll their history.
+   */
+  notifications: {
+    list: (q?: PaginatedQuery): Promise<Paginated<Notification>> => {
+      const params = new URLSearchParams()
+      if (q?.limit !== undefined) params.set('limit', String(q.limit))
+      if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      return getManyPaginated(`/notifications${qs}`, NotificationSchema)
+    },
+    unreadCount: async (): Promise<{ count: number }> => {
+      const r = await request<{ count: number }>('/notifications/unread-count')
+      return UnreadCountResponseSchema.parse(r) as { count: number }
+    },
+    markRead: async (input: MarkReadInput): Promise<void> => {
+      const parsed = MarkReadInputSchema.parse(input)
+      await request<void>('/notifications/mark-read', {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+      })
+      invalidatePath('GET', '/notifications')
+    },
+    clearAll: async (): Promise<{ deleted: number }> => {
+      const r = await request<{ deleted: number }>('/notifications/clear-all', {
+        method: 'POST',
+      })
+      invalidatePath('GET', '/notifications')
+      return r
     },
   },
 } as const

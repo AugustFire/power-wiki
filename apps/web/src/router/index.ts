@@ -68,6 +68,16 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
+  // ─── Notifications inbox (Stage 6) ──────────────────────────────
+  // User-level page (not under /manager because regular users also have
+  // notifications). 平级 `/p/:id`, requiresAuth only — no admin gate.
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('@/views/NotificationsView.vue'),
+    meta: { requiresAuth: true },
+  },
+
   // ─── Manager (admin-only, Stage 4b+) ─────────────────────────────
   // Layout renders the subnav; children render the section content.
   {

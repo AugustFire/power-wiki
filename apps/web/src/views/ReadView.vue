@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import CommentsSection from '@/components/comments/CommentsSection.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -275,10 +276,9 @@ watch(
               </button>
             </div>
 
-            <div class="comments">
-              <div class="subpages-title">评论</div>
-              <textarea class="comment-input" placeholder="添加评论…" disabled></textarea>
-            </div>
+            <!-- Stage 6: live comments section (replaces the prior dead
+                 `<div class="comments">…<textarea disabled>` placeholder). -->
+            <CommentsSection v-if="page" :page-id="page.id" />
           </div>
           <div v-else class="empty">
             <div class="empty-icon">

@@ -9,11 +9,17 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
+import { useNotifications } from '@/composables/useNotifications'
 
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
 const authStore = useAuthStore()
 const route = useRoute()
+
+// Stage 6: kick off the notifications composable so it installs its
+// `watch(auth.isAuthed)` once — login → startPolling, logout → invalidate.
+// The composable is idempotent; multiple call sites can invoke it.
+useNotifications()
 
 const { topSearchOpen, error } = storeToRefs(uiStore)
 const { loading, loaded, loadError } = storeToRefs(pagesStore)

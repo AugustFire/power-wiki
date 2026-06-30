@@ -27,6 +27,8 @@ import { db, pool } from './db/client'
 import { pagesRouter } from './routes/pages'
 import { authRouter } from './routes/auth'
 import { spacesRouter } from './routes/spaces'
+import { commentsRouter } from './routes/comments'
+import { notificationsRouter } from './routes/notifications'
 import { adminUsersRouter } from './routes/adminUsers'
 import { adminGroupsRouter } from './routes/adminGroups'
 import { adminSpacesRouter } from './routes/adminSpaces'
@@ -57,6 +59,8 @@ app.use('/api/*', requireAuth)
 
 app.route('/api/pages', pagesRouter)
 app.route('/api/spaces', spacesRouter)
+app.route('/api/comments', commentsRouter)
+app.route('/api/notifications', notificationsRouter)
 app.route('/api/admin/users', adminUsersRouter)
 app.route('/api/admin/groups', adminGroupsRouter)
 app.route('/api/admin/spaces', adminSpacesRouter)

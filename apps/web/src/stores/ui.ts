@@ -22,6 +22,15 @@ export const useUiStore = defineStore('ui', () => {
   // null = 无错误。多次 setError 取最后一次。
   const error = ref<string | null>(null)
 
+  /**
+   * Stage 6 — Comments drawer state (预留 v0.1,当前 v0 直接嵌 section)。
+   * 全局共享,任何 view 都能唤起评论侧栏。`commentsPageId` 保留在关后
+   * 以便再次打开不丢失上下文。组件路径:
+   *   apps/web/src/components/comments/CommentsSection.vue
+   */
+  const commentsPageId = ref<string | null>(null)
+  const commentsOpen = ref(false)
+
   function isExpanded(id: string): boolean {
     return expanded.value.includes(id)
   }
@@ -72,6 +81,14 @@ export const useUiStore = defineStore('ui', () => {
     error.value = null
   }
 
+  function openComments(pageId: string): void {
+    commentsPageId.value = pageId
+    commentsOpen.value = true
+  }
+  function closeComments(): void {
+    commentsOpen.value = false
+  }
+
   return {
     expanded,
     openMenuId,
@@ -91,5 +108,9 @@ export const useUiStore = defineStore('ui', () => {
     closeTopSearch,
     setError,
     clearError,
+    commentsPageId,
+    commentsOpen,
+    openComments,
+    closeComments,
   }
 })

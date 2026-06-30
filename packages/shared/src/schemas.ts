@@ -179,6 +179,102 @@ export const SetSpaceAccessInputSchema = z.object({
   groupIds: z.array(z.string()),
 })
 
+/* ---------- Comments / Notifications (Stage 6) ---------- */
+
+/** 单条评论 — 响应 DTO。
+ *
+ * `mentionedUserIds` 是「该评论内 @ 提及的所有用户 id 列表」,也是触发
+ * notifications 的唯一来源;前端 composer 在提交时抽一次给后端。 */
+export const CommentSchema = z.object({
+  id: z.string().min(1),
+  pageId: z.string().min(1),
+  parentId: z.string().min(1).nullable(),
+  authorId: z.string().min(1),
+  contentMd: z.string().min(1).max(8000),
+  contentText: z.string().min(1).max(2000),
+  mentionedUserIds: z.array(z.string()),
+  isEdited: z.boolean(),
+  editedAt: z.number().int().positive().nullable(),
+  createdAt: z.number().int().positive(),
+  updatedAt: z.number().int().positive(),
+  /** LEFT JOIN users 填充;authorId='me' 或 user 已 disabled 时为 null */
+  authorName: z.string().nullable(),
+  authorColor: z.string().nullable(),
+})
+
+/** @mention 候选人(GET /api/comments/mention-candidates) —
+ *  限定为 page 所在 space 的访问组成员,见 apps/api/src/lib/mentionCandidates.ts */
+export const MentionCandidateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(64),
+  color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/),
+  email: z.string().email(),
+})
+
+/** 单条通知 — 响应 DTO。
+ *
+ * 通知是 recipient-private:WHERE user_id=me.id 强约束,没有 admin bypass。 */
+export const NotificationSchema = z.object({
+  id: z.string().min(1),
+  userId: z.string().min(1),
+  actorId: z.string().min(1),
+  actorName: z.string().nullable(),
+  actorColor: z.string().nullable(),
+  kind: z.enum(['mention', 'reply', 'comment_on_my_page']),
+  pageId: z.string().min(1),
+  pageTitle: z.string().nullable(),
+  commentId: z.string().min(1).nullable(),
+  mentionUserId: z.string().min(1).nullable(),
+  isRead: z.boolean(),
+  readAt: z.number().int().positive().nullable(),
+  createdAt: z.number().int().positive(),
+})
+
+/** POST /api/comments 入参 */
+export const CreateCommentInputSchema = z.object({
+  pageId: z.string().min(1),
+  /** 二级嵌套:parentId 非空 = 当前评论是某条评论的回复;
+   *  后端校验 parentId 必须属于 pageId(否则 400)。v0 不支持更深嵌套。 */
+  parentId: z.string().min(1).nullable().optional(),
+  contentMd: z.string().min(1).max(8000),
+  /** 可选:composer 在提交前抽一次 @ mention;后端**仍需** re-verify
+   *  候选是否在 mention-candidates 结果集中(防止伪造)。 */
+  mentionedUserIds: z.array(z.string()).max(50).optional(),
+})
+
+/** PATCH /api/comments/:id 入参 */
+export const UpdateCommentInputSchema = z
+  .object({
+    contentMd: z.string().min(1).max(8000).optional(),
+    mentionedUserIds: z.array(z.string()).max(50).optional(),
+  })
+  .refine(
+    (data) => Object.values(data).some((v) => v !== undefined),
+    { message: '至少需要更新一个字段' },
+  )
+
+/** GET /api/comments/mention-candidates?pageId=X&q=Y 入参 */
+export const MentionCandidatesQuerySchema = z.object({
+  pageId: z.string().min(1),
+  q: z.string().max(64).optional(),
+})
+
+/** POST /api/notifications/mark-read 入参 */
+export const MarkReadInputSchema = z
+  .object({
+    ids: z.array(z.string()).max(500).optional(),
+    all: z.boolean().optional(),
+  })
+  .refine(
+    (data) => (data.ids && data.ids.length > 0) || data.all === true,
+    { message: 'ids 或 all 二选一必填' },
+  )
+
+/** GET /api/notifications/unread-count 响应 */
+export const UnreadCountResponseSchema = z.object({
+  count: z.number().int().nonnegative(),
+})
+
 /* ---------- API 输入 schema(请求体) ---------- */
 
 /** POST /api/pages 入参 */
@@ -274,3 +370,12 @@ export type UpdateGroupInput = z.infer<typeof UpdateGroupInputSchema>
 export type CreateSpaceInput = z.infer<typeof CreateSpaceInputSchema>
 export type UpdateSpaceInput = z.infer<typeof UpdateSpaceInputSchema>
 export type SetSpaceAccessInput = z.infer<typeof SetSpaceAccessInputSchema>
+
+/* ---------- Stage 6 type exports ---------- */
+export type Comment = z.infer<typeof CommentSchema>
+export type MentionCandidate = z.infer<typeof MentionCandidateSchema>
+export type Notification = z.infer<typeof NotificationSchema>
+export type CreateCommentInput = z.infer<typeof CreateCommentInputSchema>
+export type UpdateCommentInput = z.infer<typeof UpdateCommentInputSchema>
+export type MentionCandidatesQuery = z.infer<typeof MentionCandidatesQuerySchema>
+export type MarkReadInput = z.infer<typeof MarkReadInputSchema>

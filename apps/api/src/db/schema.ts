@@ -1,8 +1,9 @@
 /**
  * Drizzle schema for power-wiki's Postgres database.
  *
- * Stage 4 scope: pages + users + sessions + user_groups + user_group_members
- * + spaces + space_group_access.
+ * Stage 4 + Stage 5 scope: pages + users + sessions + user_groups +
+ * user_group_members + spaces + space_group_access +
+ * Stage 6: comments + notifications.
  *
  * Naming convention:
  *   - DB columns: snake_case (matches Postgres convention)
@@ -20,6 +21,11 @@
  * `pages.author_id` is also a free-form string by design — older seed pages
  * may have authorId='me' which isn't a real user id, and the frontend renders
  * whatever string is there.
+ *
+ * Stage 6 (comments / notifications): same no-FK rule. The cascade graph for
+ * page purge is handled in apps/api/src/routes/pages.ts DELETE via a single
+ * recursive CTE — page subtree + its comments + its notifications all wipe
+ * in one statement.
  */
 
 import type { TiptapJSON } from '@power-wiki/shared'
@@ -190,6 +196,124 @@ export const pages = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Comments — Stage 6
+ *  Top-level + 1-level replies (parentId nullable). Markdown v0; the
+ *  content_text snapshot is what the notification preview shows.
+ *  Soft-deletable; writes are gated by canAccessSpace + the admin
+ *  personal-space guard (see lib/comments/guards.ts).
+ * ───────────────────────────────────────────────────────────────── */
+
+export const comments = pgTable(
+  'comments',
+  {
+    id: text('id').primaryKey(),
+
+    /** No FK — cascade from page is handled in pages.ts DELETE (recursive CTE). */
+    pageId: text('page_id').notNull(),
+
+    /** No FK — replies nest 1 level deep (top-level comments only have replies,
+     *  replies have no replies of their own in v0; further nesting dropped). */
+    parentId: text('parent_id'),
+
+    /** No FK — authorId may be a free-form legacy id like 'me'; UI handles it. */
+    authorId: text('author_id').notNull(),
+
+    /** Markdown body. v0 has no toolbar; the composer is plain markdown. */
+    contentMd: text('content_md').notNull(),
+
+    /** Plain-text snapshot of content_md (markdown stripped). Stored on write so
+     *  notification previews don't have to re-parse markdown at render time. */
+    contentText: text('content_text').notNull(),
+
+    /** The ONLY source of truth for "@userId" mentions on this comment.
+     *  Notifications are generated from this column via enqueueNotifications();
+     *  this avoids the alternative of a mentions sub-table while keeping the
+     *  trigger logic read-once simple. Vulnerability: concurrent PATCH of two
+     *  different mentions is last-write-wins — accepted for v0 (rare case). */
+    mentionedUserIds: jsonb('mentioned_user_ids')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+
+    isEdited: boolean('is_edited').notNull().default(false),
+    editedAt: bigint('edited_at', { mode: 'number' }),
+
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+
+    /** Soft delete — author or admin may delete; the row stays so existing
+     *  notifications pointing at it don't lose their anchor (UI degrades to
+     *  page-level link if comment_id no longer resolves). */
+    deletedAt: bigint('deleted_at', { mode: 'number' }),
+    deletedBy: text('deleted_by'),
+  },
+  (t) => [
+    index('comments_page_idx').on(t.pageId, t.createdAt),
+    index('comments_parent_idx').on(t.parentId),
+    index('comments_author_idx').on(t.authorId),
+    index('comments_page_live_idx').on(t.pageId, t.deletedAt),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
+ *  Notifications — Stage 6
+ *  One row per (recipient, event). Three event kinds:
+ *    - 'mention'           → recipient was @mentioned in a comment
+ *    - 'reply'             → recipient's comment got a reply
+ *    - 'comment_on_my_page'→ recipient is the page author; a top-level
+ *                            comment was added
+ *  Reads are filtered by userId === current user; there is no admin
+ *  bypass. 30s poll for unread-count on the frontend (see
+ *  composables/useNotifications.ts); SSE is v0.1.
+ * ───────────────────────────────────────────────────────────────── */
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+
+    /** recipient — notification is private; NEVER queryable by anyone else. */
+    userId: text('user_id').notNull(),
+
+    /** actor — the person whose action triggered this notification
+     *  (LEFT JOIN users on read to populate actorName/actorColor). */
+    actorId: text('actor_id').notNull(),
+
+    kind: text('kind', {
+      enum: ['mention', 'reply', 'comment_on_my_page'],
+    }).notNull(),
+
+    /** Landing target — clicking the notification jumps to /p/{pageId}
+     *  with optional #comment-{commentId} hash. */
+    pageId: text('page_id').notNull(),
+    /** Snapshot of the page title at trigger time — renamed pages don't
+     *  retroactively rewrite notification history (Slack/Discord behavior). */
+    pageTitle: text('page_title'),
+
+    /** null for kind='comment_on_my_page' is possible but we always carry it
+     *  to keep "jump to comment" UX consistent. */
+    commentId: text('comment_id'),
+
+    /** Filled only for kind='mention' — equals one of the mentioned_user_ids
+     *  in the triggering comment. Null for reply / comment_on_my_page. */
+    mentionUserId: text('mention_user_id'),
+
+    isRead: boolean('is_read').notNull().default(false),
+    readAt: bigint('read_at', { mode: 'number' }),
+
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    /** Hot path for the bell badge: WHERE user_id=? AND is_read=false. */
+    index('notifications_user_unread_idx').on(t.userId, t.isRead, t.createdAt),
+    /** Hot path for the notifications list page (ORDER BY created_at DESC). */
+    index('notifications_user_created_idx').on(t.userId, t.createdAt),
+    /** Cascade path: page purge scans notifications WHERE page_id IN subtree. */
+    index('notifications_page_idx').on(t.pageId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -203,3 +327,7 @@ export type SpaceRow = typeof spaces.$inferSelect
 export type NewSpaceRow = typeof spaces.$inferInsert
 export type PageRow = typeof pages.$inferSelect
 export type NewPageRow = typeof pages.$inferInsert
+export type CommentRow = typeof comments.$inferSelect
+export type NewCommentRow = typeof comments.$inferInsert
+export type NotificationRow = typeof notifications.$inferSelect
+export type NewNotificationRow = typeof notifications.$inferInsert

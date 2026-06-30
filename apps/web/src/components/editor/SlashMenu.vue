@@ -130,6 +130,18 @@ const items: SlashItem[] = [
       // 由 onSelectIndex 打开 date picker
     },
   },
+  {
+    id: 'mention',
+    label: '提及成员',
+    description: '@ 提及本页访问组成员',
+    icon: 'alternate_email',
+    run: (e) => {
+      // 写入触发符让 Mention 扩展的 Suggestion 接管后续候选;不能直接
+      // insertContent({type:'mention'}) — 那需要 userId/label 两个 attr,
+      // 而 Suggestion 才是填这两个值的入口。
+      return e.chain().focus().insertContent('@').run()
+    },
+  },
 ]
 
 const open = ref(false)

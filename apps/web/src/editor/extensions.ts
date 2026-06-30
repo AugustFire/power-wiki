@@ -23,6 +23,7 @@ import { Callout } from './calloutExtension'
 import { Toggle } from './toggleExtension'
 import { PageRef } from './pageRefExtension'
 import { DateInline } from './dateInlineExtension'
+import { Mention } from './mentionExtension'
 
 /**
  * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
@@ -235,6 +236,8 @@ const extensions = [
   PageRef,
   // 行内日期/时间:in-text 节点,now 模式每分钟重算,fixed 模式显示固定日期
   DateInline,
+  // @mention:inline atom,@ 触 Suggestion,在当前 page 的 space 访问组里挑人
+  Mention,
 ]
 
 export default extensions
