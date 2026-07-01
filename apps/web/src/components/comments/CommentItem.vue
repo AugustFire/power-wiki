@@ -21,6 +21,7 @@
 import { ref, computed } from 'vue'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsComposer from './CommentsComposer.vue'
 import type { Comment } from '@power-wiki/shared'
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const { confirm } = useConfirm()
 const me = computed(() => auth.user)
 const canModify = computed(
   () => !!me.value && (me.value.id === props.comment.authorId || me.value.role === 'admin'),
@@ -98,7 +100,15 @@ function renderBody(): string {
 
 async function onDelete(): Promise<void> {
   menuOpen.value = false
-  if (!confirm('删除这条评论?')) return
+  // 自研 confirm 弹窗 — 跟全站 admin 操作的删除确认一致(同一个 ConfirmDialog)
+  const ok = await confirm({
+    title: '删除这条评论?',
+    message: '评论及其回复会一并删除,且无法恢复。',
+    danger: true,
+    confirmText: '删除',
+    cancelText: '取消',
+  })
+  if (!ok) return
   error.value = null
   try {
     await api.comments.delete(props.comment.id)
@@ -127,26 +137,31 @@ function onReplyAdded(c: Comment): void {
         <span class="ci-author">{{ comment.authorName ?? comment.authorId }}</span>
         <span class="ci-time">{{ relativeTime(comment.createdAt) }}</span>
         <span v-if="comment.isEdited" class="ci-edited">(已编辑)</span>
-        <div class="ci-menu-wrap" v-if="canModify">
+        <div class="ci-head-actions">
           <button
-            class="ci-kebab"
+            v-if="!comment.parentId"
+            class="ci-reply-btn"
             type="button"
-            aria-label="更多操作"
-            @click="menuOpen = !menuOpen"
+            @click="showReply = !showReply"
           >
-            <span class="material-symbols-outlined">more_vert</span>
+            {{ showReply ? '取消回复' : '回复' }}
           </button>
-          <div v-if="menuOpen" class="ci-menu">
-            <button type="button" @click="onDelete">删除</button>
+          <div class="ci-menu-wrap" v-if="canModify">
+            <button
+              class="ci-kebab"
+              type="button"
+              aria-label="更多操作"
+              @click="menuOpen = !menuOpen"
+            >
+              <span class="material-symbols-outlined">more_vert</span>
+            </button>
+            <div v-if="menuOpen" class="ci-menu">
+              <button type="button" @click="onDelete">删除</button>
+            </div>
           </div>
         </div>
       </div>
       <div class="ci-text" v-html="renderBody()" />
-      <div class="ci-foot" v-if="!comment.parentId">
-        <button class="ci-reply-btn" type="button" @click="showReply = !showReply">
-          {{ showReply ? '取消回复' : '回复' }}
-        </button>
-      </div>
       <CommentsComposer
         v-if="showReply"
         :page-id="pageId"
@@ -175,7 +190,7 @@ function onReplyAdded(c: Comment): void {
   display: grid;
   grid-template-columns: 32px 1fr;
   column-gap: 10px;
-  padding: 10px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border, #ebeef0);
 }
 .ci-avatar {
@@ -203,8 +218,13 @@ function onReplyAdded(c: Comment): void {
   font-size: 11px;
   color: var(--text-3, #5e6c84);
 }
-.ci-menu-wrap {
+.ci-head-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ci-menu-wrap {
   position: relative;
 }
 .ci-kebab {
@@ -255,18 +275,17 @@ function onReplyAdded(c: Comment): void {
 }
 /* .mention-chip inherits from the global rule in components.css so editor
  * live view, saved HTML read view, and comment text all match. */
-.ci-foot {
-  margin-top: 4px;
-}
 .ci-reply-btn {
   background: transparent;
   border: 0;
   color: var(--text-3, #5e6c84);
   font-size: 12px;
   cursor: pointer;
-  padding: 4px 0;
+  padding: 4px 8px;
+  border-radius: 3px;
 }
 .ci-reply-btn:hover {
+  background: var(--hover-bg, #f4f5f7);
   color: var(--accent, #0052cc);
 }
 .ci-reply-composer {

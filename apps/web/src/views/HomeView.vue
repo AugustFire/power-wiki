@@ -197,10 +197,10 @@ function excerpt(html: string): string {
               <div class="stat-card warning">
                 <div class="stat-label">
                   <span class="material-symbols-outlined">storage</span>
-                  本地存储
+                  云端存储
                 </div>
                 <div class="stat-value">{{ stats.storageValue }}<span class="stat-unit">{{ stats.storageUnit }}</span></div>
-                <div class="stat-trend">浏览器 localStorage · {{ stats.total }} 页</div>
+                <div class="stat-trend">存储备份 · {{ stats.total }} 页</div>
               </div>
             </div>
 

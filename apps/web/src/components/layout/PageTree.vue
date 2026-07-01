@@ -1,11 +1,11 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useConfirm } from '@/composables/useConfirm'
-import MoveToSpaceMenu from './MoveToSpaceMenu.vue'
+import PublishToSpaceMenu from './PublishToSpaceMenu.vue'
 import type { PageNode, TreeNode } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -37,13 +37,24 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
  *  No "drop on row to make it a child" — use ⋯ menu → "在此页下添加子页面".
  *  Reorders within the same parent + cross-parent moves go through
  *  pagesStore.movePage which handles cycle protection + sibling reorder.
+ *
+ *  `dragState` MUST live at module scope (not per-instance): when row A
+ *  starts dragging, every other PageTree instance's `onDragOver` checks
+ *  the dragging id to decide whether to call `preventDefault()` (which is
+ *  what allows the browser to fire `drop` at all). A per-instance ref
+ *  would be null on rows that aren't the source, so they would early-
+ *  return and the drop event would never fire. This is the bug we're
+ *  explicitly fixing here.
  */
-const draggingId = ref<string | null>(null)
 type DropHint = 'before' | 'after'
-const dropTarget = ref<{ id: string; position: DropHint } | null>(null)
-const isDragSource = computed(() => draggingId.value === props.node.id)
+const dragState = reactive<{ draggingId: string | null; dropTarget: { id: string; position: DropHint } | null }>({
+  draggingId: null,
+  dropTarget: null,
+})
+
+const isDragSource = computed(() => dragState.draggingId === props.node.id)
 const dropHint = computed<DropHint | null>(
-  () => (dropTarget.value?.id === props.node.id ? dropTarget.value.position : null),
+  () => (dragState.dropTarget?.id === props.node.id ? dragState.dropTarget.position : null),
 )
 
 function onDragStart(e: DragEvent) {
@@ -52,43 +63,43 @@ function onDragStart(e: DragEvent) {
     return
   }
   if (!e.dataTransfer) return
-  draggingId.value = props.node.id
+  dragState.draggingId = props.node.id
   e.dataTransfer.effectAllowed = 'move'
   e.dataTransfer.setData('text/plain', props.node.id)
 }
 
 function onDragEnd() {
-  draggingId.value = null
-  dropTarget.value = null
+  dragState.draggingId = null
+  dragState.dropTarget = null
 }
 
 function onDragOver(e: DragEvent) {
   // Reject self-drag and drags from outside this tree.
-  if (!draggingId.value || draggingId.value === props.node.id) return
+  if (!dragState.draggingId || dragState.draggingId === props.node.id) return
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   const row = e.currentTarget as HTMLElement
   const rect = row.getBoundingClientRect()
   const position: DropHint = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after'
   // Avoid re-triggering reactivity if nothing changed.
-  if (dropTarget.value?.id !== props.node.id || dropTarget.value.position !== position) {
-    dropTarget.value = { id: props.node.id, position }
+  if (dragState.dropTarget?.id !== props.node.id || dragState.dropTarget.position !== position) {
+    dragState.dropTarget = { id: props.node.id, position }
   }
 }
 
 function onDragLeave(e: DragEvent) {
   // relatedTarget can be null when leaving the window — treat that as a clean exit.
   if (e.relatedTarget && (e.currentTarget as Node).contains(e.relatedTarget as Node)) return
-  if (dropTarget.value?.id === props.node.id) dropTarget.value = null
+  if (dragState.dropTarget?.id === props.node.id) dragState.dropTarget = null
 }
 
 async function onDrop(e: DragEvent) {
   e.preventDefault()
-  const target = dropTarget.value
-  draggingId.value = null
-  dropTarget.value = null
+  const target = dragState.dropTarget
+  const draggedId = dragState.draggingId
+  dragState.draggingId = null
+  dragState.dropTarget = null
   if (!target) return
-  const draggedId = e.dataTransfer?.getData('text/plain')
   if (!draggedId || draggedId === target.id) return
 
   const targetPage = pagesStore.getPage(target.id)
@@ -311,49 +322,37 @@ function countLiveDescendants(id: string): number {
 const hasLiveChildren = computed(() => countLiveDescendants(props.node.id) > 0)
 
 /**
- * Cross-space move UI: clicking "移动到..." in the ⋯ menu opens a popover
- * listing the user's accessible team spaces. The popover is mounted
- * conditionally as a sibling of the menu backdrop, anchored at the click
- * coordinates so it visually flows out of the trigger.
+ * Cross-space "发布到" UI: clicking "发布到..." in the ⋯ menu opens a
+ * popover listing the user's accessible team spaces. The popover is
+ * mounted conditionally as a sibling of the menu backdrop, anchored at
+ * the click coordinates so it visually flows out of the trigger.
  *
- * `moveToAnchor` is reused for both left-click (menu trigger) and
- * right-click (context menu) — both surface the same popover at the
- * cursor.
+ * 跟老的"移动到"在 UX 上**完全一样**(同位置、同菜单),但底层是**复制**
+ * 而非搬家 — 源页保留在 personal space,新页由后端加 "(来自 X 的个人分享)"
+ * 后缀,跳到新页。原页不受影响。
  */
-const moveToOpen = ref(false)
-const moveToAnchor = ref<{ x: number; y: number }>({ x: 0, y: 0 })
+const publishToOpen = ref(false)
+const publishToAnchor = ref<{ x: number; y: number }>({ x: 0, y: 0 })
 
-function openMoveTo() {
-  // Anchor the popover at the cursor — the menu item that opened it is
-  // already at the same screen position the user is looking at.
-  moveToAnchor.value = { x: uiStore.menuPos.x, y: uiStore.menuPos.y }
-  moveToOpen.value = true
+function openPublishTo() {
+  publishToAnchor.value = { x: uiStore.menuPos.x, y: uiStore.menuPos.y }
+  publishToOpen.value = true
 }
-function closeMoveTo() {
-  moveToOpen.value = false
+function closePublishTo() {
+  publishToOpen.value = false
 }
 
 /**
- * The "移动到..." menu item is only useful if the user can actually
- * reach at least one team space. Hide it when:
- *   - The current space is a team space AND there are no other team spaces
- *     (moving to "another team space" would only be a no-op rename)
- *   - The user has zero team spaces at all (admins who only have personal
- *     spaces wouldn't see this entry — they'd just delete/move within their
- *     own personal space)
+ * 源 page 必须是 current user's personal space — 后端在 POST /:id/publish
+ * 里校验 `space.kind === 'personal' && space.ownerId === me.id`。前端在
+ * 可见性这一层就过滤掉"team space 页"和"别人 personal space 页"(personal
+ * space 的 ownerId 不是 me.id 在 SpaceEditView 才看得到,这里简化处理)。
  *
- * Pages inside a personal space always have at least one destination
- * (the user's team spaces), assuming any exist. If they don't, the
- * popover's own empty state explains how to fix it.
+ * 目标:至少一个团队空间,且不等于源 space(同一空间再"发布"无意义)。
  */
-const hasMoveTargets = computed(() => {
+const canPublish = computed(() => {
   const page = pagesStore.getPage(props.node.id)
   if (!page) return false
-  // Source-side guard: only pages in a personal space can move across
-  // spaces. Cross-space moves implement the "草稿 → 发布" flow — a user
-  // finishes a draft in their personal space then publishes it into a
-  // shared team space. Team-space pages don't expose the move action at
-  // all; the backend enforces the same rule via `personal_move_only` 403.
   const sourceSpace = spacesStore.spaces.value.find((s) => s.id === page.spaceId)
   if (!sourceSpace || sourceSpace.kind !== 'personal') return false
   return spacesStore.spaces.value.some(
@@ -440,12 +439,12 @@ watch(isRenaming, (val) => {
           <span>重命名</span>
         </button>
         <button
-          v-if="hasMoveTargets"
+          v-if="canPublish"
           class="menu-item"
-          @click="openMoveTo"
+          @click="openPublishTo"
         >
-          <span class="material-symbols-outlined icon-md">drive_file_move</span>
-          <span>移动到...</span>
+          <span class="material-symbols-outlined icon-md">publish</span>
+          <span>发布到...</span>
         </button>
         <button class="menu-item" @click="openInNewTab">
           <span class="material-symbols-outlined icon-md">open_in_new</span>
@@ -466,11 +465,11 @@ watch(isRenaming, (val) => {
           <span>删除</span>
         </button>
       </div>
-      <MoveToSpaceMenu
-        v-if="moveToOpen && currentPage"
+      <PublishToSpaceMenu
+        v-if="publishToOpen && currentPage"
         :page="currentPage"
-        :anchor="moveToAnchor"
-        @close="closeMoveTo"
+        :anchor="publishToAnchor"
+        @close="closePublishTo"
       />
     </template>
 

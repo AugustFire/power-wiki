@@ -566,26 +566,31 @@
     color: var(--text-1);
 }
 .prose ul[data-type="taskList"] { list-style: none; padding-left: 0; }
-.prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 8px; }
+.prose ul[data-type="taskList"] li { display: flex; align-items: baseline; gap: 8px; }
 /* Tiptap taskList 把 checkbox 包在 <label> 里,文字在 <div><p> 里。
-   原先 margin-top:4px + align-items:flex-start 让 checkbox 偏上;
-   改成把 label 高度固定为一行文字行高,内部 flex center,
-   checkbox 视觉上跟文字 x-height 对齐,看起来就在 baseline 上。 */
+   - li 用 align-items: baseline —— checkbox 底部(基线)和文字基线重合
+   - 关键:文字的 CJK 字符填满 em 方块的上半部,而 em 方块顶部 = 行盒顶部
+     附近,所以文字视觉中心会偏下。用 baseline 对齐后,checkbox 中心 ≈ 文字
+     x-height 中心,而不是行盒几何中心。
+   - <p> 默认 margin-top:1em 清掉,让 li 的首个 baseline 就是首行基线 */
+.prose ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.prose ul[data-type="taskList"] li > div > p { margin: 0; }
 .prose ul[data-type="taskList"] li > label {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.6em;
     flex-shrink: 0;
     margin: 0;
     padding: 0;
     cursor: pointer;
+    /* 不设 height,让 label 自然高(13px checkbox),flex 用 baseline 对齐把它
+       推到文字基线位置,视觉上跟文字 x-height 中心重合 */
 }
 .prose ul[data-type="taskList"] li > label input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
+    vertical-align: middle;
 }
-.prose ul[data-type="taskList"] li > div { flex: 1; }
 
 /* callouts */
 .callout {
@@ -1033,13 +1038,15 @@ body:not(.editor-hover) .drag-handle {
 }
 .tiptap th { background: var(--bg-subtle); font-weight: 600; }
 .tiptap ul[data-type="taskList"] { list-style: none; padding-left: 0; }
-.tiptap ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: flex-start; }
-/* 与 .prose 同款对齐:label 高度固定一行,inline-flex center,checkbox 与文字 x-height 对齐 */
+.tiptap ul[data-type="taskList"] li { display: flex; gap: 8px; align-items: baseline; }
+/* 与 .prose 同款:用 baseline 对齐(checkbox 底部 = 文字基线),这样无论 line-height
+   是 1.6 还是 1.8,checkbox 视觉中心都跟文字 x-height 中心重合。详见 .prose 注释。 */
+.tiptap ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.tiptap ul[data-type="taskList"] li > div > p { margin: 0; }
 .tiptap ul[data-type="taskList"] li > label {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.6em;
     flex-shrink: 0;
     margin: 0;
     padding: 0;
@@ -1048,8 +1055,8 @@ body:not(.editor-hover) .drag-handle {
 .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
+    vertical-align: middle;
 }
-.tiptap ul[data-type="taskList"] li > div { flex: 1; }
 
 .edit-footer {
     display: flex;

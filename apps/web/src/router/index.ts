@@ -68,15 +68,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
-  // ─── Notifications inbox (Stage 6) ──────────────────────────────
-  // User-level page (not under /manager because regular users also have
-  // notifications). 平级 `/p/:id`, requiresAuth only — no admin gate.
-  {
-    path: '/notifications',
-    name: 'notifications',
-    component: () => import('@/views/NotificationsView.vue'),
-    meta: { requiresAuth: true },
-  },
+  // ─── Notifications inbox ──────────────────────────────────────────
+  // 2026-07-01: 删除了原来的 `/notifications` 顶级路由 + NotificationsView.
+  // 通知中心现在是 TopBar 铃铛 → 右侧抽屉, 没有独立页面.
 
   // ─── Manager (admin-only, Stage 4b+) ─────────────────────────────
   // Layout renders the subnav; children render the section content.

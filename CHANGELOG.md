@@ -30,6 +30,31 @@
 - `apps/web/src/styles/components.css` 删 `.comments` / `.comment-input` 死样式
 - 修正过期文档(README / CLAUDE.md / CHANGELOG):去除文档里的旧里程碑编号,改写为"功能 + 状态"描述;token 速查表与 `tokens.css` 对齐;补全 admin / manager 章节;API 端点列表与代码 1:1
 
+### Stage 7: 个人空间"发布到" + 编辑器 + 树拖拽 + 任务列表对齐
+- **个人空间"发布到"**(原"移动到"语义改写):
+  - 全新 `POST /api/pages/:id/publish` 端点:源页必须 `space.kind === 'personal' && space.ownerId === me.id`,目标只能是 team space 且 ≠ 源 space;新页标题自动加 `（来自 {userName} 的个人分享）` 后缀(已带后缀则不重复);保留原页不动
+  - 新组件 `PublishToSpaceMenu.vue`(替换 `MoveToSpaceMenu.vue`):"发布到团队空间"popover,目标列表 = `spaces.filter(s => s.kind !== 'personal' && s.id !== sourceSpaceId)`;成功后切到目标 space 并跳到新副本
+  - `PageTree.vue` ⋯ 菜单项重命名 `移动到...` → `发布到...`(icon 也换 `publish`);`canPublish` 计算属性按上述规则过滤可见性
+  - `packages/shared` 加 `PublishPageInputSchema`;`apps/web/src/lib/api.ts` + `stores/pages.ts` 加 `publishPageToSpace`(乐观更新,失败回滚 + banner)
+- **通知中心从独立 view 收进 bell 弹层**:
+  - 删 `NotificationsView.vue`(`/notifications` 路由同步移除);`NotificationBell.vue` 扩成"前 N 条 + 全部已读 + 跳转"全功能下拉
+- **编辑器右侧 TOC 锚定**:
+  - `TocPanel.vue` 加 `MutationObserver + rAF` 跟 live DOM,匹配 `h1/h2/h3` + `.heading-wrapper[data-level]` 两套结构;edit / read 双视图统一
+  - `EditView.vue` 把 `TocPanel` 嵌进三栏布局(原 `no-toc` 类移除);通过 `content-mount` 事件 + `requestAnimationFrame` 抓 ProseMirror 容器
+- **编辑器修缮**:
+  - H2 颜色在 edit 模式不再因 onBeforeUnmount 清 timer 而丢(改 `onBeforeRouteLeave` 触发 `flushPendingSave`);`ReadView.vue` byline 由 `createdAt` 改为 `updatedAt`,`EditView` 顶部 byline 同改
+  - **代码块 / Toggle 块易删**:`CodeBlockView.vue` + `ToggleView.vue` 在容器边缘加 hover 浮起的删除按钮,`setNodeSelection` + `deleteSelection` 模式,直接点 X 即删;`RichEditor` 转发 `content-mount` 事件给父组件
+  - **SlashMenu**:`mention` / `date` 两条目扩出 picker 弹层(emoji / 日期);键盘导航 + Enter / Esc 完备
+- **页面树拖拽排序**:
+  - `PageTree.vue` `dragState` 从 per-instance ref 改为 module-scope `reactive()`,所有 `PageTree` 实例共享 `draggingId` / `dropTarget`;HTML5 drag API 落点提示 `drop-before` / `drop-after`(上下半区分),cycle 由 `pagesStore.movePage` 拦截
+  - `Sidebar` / `PageTree` 收尾
+- **自研 confirm 弹窗替换浏览器 confirm**:
+  - `apps/web/src/composables/useConfirm.ts`:Promise-based,挂 `<Teleport to="body">` 的 `<ConfirmDialog>`;`danger` / `confirmText` / `cancelText` 可配
+  - `CommentItem.vue` 删除评论从 `confirm('...')` 切到 `await confirm({...})` 走自研弹窗;`PageTree.vue` 删页同步替换
+- **任务列表 checkbox / 文字对齐**:
+  - `components.css` 改 `align-items: flex-start` + 固定 `1.6em` 居中为 `align-items: baseline`(checkbox 底部 = 文字基线);`<p>` 顶 margin 清零;`vertical-align: middle` 兜底。实测 edit / read 两视图 checkbox 中心 ↔ 文字 glyph 中心 delta = 0px(Range API 测)
+- **HomeView 修正文案**:"本地存储 / 浏览器 localStorage" → "云端存储 / 存储备份",跟 0.4 切到 API 后的现状对齐
+
 ---
 
 ## [0.5.0] - 2026-06-29

@@ -3,8 +3,11 @@
  *
  * Mirrors the `useManagerStats` pattern: a single promise cache + reactive
  * state shared across all callers. The most-cited benefit here is the bell
- * (`NotificationBell.vue` in TopBar) AND the `/notifications` route being
- * able to share the same in-memory data without re-fetching on mount.
+ * (`NotificationBell.vue` in TopBar) being able to reuse data between the
+ * unread-badge poll and the drawer open without re-fetching on mount.
+ *
+ * 2026-07-01: `/notifications` 路由 + NotificationsView 删除后,
+ * 这里是 TopBar 铃铛唯一的消费方.
  *
  * Three jobs:
  *   1. **First-load caching** — `ensureLoaded()` returns immediately if

@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
 import extensions from '@/editor/extensions'
@@ -19,6 +19,9 @@ const emit = defineEmits<{
   (e: 'update:html', html: string): void
   (e: 'ready', editor: Editor): void
   (e: 'word-count', value: { words: number }): void
+  // 编辑器挂载 / 内容 setContent 后,ProseMirror DOM 已就绪;
+  // 父组件用这个事件抓 .ProseMirror 节点(TocPanel scroll-spy 依赖它)
+  (e: 'content-mount'): void
 }>()
 
 // 字数统计:中文按字符计,英文按词计(行业惯例)
@@ -85,6 +88,12 @@ watch(editor, (val) => {
   if (val) {
     emit('ready', val)
     emit('word-count', computeWordCount(val.getHTML()))
+    // EditorContent 挂完才出 .ProseMirror,等下一帧再发,
+    // 父组件收到时 DOM 节点可查
+    void nextTick(() => {
+      // 再多等一帧,确保 ProseMirror 内部 mount 完
+      requestAnimationFrame(() => emit('content-mount'))
+    })
   }
 }, { immediate: true })
 

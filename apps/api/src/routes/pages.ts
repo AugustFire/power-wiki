@@ -46,6 +46,7 @@ import {
   PaginatedListSchema,
   UpdatePageInputSchema,
   MovePageInputSchema,
+  PublishPageInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { pages, spaces, users, comments as commentsTable, notifications as notificationsTable } from '../db/schema'
@@ -458,6 +459,142 @@ pagesRouter.patch('/:id/move', async (c) => {
   const [row] = await selectPagesWithAuthor(eq(pages.id, id)).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)))
+})
+
+/* ─── POST /api/pages/:id/publish ─────────────────────────────────────
+ *  "发布到" — 草稿→团队空间的复制语义,跟 PATCH /:id/move 走的是不同
+ *  路径:move 是把页面本身搬家,publish 是在目标空间**另起一个**新页,
+ *  原页保留在 personal space 不动。
+ *
+ *  适用场景:用户在个人空间起草一份文档,写完后想分享到团队空间。
+ *  复制而不是移动的好处 ——
+ *    - 个人草稿是作者的「想法/未完成工作」,不应该被发布行为破坏。
+ *    - 发布后还能继续在 personal space 迭代,二次发布会再生成一份。
+ *  限制:
+ *    - 源 page 必须是当前用户**自己** personal space 的页(非自己 personal
+ *      不允许,防 admin 越权 / 偷发别人草稿)。
+ *    - 目标空间必须对当前用户 canAccess(普通规则)。
+ *    - admin 发布 personal-space 页面:admin 不是任何 personal space 的
+ *      owner,所以这条天然挡掉,不需要 personalSpaceGuard。
+ *  标题后缀:`(来自 {userName} 的个人分享)`。userName 取自 users 表的
+ *  name 字段(失败 fallback 为 id 字符串,绝不抛错)。
+ *  子页面:**不**递归复制 — 单页发布,作者可以选择是否要继续逐个发布子页。
+ */
+pagesRouter.post('/:id/publish', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const parsed = PublishPageInputSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+  const { targetSpaceId } = parsed.data
+
+  // 源页必须存在、未删除
+  const [source] = await db
+    .select()
+    .from(pages)
+    .where(and(eq(pages.id, id), isNull(pages.deletedAt)))
+    .limit(1)
+  if (!source || source.spaceId === null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  // 必须可访问(读得到,才能复制)
+  if (!(await canAccessSpace(me.id, me.role === 'admin', source.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  // 源必须是 current user's personal space
+  const [sourceSpace] = await db
+    .select({ kind: spaces.kind, ownerId: spaces.ownerId })
+    .from(spaces)
+    .where(eq(spaces.id, source.spaceId))
+    .limit(1)
+  if (!sourceSpace || sourceSpace.kind !== 'personal') {
+    return c.json(
+      {
+        error: 'publish_source_must_be_personal',
+        message: '只有个人空间的页面可以发布到团队空间',
+      },
+      403,
+    )
+  }
+  // admin 跳过 owner 校验(见 personalSpaceGuard.ts 反向保护 admin 写 personal 的逻辑),
+  // 但 admin 不是任何 personal space 的 owner,所以这条 path 走不到 ——
+  // 个人空间的 ownerId === me.id 限制天然挡住 admin 偷发别人草稿。
+  if (sourceSpace.ownerId !== me.id) {
+    return c.json(
+      { error: 'publish_not_owner', message: '只能发布自己个人空间的页面' },
+      403,
+    )
+  }
+
+  // 目标空间必须存在且可写
+  if (!(await canAccessSpace(me.id, me.role === 'admin', targetSpaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  const [targetSpace] = await db
+    .select({ kind: spaces.kind })
+    .from(spaces)
+    .where(eq(spaces.id, targetSpaceId))
+    .limit(1)
+  if (!targetSpace) return c.json({ error: 'not_found' }, 404)
+  // 不允许发回 personal space(防个人空间污染)
+  if (targetSpace.kind === 'personal') {
+    return c.json(
+      { error: 'publish_target_not_personal', message: '不能发布到个人空间' },
+      400,
+    )
+  }
+  // 不能发到原 space
+  if (targetSpaceId === source.spaceId) {
+    return c.json(
+      { error: 'publish_same_space', message: '发布目标不能是同一个空间' },
+      400,
+    )
+  }
+
+  // 作者名 — 用于标题后缀。查不到时回退到 me.id 字符串
+  const [author] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, me.id))
+    .limit(1)
+  const sharerName = author?.name?.trim() || me.id
+
+  const now = Date.now()
+  const newId = generatePageId()
+  // sortOrder: 追加到目标空间根列表末尾
+  const nextOrderResult = await db.execute<{ nextOrder: number }>(sql`
+    SELECT COALESCE(MAX(sort_order), -1) + 1 AS "nextOrder"
+    FROM pages
+    WHERE space_id = ${targetSpaceId}
+      AND parent_id IS NULL
+  `)
+  const sortOrder = nextOrderResult.rows[0]?.nextOrder ?? 0
+
+  // 标题拼接 — 如果原标题已含同样的后缀就不再重复,避免"原标题(来自 X 的个人分享)(来自 X 的个人分享)"。
+  const suffix = `（来自 ${sharerName} 的个人分享）`
+  const baseTitle = (source.title || '').trim() || '未命名'
+  const newTitle = baseTitle.includes(suffix) ? baseTitle : `${baseTitle}${suffix}`
+
+  await db.insert(pages).values({
+    id: newId,
+    parentId: null,
+    spaceId: targetSpaceId,
+    title: newTitle,
+    icon: source.icon ?? null,
+    contentJson: source.contentJson,
+    contentHtml: source.contentHtml,
+    sortOrder,
+    createdAt: now,
+    updatedAt: now,
+    authorId: me.id,
+  })
+
+  const [row] = await selectPagesWithAuthor(eq(pages.id, newId)).limit(1)
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
 })
 
 /* ─── POST /api/pages/:id/restore ─────────────────────────────────────

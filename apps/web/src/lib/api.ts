@@ -28,6 +28,7 @@ import {
   NotificationSchema,
   PageNodeSchema,
   PaginatedListSchema,
+  PublishPageInputSchema,
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
@@ -50,6 +51,7 @@ import type {
   PageNode,
   Paginated,
   PaginatedQuery,
+  PublishPageInput,
   ResetPasswordInput,
   SetSpaceAccessInput,
   SignInInput,
@@ -323,6 +325,18 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(input),
       }),
+    /**
+     * "发布到" — 把 personal space 的页面**复制**一份到目标团队空间(原页
+     * 保留不动)。后端在标题后面追加 "(来自 {userName} 的个人分享)",避免
+     * 发布人需要手动重命名。Admin/其他人的 personal 页不能代发。
+     */
+    publish: (id: string, input: PublishPageInput) => {
+      const parsed = PublishPageInputSchema.parse(input)
+      return getOnePage(`/pages/${encodeURIComponent(id)}/publish`, {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+      })
+    },
     delete: (id: string) =>
       request<void>(`/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     /**

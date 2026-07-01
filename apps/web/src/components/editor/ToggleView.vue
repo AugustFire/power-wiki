@@ -43,6 +43,25 @@ function onTitleKeydown(e: KeyboardEvent) {
   }
 }
 
+/**
+ * 删除整个折叠块。同 CodeBlockView.removeBlock —— Tiptap 没有标准的
+ * "删掉这个块"命令,所以走 selectNode + deleteSelection 路径。
+ * 折叠块的 nodeSize 取决于其内容,直接 props.node.nodeSize 拿。
+ */
+function removeBlock() {
+  const pos = props.getPos()
+  if (pos == null) return
+  const e = props.editor
+  if (!e) return
+  const nodeSize = (props.node as { nodeSize?: number }).nodeSize ?? e.state.doc.nodeAt(pos)?.nodeSize ?? 0
+  e.chain()
+    .focus()
+    .setNodeSelection(pos)
+    .setTextSelection({ from: pos, to: pos + nodeSize })
+    .deleteSelection()
+    .run()
+}
+
 // 外部更新 title(如撤销重做)时,同步到 input — 仅当 input 没在聚焦,避免抢光标
 watch(title, (val) => {
   const el = titleInputRef.value
@@ -81,6 +100,17 @@ watch(title, (val) => {
         @keydown="onTitleKeydown"
         @mousedown.stop
       />
+      <button
+        type="button"
+        class="toggle-delete-btn"
+        contenteditable="false"
+        aria-label="删除折叠块"
+        title="删除折叠块"
+        @click="removeBlock"
+        @mousedown.stop
+      >
+        <span class="material-symbols-outlined">delete</span>
+      </button>
     </div>
     <NodeViewContent class="toggle-content" />
   </NodeViewWrapper>
@@ -91,5 +121,30 @@ watch(title, (val) => {
 .toggle-wrapper {
   margin: 8px 0;
 }
+.toggle-delete-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast), background-color var(--duration-fast), color var(--duration-fast);
+}
+.toggle-delete-btn .material-symbols-outlined {
+  font-size: 14px;
+}
+.toggle-wrapper:hover .toggle-delete-btn { opacity: 1; }
+.toggle-delete-btn:hover {
+  background: rgba(255, 86, 48, 0.12);
+  color: #FF5630;
+}
+.toggle-delete-btn:focus-visible { opacity: 1; outline: none; }
 </style>
 

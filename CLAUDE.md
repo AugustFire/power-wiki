@@ -158,6 +158,7 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
   - `POST   /api/pages` body `{parentId?,title?,icon?,spaceId,...}` → 201 + `PageNode`(spaceId 必填)
   - `PATCH  /api/pages/:id` body `{title?,contentJSON?,contentHTML?,icon?,starred?}` → `PageNode`
   - `PATCH  /api/pages/:id/move` body `{newParentId,newOrder?}` → `PageNode`(409 cycle)
+  - `POST   /api/pages/:id/publish` body `{targetSpaceId}` → 201 + 新 `PageNode`(personal space → team space 的"发布到"语义:源页保留,新页标题自动加 `（来自 {userName} 的个人分享）` 后缀,源页只读于自己 personal space)
   - `POST   /api/pages/:id/restore` → 恢复软删除页(admin only)
   - `DELETE /api/pages/:id` → 204 软删除(递归 CTE 一次删完整子树,因为 schema 无 FK CASCADE)
   - `DELETE /api/pages/:id?purge=true` → 204 硬删除(admin only)

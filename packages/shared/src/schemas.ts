@@ -326,6 +326,15 @@ export const MovePageInputSchema = z.object({
   newSpaceId: PageIdSchema.optional(),
 })
 
+/** POST /api/pages/:id/publish 入参 — "发布到"草稿分享语义:
+ * 在目标空间里**复制**一个全新页面(原页保留在 personal space 不动),
+ * 标题自动加 "(来自 {userName} 的个人分享)" 后缀。源 page 必须是当前
+ * 用户的 personal space 页(防 admin 越权代发),目标 space 必须对当前
+ * 用户 canAccess。 */
+export const PublishPageInputSchema = z.object({
+  targetSpaceId: PageIdSchema,
+})
+
 /* ---------- 列表分页 ---------- */
 
 /**
@@ -361,6 +370,7 @@ export type Paginated<T> = { items: T[]; limit: number; offset: number; hasMore:
 export type CreatePageInput = z.infer<typeof CreatePageInputSchema>
 export type UpdatePageInput = z.infer<typeof UpdatePageInputSchema>
 export type MovePageInput = z.infer<typeof MovePageInputSchema>
+export type PublishPageInput = z.infer<typeof PublishPageInputSchema>
 export type SignInInput = z.infer<typeof SignInInputSchema>
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>

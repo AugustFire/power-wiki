@@ -128,18 +128,7 @@ void authStore
       </div>
     </div>
 
-    <!-- "我的空间" shortcut: only visible when active is NOT the personal
-         space. The topbar's user menu also has this entry, but the sidebar
-         shortcut is one click away for users who context-switch often. The
-         shortcut is rendered as a quiet bottom-anchor (not a primary nav
-         item) so it doesn't compete with the active-space chip above. -->
-    <div v-if="showMySpaceShortcut" class="sidebar-myspace-anchor">
-      <button type="button" class="msa-btn" @click="goMySpace">
-        <span class="material-symbols-outlined msa-icon">cottage</span>
-        <span class="msa-label">我的空间</span>
-        <!-- <span class="msa-hint">{{ personalSpace?.name }}</span> -->
-      </button>
-    </div>
+
 
     <div class="sidebar-bottom">
       <button class="create-page-btn" @click="createRoot">

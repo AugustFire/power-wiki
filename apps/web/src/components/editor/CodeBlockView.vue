@@ -58,6 +58,31 @@ async function copy(event: MouseEvent) {
   }
 }
 
+/**
+ * Delete the code block. Tiptap 的代码块没有 "removeNode" 命令的标准 hook,
+ * 实际做法是 selectRange → deleteSelection:把光标放到块内任意位置,
+ * 选中整块(range 跨越块起止),然后走 deleteSelection 删掉。
+ *
+ * 之所以提供这个按钮而不是让用户自选 ——
+ * 代码块在 Tiptap 里默认 `exitOnArrowDown` / `exitOnArrowUp` 之外没有
+ * 直观的"删掉这个块"路径;用户唯一能做的是把光标移到行首,按住 Shift+Down
+ * 一直选到块末,然后按 Backspace。如果块只有一行,选中范围是 0,
+ * 这条路就走不通。
+ */
+function removeBlock() {
+  const pos = props.getPos()
+  if (pos == null) return
+  const e = props.editor
+  if (!e) return
+  const nodeSize = (props.node as { nodeSize?: number }).nodeSize ?? e.state.doc.nodeAt(pos)?.nodeSize ?? 0
+  e.chain()
+    .focus()
+    .setNodeSelection(pos)
+    .setTextSelection({ from: pos, to: pos + nodeSize })
+    .deleteSelection()
+    .run()
+}
+
 // ─── 语言下拉 ──────────────────────────────────────────────
 const langOpen = ref(false)
 const langWrap = ref<HTMLElement | null>(null)
@@ -135,6 +160,16 @@ const lineCount = computed(() => {
           {{ copied ? 'check' : 'content_copy' }}
         </span>
         <span>{{ copied ? '已复制' : '复制' }}</span>
+      </button>
+      <button
+        type="button"
+        class="code-block-delete"
+        @mousedown.stop
+        @click="removeBlock"
+        aria-label="删除代码块"
+        title="删除代码块"
+      >
+        <span class="material-symbols-outlined" style="font-size:14px">delete</span>
       </button>
     </div>
     <div class="code-block-body">
@@ -254,6 +289,25 @@ const lineCount = computed(() => {
 }
 .code-block-copy.copied {
   color: #C3E88D;
+}
+.code-block-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
+  font-family: inherit;
+}
+.code-block-delete:hover {
+  background: rgba(255, 86, 48, 0.12);
+  color: #FF5630;
 }
 .code-block :deep(pre) {
   margin: 0;

@@ -1,21 +1,20 @@
 <script setup lang="ts">
 /**
- * MoveToSpaceMenu — popover for relocating a page (typically a personal-space
- * draft) to a different space. Triggered from the PageTree ⋯ menu's
- * "移动到..." item. Filters the user's accessible space list to team
- * spaces (kind !== 'personal') and excludes the source space — there's no
- * point in "moving" a page to the space it's already in.
+ * PublishToSpaceMenu — popover for **publishing** a personal-space draft to a
+ * team space. Triggered from the PageTree ⋯ menu's "发布到..." item.
  *
- * The backend's PATCH /:id/move rejects newParentId != null when
- * newSpaceId is present, so this component only handles the "promote to
- * root of destination" case (not "place under another page in a different
- * space", which would be a more complex tree-merge operation).
+ * 跟老的"移动到"不同:这里是**复制**一份新页到目标空间,原页保留在
+ * personal space 不动,新页的标题由后端自动加 "(来自 {userName} 的个人分享)"
+ * 后缀。这样用户可以:
+ *   - 草稿继续在 personal space 迭代,不破坏"想法/未完成工作"的归属
+ *   - 二次发布会再生成一份新的
+ *   - 不会因为误操作把唯一一份草稿发布出去
  *
- * After a successful move, we close the menu + close the PageTree's
- * own context menu, then jump to the moved page so the user immediately
- * sees the new context. If the move target is the current user's personal
- * space, we don't jump — but the UI only lists team spaces, so this is
- * moot; the assertion is here for clarity.
+ * Source 必须是 current user's personal space — 后端会校验
+ * `space.kind === 'personal' && space.ownerId === me.id`,前端在 `hasMoveTargets`
+ * 那一层已经过滤掉了非 personal / 别人的 personal。
+ *
+ * 成功发布后:跳到新页(让用户看到结果)、同步切换 active space、关闭菜单。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -40,12 +39,8 @@ const router = useRouter()
 const rootEl = ref<HTMLElement | null>(null)
 
 /**
- * Available destinations: team spaces visible to the user, minus the
- * page's current space. We list only `kind !== 'personal'` because the
- * personal-space entry is meant for the owner only — moving another
- * user's page into your personal space would silently disappear (they
- * can't access it). The destination order follows the natural sidebar
- * order (created-at asc, matching /api/spaces list ordering).
+ * 目标空间:只能是团队空间 (`kind === 'shared'`),排除 personal 与源 page
+ * 所在 space(同一个 personal 空间再发一次没意义)。
  */
 const destinations = computed<Space[]>(() =>
   spacesStore.spaces.value.filter(
@@ -59,9 +54,6 @@ const currentSpaceName = computed(
 )
 
 const menuStyle = computed(() => {
-  // Mirror PageTree's edge-clipping strategy — these popovers are
-  // position:fixed and small enough that 280px wide / variable height
-  // is the safe upper bound.
   const MENU_W = 280
   const SAFE = 8
   const vw = typeof window !== 'undefined' ? window.innerWidth : 0
@@ -69,8 +61,6 @@ const menuStyle = computed(() => {
   let left = props.anchor.x + 8
   let top = props.anchor.y + 4
   if (left + MENU_W + SAFE > vw) left = Math.max(SAFE, vw - MENU_W - SAFE)
-  // For height we don't know precisely — clamp top so the menu never
-  // starts below the viewport.
   if (top > vh - 80) top = Math.max(SAFE, vh - 80)
   return { top: `${top}px`, left: `${left}px` }
 })
@@ -79,13 +69,11 @@ async function pick(targetSpaceId: string) {
   emit('close')
   uiStore.closeMenu()
   try {
-    await pagesStore.movePageToSpace(props.page.id, targetSpaceId)
-    // Jump to the moved page in its new space so the user immediately
-    // sees the result. The active-space switch is local — server-side
-    // it's just a PATCH on the page row.
+    const created = await pagesStore.publishPageToSpace(props.page.id, targetSpaceId)
     const target = spacesStore.spaces.value.find((s) => s.id === targetSpaceId)
     if (target) spacesStore.setActiveSpace(target.id)
-    await router.push(`/p/${props.page.id}`)
+    // 跳到新生成的副本 — 源页保持不动
+    await router.push(`/p/${created.id}`)
   } catch {
     // banner shown by store
   }
@@ -111,7 +99,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="rootEl" class="m2s-root" :style="menuStyle" @click.stop>
     <div class="m2s-header">
-      <span class="m2s-title">移动到其他空间</span>
+      <span class="m2s-title">发布到团队空间</span>
       <span class="m2s-sub">{{ currentSpaceName }} → ...</span>
     </div>
     <div v-if="destinations.length === 0" class="m2s-empty">
@@ -140,7 +128,7 @@ onBeforeUnmount(() => {
         <span class="m2s-name">{{ s.name }}</span>
         <span v-if="s.description" class="m2s-desc">{{ s.description }}</span>
       </span>
-      <span class="material-symbols-outlined m2s-chev" aria-hidden="true">chevron_right</span>
+      <span class="material-symbols-outlined m2s-chev" aria-hidden="true">publish</span>
     </button>
   </div>
 </template>

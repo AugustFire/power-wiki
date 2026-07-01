@@ -1,7 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
-import type { PageNode } from '@power-wiki/shared'
+import { useActivePageId } from '@/composables/useActivePageId'
+import { api } from '@/lib/api'
+import type { MentionCandidate, PageNode } from '@power-wiki/shared'
 import DateTimePicker from './DateTimePicker.vue'
 import type { DateMode } from '@/editor/dateInlineExtension'
 
@@ -23,7 +25,10 @@ interface SlashItem {
   run: (editor: AnyEditor) => void
 }
 
-// 注意:严格不包含图片/链接选项(用户硬约束)
+// 注意:严格不包含图片/链接选项(用户硬约束)。
+// 2026-07-01: 把原来的 `date` + `mention` 两个 slash 项合并成一个 `@` 项,
+// picker 内部用 tab(成员 / 日期)分流 —— 减少列表项,符合"@ 一处搞定"
+// 的用户预期。
 const items: SlashItem[] = [
   {
     id: 'h1',
@@ -121,25 +126,13 @@ const items: SlashItem[] = [
     },
   },
   {
-    id: 'date',
-    label: '日期',
-    description: '插入当前或指定日期/时间',
-    icon: 'schedule',
+    id: 'at',
+    label: '@',
+    description: '提及成员 或 插入日期/时间',
+    icon: 'alternate_email',
     kind: 'needsPicker',
     run: () => {
-      // 由 onSelectIndex 打开 date picker
-    },
-  },
-  {
-    id: 'mention',
-    label: '提及成员',
-    description: '@ 提及本页访问组成员',
-    icon: 'alternate_email',
-    run: (e) => {
-      // 写入触发符让 Mention 扩展的 Suggestion 接管后续候选;不能直接
-      // insertContent({type:'mention'}) — 那需要 userId/label 两个 attr,
-      // 而 Suggestion 才是填这两个值的入口。
-      return e.chain().focus().insertContent('@').run()
+      // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openAtPicker
     },
   },
 ]
@@ -148,6 +141,12 @@ const open = ref(false)
 const pos = ref({ x: 0, y: 0 })
 const filterText = ref('')
 const activeIndex = ref(0)
+
+// Forward declarations so `onEditorKey` (declared below) can reference these
+// without TypeScript's "used before declaration" error. Real initializers
+// live in the corresponding picker sections further down.
+let pickerOpen: ReturnType<typeof ref<boolean>> = ref(false)
+let atPickerOpen: ReturnType<typeof ref<boolean>> = ref(false)
 
 const filtered = computed(() => {
   const q = filterText.value.trim().toLowerCase()
@@ -198,7 +197,7 @@ function hideMenu() {
   filterText.value = ''
   activeIndex.value = 0
   closePagePicker()
-  closeDatePicker()
+  closeAtPicker()
 }
 
 // 检测编辑器文本中最后一个 "/" 触发菜单
@@ -256,8 +255,8 @@ function onSelectIndex(idx: number) {
     openPagePicker()
     return
   }
-  if (item.kind === 'needsPicker' && item.id === 'date') {
-    openDatePicker()
+  if (item.kind === 'needsPicker' && item.id === 'at') {
+    openAtPicker()
     return
   }
 
@@ -291,8 +290,8 @@ function onEditorKey(e: KeyboardEvent) {
     onPickerKey(e)
     return
   }
-  if (datePickerOpen.value) {
-    onDatePickerKey(e)
+  if (atPickerOpen.value) {
+    onAtPickerKey(e)
     return
   }
   if (!open.value) return
@@ -361,7 +360,7 @@ onBeforeUnmount(() => {
 //  页面引用 Picker
 // ============================================================
 const pagesStore = usePagesStore()
-const pickerOpen = ref(false)
+pickerOpen = ref(false)
 const pickerQuery = ref('')
 const pickerIndex = ref(0)
 const pickerInputEl = ref<HTMLInputElement | null>(null)
@@ -385,6 +384,14 @@ watch(pickerOpen, async (val) => {
   if (val) {
     await nextTick()
     pickerInputEl.value?.focus()
+  }
+})
+
+// @ picker 打开后,默认聚焦到成员 tab 的搜索框;Tab 键在 onAtPickerKey 内切
+watch(atPickerOpen, async (val) => {
+  if (val) {
+    await nextTick()
+    atPickerInputEl.value?.focus()
   }
 })
 
@@ -448,16 +455,104 @@ function onPickerKey(e: KeyboardEvent) {
 }
 
 // ============================================================
-//  日期 Picker(DateTimePicker 内部已处理 Enter/Esc)
+//  @ Picker —— 成员 tab + 日期 tab
 // ============================================================
-const datePickerOpen = ref(false)
+// 2026-07-01: 替代原来的"日期 picker + 提及成员 slash 项"。
+// 用户体验上把"@"作为统一入口,内部分流:
+//   - 成员 tab:列出 page 所在 space 的访问组成员,搜索过滤,回车插入 mention
+//   - 日期 tab:嵌入 DateTimePicker(原 date 项的入口),回车插入 dateInline
+// 之所以用 tab 而不是两个独立 slash 项:避免列表里有"@ 提及"和"日期"两项
+// 看起来不相关的项,但入口语义其实是同一个 —— `@ 提及成员` 跟"日期"
+// 没有共同前缀,放一起反而会让用户错以为日期也是 mention。
 
-function openDatePicker() {
-  datePickerOpen.value = true
+type AtTab = 'user' | 'date'
+atPickerOpen = ref(false)
+const atTab = ref<AtTab>('user')
+const atPickerQuery = ref('')
+const atPickerIndex = ref(0)
+const atPickerInputEl = ref<HTMLInputElement | null>(null)
+const atCandidates = ref<MentionCandidate[]>([])
+const atCandidatesLoading = ref(false)
+const atPickerError = ref<string | null>(null)
+
+let atSearchToken = 0
+
+const activePageId = useActivePageId()
+
+const filteredAtCandidates = computed<MentionCandidate[]>(() => {
+  const q = atPickerQuery.value.trim().toLowerCase()
+  if (!q) return atCandidates.value
+  return atCandidates.value.filter(
+    (c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q),
+  )
+})
+
+watch(filteredAtCandidates, () => {
+  atPickerIndex.value = 0
+  nextTick(scrollAtPickerActiveIntoView)
+})
+
+async function loadAtCandidates(): Promise<void> {
+  const pageId = activePageId.activePageId.value
+  if (!pageId) {
+    atPickerError.value = '当前页面不可用'
+    atCandidates.value = []
+    return
+  }
+  const token = ++atSearchToken
+  atCandidatesLoading.value = true
+  atPickerError.value = null
+  try {
+    const list = await api.comments.mentionCandidates(pageId, '')
+    if (token !== atSearchToken) return
+    atCandidates.value = list
+  } catch (e) {
+    if (token !== atSearchToken) return
+    atPickerError.value = e instanceof Error ? e.message : '加载成员失败'
+    atCandidates.value = []
+  } finally {
+    if (token === atSearchToken) atCandidatesLoading.value = false
+  }
 }
 
-function closeDatePicker() {
-  datePickerOpen.value = false
+function openAtPicker() {
+  atPickerOpen.value = true
+  atTab.value = 'user'
+  atPickerQuery.value = ''
+  atPickerIndex.value = 0
+  void loadAtCandidates()
+}
+
+function closeAtPicker() {
+  atPickerOpen.value = false
+  atPickerQuery.value = ''
+  atPickerIndex.value = 0
+  atCandidates.value = []
+  atPickerError.value = null
+}
+
+function switchAtTab(t: AtTab) {
+  atTab.value = t
+  if (t === 'user' && atCandidates.value.length === 0 && !atCandidatesLoading.value) {
+    void loadAtCandidates()
+  }
+  nextTick(() => {
+    if (t === 'user') atPickerInputEl.value?.focus()
+  })
+}
+
+function onPickUser(c: MentionCandidate) {
+  if (!props.editor) return
+  props.editor
+    .chain()
+    .focus()
+    .insertContent({
+      type: 'mention',
+      attrs: { userId: c.id, label: c.name },
+    })
+    .insertContent(' ')
+    .run()
+  hideMenu()
 }
 
 function onPickDate(payload: { mode: DateMode; date: Date }) {
@@ -476,14 +571,47 @@ function onPickDate(payload: { mode: DateMode; date: Date }) {
   hideMenu()
 }
 
-function onDatePickerKey(e: KeyboardEvent) {
-  if (!datePickerOpen.value) return
-  // DateTimePicker 自己处理 Enter(确认)/ Esc(取消),
-  // 这里只挡住这些键不让它冒泡触发其它逻辑;其它键放行给 DateTimePicker 的 input
+function scrollAtPickerActiveIntoView() {
+  const el = document.querySelector('.slash-menu .at-user-item.active')
+  if (el && 'scrollIntoView' in el) {
+    (el as HTMLElement).scrollIntoView({ block: 'nearest' })
+  }
+}
+
+function atPickerMove(delta: number) {
+  if (atTab.value !== 'user') return
+  const n = filteredAtCandidates.value.length
+  if (n === 0) return
+  atPickerIndex.value = (atPickerIndex.value + delta + n) % n
+  nextTick(scrollAtPickerActiveIntoView)
+}
+
+function onAtPickerKey(e: KeyboardEvent) {
+  if (!atPickerOpen.value) return
+  if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
     hideMenu()
+    return
+  }
+  if (atTab.value === 'date') {
+    // DateTimePicker 自己处理 Enter / 数字输入
+    return
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    atPickerMove(1)
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    atPickerMove(-1)
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    const c = filteredAtCandidates.value[atPickerIndex.value]
+    if (c) onPickUser(c)
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    switchAtTab(atTab.value === 'user' ? 'date' : 'user')
   }
 }
 </script>
@@ -527,15 +655,80 @@ function onDatePickerKey(e: KeyboardEvent) {
       </div>
     </div>
 
-    <!-- 日期 picker 模式:用户在 /日期 后看到的日期时间选择器 -->
-    <div v-else-if="datePickerOpen" class="slash-picker">
+    <!-- @ picker:成员 tab + 日期 tab -->
+    <div v-else-if="atPickerOpen" class="slash-picker">
       <div class="slash-title">
-        <span>插入日期/时间</span>
-        <span class="slash-hint">选日期 · 输时间 · 点确定</span>
+        <span>插入 @</span>
+        <span class="slash-hint">Tab 切换成员 / 日期 · Esc 取消</span>
       </div>
-      <div class="date-picker-wrap">
-        <DateTimePicker @insert="onPickDate" @cancel="hideMenu" />
+      <div class="at-tabs" role="tablist">
+        <button
+          type="button"
+          class="at-tab"
+          :class="{ active: atTab === 'user' }"
+          role="tab"
+          :aria-selected="atTab === 'user'"
+          @mousedown.prevent="switchAtTab('user')"
+        >
+          <span class="material-symbols-outlined at-tab-icon">alternate_email</span>
+          <span>成员</span>
+        </button>
+        <button
+          type="button"
+          class="at-tab"
+          :class="{ active: atTab === 'date' }"
+          role="tab"
+          :aria-selected="atTab === 'date'"
+          @mousedown.prevent="switchAtTab('date')"
+        >
+          <span class="material-symbols-outlined at-tab-icon">schedule</span>
+          <span>日期</span>
+        </button>
       </div>
+
+      <template v-if="atTab === 'user'">
+        <div class="pp-input-row">
+          <span class="material-symbols-outlined pp-search-icon">search</span>
+          <input
+            ref="atPickerInputEl"
+            v-model="atPickerQuery"
+            class="pp-input"
+            type="text"
+            placeholder="按姓名 / 邮箱搜索…"
+            @keydown.stop
+          />
+        </div>
+        <div class="pp-list">
+          <div v-if="atCandidatesLoading" class="pp-empty">加载成员中…</div>
+          <div v-else-if="atPickerError" class="pp-empty">{{ atPickerError }}</div>
+          <button
+            v-for="(c, idx) in filteredAtCandidates"
+            :key="c.id"
+            class="at-user-item"
+            :class="{ active: idx === atPickerIndex }"
+            @mousedown.prevent="onPickUser(c)"
+            @mousemove="atPickerIndex = idx"
+          >
+            <span class="at-avatar" :style="{ background: c.color }">{{ c.name.slice(0, 1) }}</span>
+            <span class="at-user-text">
+              <span class="at-user-name">{{ c.name }}</span>
+              <span class="at-user-email">{{ c.email }}</span>
+            </span>
+          </button>
+          <div
+            v-if="!atCandidatesLoading && !atPickerError && filteredAtCandidates.length === 0"
+            class="pp-empty"
+          >
+            没有匹配的成员
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="date-picker-wrap">
+          <DateTimePicker @insert="onPickDate" @cancel="hideMenu" />
+        </div>
+      </template>
     </div>
 
     <!-- 正常模式:slash item 列表 -->
@@ -668,5 +861,92 @@ function onDatePickerKey(e: KeyboardEvent) {
   font-size: 13px;
   color: var(--text-3);
 }
+
+/* ─── @ picker (成员 / 日期 tabs) ────────────────────── */
+.at-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.at-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.at-tab:hover { color: var(--text-2); }
+.at-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.at-tab-icon {
+  font-size: 14px !important;
+}
+
+.at-user-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-1);
+}
+.at-user-item:hover { background: var(--bg-subtle); }
+.at-user-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.at-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.at-user-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.at-user-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-user-email {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-user-item.active .at-user-email { color: var(--accent); opacity: 0.7; }
+
+.date-picker-wrap { padding: 8px 8px 12px; }
 </style>
 

@@ -426,6 +426,59 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
+   * "发布到":在目标空间里**复制**一份源 personal-space 页面,原页保留不动。
+   * 后端会加 "(来自 {userName} 的个人分享)" 后缀,所以这里只用插入
+   * 新行(无需改原页)。失败回滚只是把刚 push 进去的 optimistic 项删掉。
+   *
+   * 这个方法**不**触碰源页 — 即使用户已经在前端把源页切到别处 / 改了标题,
+   * 我们都用后端返回的真实副本做 store update。
+   */
+  async function publishPageToSpace(
+    id: string,
+    targetSpaceId: string,
+  ): Promise<PageNode> {
+    if (!pages.value.some((p) => p.id === id)) {
+      throw new Error(`page not found: ${id}`)
+    }
+
+    // Optimistic:用同 sortOrder 占位,等真实数据回来再覆盖。
+    // 暂时用 sortOrder=-1 标记"还没回填",id 已经确定(newId 是后端权威,
+    // 但后端 201 才回,所以这里只能先推一个占位;如果 201 失败再删除)。
+    const tempId = '__pending__' + Math.random().toString(36).slice(2, 8)
+    const optimistic: PageNode = {
+      id: tempId,
+      parentId: null,
+      spaceId: targetSpaceId,
+      title: '',
+      contentJSON: {},
+      contentHTML: '',
+      order: -1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      authorId: '',
+      authorName: null,
+      authorColor: null,
+    }
+    pages.value = [...pages.value, optimistic]
+
+    try {
+      const real = await api.pages.publish(id, { targetSpaceId })
+      // 替换占位
+      const i = pages.value.findIndex((p) => p.id === tempId)
+      if (i >= 0) {
+        pages.value = pages.value.map((p, idx) => (idx === i ? real : p))
+      } else {
+        pages.value = [...pages.value, real]
+      }
+      return real
+    } catch (e) {
+      pages.value = pages.value.filter((p) => p.id !== tempId)
+      ui().setError(`发布到团队空间失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
    * Cross-space move: relocate a page (with its subtree) from its current
    * space into a different space as a root-level page. Used by the sidebar
    * "移动到..." menu to publish a personal-space draft into a team space.
@@ -604,6 +657,7 @@ export const usePagesStore = defineStore('pages', () => {
     renamePage,
     movePage,
     movePageToSpace,
+    publishPageToSpace,
     getTree,
     getTreeForSpace,
     loadTrash,

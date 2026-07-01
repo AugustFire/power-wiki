@@ -13,25 +13,98 @@ const activeId = ref<string>('')
 const manualId = ref<string | null>(null)
 let observer: IntersectionObserver | null = null
 
+/**
+ * 收集 heading 节点。
+ *
+ * ReadView 里是普通 h1/h2/h3。
+ * EditView 里 Tiptap 的 HeadingView 是 .heading-wrapper[data-level="N"] > .heading-content,
+ * wrapper 自身带 data-heading-id(详见 HeadingView.vue)。两种形态都得收。
+ *
+ * 之所以不能"只让 EditView 用一种格式"——Tiptap 改 heading level 时 NodeView 复用
+ * 同一个 DOM 节点,改 as 才不会卡死;这个统一性由 HeadingView 决定,TocPanel 只能兼容。
+ */
+function getHeadingNodes(root: HTMLElement): HTMLElement[] {
+  const collected: HTMLElement[] = []
+  // 1. 普通 h1/h2/h3 — 出现在 ReadView
+  root.querySelectorAll('h1, h2, h3').forEach((h) => collected.push(h as HTMLElement))
+  // 2. 编辑器里的 .heading-wrapper[data-level]
+  root.querySelectorAll('.heading-wrapper[data-level]').forEach((h) => {
+    // 同节点不可能同时被上面和这里匹配(.heading-wrapper 不是 h1/h2/h3 标签),
+    // 但万一以后真撞了,跳过重复
+    if (!collected.includes(h as HTMLElement)) collected.push(h as HTMLElement)
+  })
+  return collected
+}
+
+function readHeading(el: HTMLElement, idx: number): TocItem | null {
+  // 编辑器节点:.heading-wrapper[data-level][data-heading-id]
+  if (el.classList.contains('heading-wrapper')) {
+    const lv = Number(el.getAttribute('data-level') ?? '0') as 1 | 2 | 3
+    if (lv !== 1 && lv !== 2 && lv !== 3) return null
+    // 文本取 .heading-content,避免把外层 anchor '#' 算进去
+    const content = el.querySelector('.heading-content') as HTMLElement | null
+    const text = (content?.textContent || el.textContent || '').trim()
+    if (!text) return null
+    // 编辑器自己已经挂好 data-heading-id(唯一 slug + pos 后缀),直接用
+    const id = el.getAttribute('data-heading-id') || el.id
+    if (!id) return null
+    if (!el.id) el.id = id
+    return { id, text, level: lv }
+  }
+  // 普通 h1/h2/h3(ReadView v-html 渲染后由 headingAnchors.ts 注入 id)
+  const tag = el.tagName.toLowerCase()
+  const lv = Number(tag.substring(1)) as 1 | 2 | 3
+  const text = (el.textContent || '').trim()
+  if (!text) return null
+  if (!el.id) {
+    el.id = `${tag}-${idx}-${text.replace(/\s+/g, '-').slice(0, 30)}`
+  }
+  return { id: el.id, text, level: lv }
+}
+
 function collectHeadings() {
   const root = props.contentRef
   if (!root) {
     items.value = []
     return
   }
-  // 收集 h1/h2/h3。 注意:ReadView 的 .page-title 是个独立 h1,不在 .read-content 内,
-  // 这里只走 props.contentRef(就是 .read-content),所以不会把 page title 算进目录。
-  const headings = root.querySelectorAll('h1, h2, h3')
-  items.value = Array.from(headings).map((h, idx) => {
-    if (!h.id) {
-      const tag = h.tagName.toLowerCase()
-      h.id = `${tag}-${idx}-${(h.textContent || '').replace(/\s+/g, '-').slice(0, 30)}`
-    }
-    const lv = Number(h.tagName.substring(1)) as 1 | 2 | 3
-    return { id: h.id, text: h.textContent || '', level: lv }
+  const nodes = getHeadingNodes(root)
+  const result: TocItem[] = []
+  nodes.forEach((n, idx) => {
+    const item = readHeading(n, idx)
+    if (item) result.push(item)
   })
+  items.value = result
   activeId.value = ''
   manualId.value = null
+}
+
+// MutationObserver 监听 contentRef 内部 heading 增删:用户在编辑器里打
+// 字加新 heading / 删 heading,TOC 必须跟得上。每次 contenteditable
+// input 都触发会太频繁 — 用 rAF 合并到下一帧。
+let mutationObs: MutationObserver | null = null
+let mutationRaf: number | null = null
+
+function setupMutationObserver() {
+  if (mutationObs) mutationObs.disconnect()
+  mutationObs = null
+  if (mutationRaf) {
+    cancelAnimationFrame(mutationRaf)
+    mutationRaf = null
+  }
+  const root = props.contentRef
+  if (!root) return
+  mutationObs = new MutationObserver(() => {
+    if (mutationRaf != null) return
+    mutationRaf = requestAnimationFrame(() => {
+      mutationRaf = null
+      // 重收集 headings 并重建 IntersectionObserver
+      // (新加的 heading 不会自动被 observe)
+      collectHeadings()
+      setupObserver()
+    })
+  })
+  mutationObs.observe(root, { childList: true, subtree: true, characterData: true })
 }
 
 function setupObserver() {
@@ -52,7 +125,7 @@ function setupObserver() {
       threshold: [0, 1],
     }
   )
-  root.querySelectorAll('h1, h2, h3').forEach((h) => observer!.observe(h))
+  getHeadingNodes(root).forEach((h) => observer!.observe(h))
 }
 
 function scrollTo(id: string) {
@@ -69,10 +142,13 @@ onMounted(async () => {
   await nextTick()
   collectHeadings()
   setupObserver()
+  setupMutationObserver()
 })
 
 onUnmounted(() => {
   observer?.disconnect()
+  mutationObs?.disconnect()
+  if (mutationRaf) cancelAnimationFrame(mutationRaf)
 })
 
 // 监听 pageKey 变化 — 这是页面切换的可靠 trigger
@@ -86,6 +162,7 @@ watch(
     await new Promise((r) => requestAnimationFrame(() => r(null)))
     collectHeadings()
     setupObserver()
+    setupMutationObserver()
   }
 )
 
@@ -98,6 +175,7 @@ watch(
     await new Promise((r) => requestAnimationFrame(() => r(null)))
     collectHeadings()
     setupObserver()
+    setupMutationObserver()
   }
 )
 </script>

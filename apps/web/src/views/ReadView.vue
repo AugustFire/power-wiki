@@ -229,11 +229,11 @@ watch(
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
               <span class="author">
-                <UserAvatar :size="20" :color="authorAvatarColor" />
+                <UserAvatar :size="20" :color="authorAvatarColor" :label="authorDisplay" />
                 {{ authorDisplay }}
               </span>
               <span class="dot">·</span>
-              <span>创建于 {{ new Date(page.createdAt).toLocaleDateString('zh-CN') }}</span>
+              <span>最后编辑于 {{ relativeTime(page.updatedAt) }}</span>
               <span class="dot">·</span>
               <span>{{ charCount(page.contentHTML) }} 字</span>
             </div>

@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
-import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
+import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -26,6 +27,16 @@ const localJSON = ref<Record<string, unknown>>(emptyDoc())
 const localHTML = ref<string>(EMPTY_HTML)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const editorRef = ref<any>(null)
+// Stage 7: 右侧 TOC 锚定的 ProseMirror DOM 节点。TocPanel 用
+// IntersectionObserver 做 scroll-spy,只要传一个含 h1/h2/h3 的容器即可。
+// 编辑态下 heading-wrapper 是 <div class="heading-content">,TOC 会用
+// 父 .heading-wrapper 的 data-level 属性识别层级。
+const editorContentEl = ref<HTMLElement | null>(null)
+
+function captureEditorEl() {
+  // ProseMirror 在 mount 后才会挂到 DOM;挂完抓一次,后续 update 也会再抓
+  editorContentEl.value = document.querySelector('.ProseMirror')
+}
 
 const isExisting = computed(() => !!localId.value)
 const page = computed(() => (localId.value ? pagesStore.getPage(localId.value) : undefined))
@@ -231,6 +242,36 @@ async function scheduleAutoSave() {
   }, 500)
 }
 
+/**
+ * Stage 7: route-leave guard. If there's a pending autosave timer, flush
+ * it BEFORE the route actually changes — otherwise the user can set color /
+ * type something, click "View" within the 500ms debounce window, and the
+ * save never fires. The browser's `beforeunload` only covers full reloads;
+ * SPA navigation needs this explicit guard.
+ *
+ * `persistNow()` returns true on success; we only block navigation on a
+ * real save failure so the user gets to see the banner.
+ */
+let isFlushingOnLeave = false
+async function flushPendingSave(): Promise<void> {
+  if (!localId.value) return
+  if (saveTimer) {
+    window.clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  if (!isDirty.value) return
+  isFlushingOnLeave = true
+  saveState.value = 'saving'
+  await persistNow()
+  isFlushingOnLeave = false
+  flashSaved()
+}
+
+onBeforeRouteLeave(async (_to, _from) => {
+  await flushPendingSave()
+  return true
+})
+
 watch([localTitle, localJSON, localHTML], () => {
   if (localId.value) {
     isDirty.value = true
@@ -241,6 +282,12 @@ watch([localTitle, localJSON, localHTML], () => {
 onBeforeUnmount(() => {
   if (saveTimer) window.clearTimeout(saveTimer)
   if (savedHideTimer) window.clearTimeout(savedHideTimer)
+  // Stage 7: best-effort flush for navigations that bypass the router guard
+  // (e.g. tab close, hard reload). For SPA navigation the `onBeforeRouteLeave`
+  // guard above awaits `persistNow()` first; this is a defensive backstop.
+  if (isDirty.value && !isFlushingOnLeave) {
+    void flushPendingSave()
+  }
   // Stage 6: clear active page id so a stray Suggestion that fires after
   // route unmount (e.g. async callback still pending) sees an empty id and
   // bails out instead of polluting the next page's Mention candidates.
@@ -296,7 +343,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="layout no-toc">
+    <div class="layout">
       <Sidebar />
 
       <div class="content">
@@ -336,6 +383,7 @@ onBeforeUnmount(() => {
             @update:html="onEditorHTML"
             @word-count="onEditorWordCount"
             @ready="onEditorReady"
+            @content-mount="captureEditorEl"
           />
 
           <div class="edit-footer">
@@ -353,6 +401,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <TocPanel :content-ref="editorContentEl" :page-key="localId ?? undefined" />
     </div>
 
   </div>
