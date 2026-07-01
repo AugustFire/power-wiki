@@ -12,6 +12,7 @@ import { setUnauthorizedHandler } from './lib/api'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/components.css'
+import './styles/mention.css'
 import 'tippy.js/dist/tippy.css'
 
 const KEY_EXPANDED = 'power-wiki:tree-expanded'

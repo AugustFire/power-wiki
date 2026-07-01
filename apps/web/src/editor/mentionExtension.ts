@@ -20,15 +20,16 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import MentionView from '@/components/editor/MentionView.vue'
+import { MentionList } from '@/components/editor/MentionList.vue'
 import {
-  MentionList,
+  useMentionCandidates,
   type MentionItem,
-  candidatesRef,
-  pageIdRef,
-  fetchCandidates,
-} from '@/components/editor/MentionList.vue'
+} from '@/composables/useMentionCandidates'
 import Suggestion from '@tiptap/suggestion'
 import { PluginKey } from '@tiptap/pm/state'
+
+const { candidatesRef, pageIdRef, fetchCandidatesImmediate: fetchCandidates } =
+  useMentionCandidates()
 
 export interface MentionAttrs {
   userId: string

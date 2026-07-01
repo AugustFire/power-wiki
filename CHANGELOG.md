@@ -73,7 +73,40 @@
   - `components.css` 改 `align-items: flex-start` + 固定 `1.6em` 居中为 `align-items: baseline`(checkbox 底部 = 文字基线);`<p>` 顶 margin 清零;`vertical-align: middle` 兜底。实测 edit / read 两视图 checkbox 中心 ↔ 文字 glyph 中心 delta = 0px(Range API 测)
 - **HomeView 修正文案**:"本地存储 / 浏览器 localStorage" → "云端存储 / 存储备份",跟 0.4 切到 API 后的现状对齐
 
----
+### Stage 7 (continued): tree per-space + 评论分页 + composer @mention + 收尾
+- **tree 展开态 per-space**(`stores/ui.ts` + `components/layout/PageTree.vue`):
+  - `expanded` 由 `string[]` 改成 `Record<spaceId, string[]>`:切 space 不再互相覆盖
+  - 老用户 `string[]` 数据自动落到 `__legacy__` 兜底 key,新 space 第一次 toggle 才物化自己,避免"首次 toggle clobber 整个老展开态"
+  - `isExpanded` / `toggle` / `expand` 加 `spaceId` 参数;`setExpanded` 已无 caller,直接删
+  - `PageTree.vue` 用 `computed` 包 `spacesStore.activeSpaceId.value ?? ''` 透传
+- **`useMentionCandidates` composable**(`apps/web/src/composables/useMentionCandidates.ts`):
+  - 候选缓存 `candidatesRef` / `pageIdRef` / `loadingRef` / `fetchSeq` / `bindPage` / `reset` 提到 module-scope composable
+  - `MentionList.vue`(编辑器弹层)与 `mentionExtension.ts`(Tiptap `items` 回调)共享同一份 state;不再"两处都从 SFC 内部 import"
+  - 旧的 `debouncedFetch` 仍由 `MentionList.vue` 局部包装(让 UI 副作用跟数据 fetch 解耦)
+- **mention.css 集中**(`apps/web/src/styles/mention.css`,新文件):
+  - `.mention-chip` / `.mention-chip[data-mention="0"]` 从 `components.css` 移出
+  - `.mention-suggestion-host` / `.mention-header` / `.mention-row` / `.mention-footer` 等弹层规则从 `MentionList.vue` 的非-scoped `<style>` 块移出(本来因为 Tippy 把节点挂到 `document.body` 不得不 global,集中到一个文件更易读)
+  - `main.ts` 增 `import './styles/mention.css'`;`CommentItem.vue` / `MentionView.vue` 注释里旧的"global rule in components.css"同步更新
+- **评论区分页加载**(`CommentsSection.vue`):
+  - 切到 `usePaginatedList(api.comments.list, { pageSize: 20 })`(`?limit=20&offset=N`,后端已支持)
+  - 列表底部"加载更多"圆角 pill 按钮 + spinner(`disabled` 时灰显),`— 已加载全部 —` 收尾
+  - 顶部 `refreshing` 进度条(B.3 stale-items 模式):切 page 不闪空白,旧评论先停在背景里
+  - 标题 `评论 (N)` → `评论 (N+)` 表示还有更多;Skeleton 占位替换原来"加载评论中…"文字
+  - `pageId` watch 触发 `reset()`;`paginatedError` 转成 `localError` 维持原有 UX 文案
+- **评论列表样式 polish**(`CommentItem.vue`):
+  - 头像位置已删,行内只有 username · 时间 · edited — `ci-time` 加 `margin-left: 2px` 拉开跟 username 距离
+  - `ci-head-actions` 默认 `opacity: 0.55`,`hover` / `focus-within` 评论行再 `1`,减少视觉噪音
+  - `.ci-text` 加 `overflow-wrap: anywhere` 折长 URL
+  - `.ci-replies` `padding-left` 12 → 14,`border-left` 颜色 `var(--border, #ebeef0)` 调浅
+  - `.comment-item:last-child` 去掉最后一个底边
+- **评论 composer @mention**(`useCommentMention` composable + `CommentsComposer.vue`):
+  - `<textarea>` 监听 `@` 输入,弹 Tippy 弹层,候选 = 该 page space 的访问组成员(与编辑器同源,`useMentionCandidates` 共享)
+  - 弹层位置用 mirror div + 计算样式复刻 textarea 字体 / padding / scrollTop 量出 `@` 字符的 `DOMRect`
+  - 候选 `@<name> ` 插入到光标位置 + 自动 focus 回 textarea,光标停在 `name` 之后
+  - 候选 userId 进入 `mentionedUserIds: Set<string>`,提交时随 `api.comments.create({ ..., mentionedUserIds })` 一并发出;后端事务前 re-verify,客户端伪造的 userId 会被丢弃
+  - 弹层内 `↑/↓/Enter/Esc` 由 composable 自处理;Cmd/Ctrl+Enter 仍走 composer 的提交,跟弹层互不干扰
+  - placeholder 改成 "输入 @ 提及成员"
+- **`verify_*.py` 挪到 `scripts/`**:3 个 `git mv`,仓库根目录不再有散落脚本;`git log -M` 视为 rename 而非 delete+add
 
 ## [0.5.0] - 2026-06-29
 

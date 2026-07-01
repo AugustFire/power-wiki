@@ -181,8 +181,11 @@ function onReplyAdded(c: Comment): void {
 
 <style scoped>
 .comment-item {
-  padding: 8px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border, #ebeef0);
+}
+.comment-item:last-child {
+  border-bottom: 0;
 }
 .ci-body {
   min-width: 0;
@@ -198,6 +201,10 @@ function onReplyAdded(c: Comment): void {
   color: var(--text-1, #172b4d);
   font-weight: 600;
 }
+.ci-time {
+  /* 时间戳跟用户名拉开一点距离,避免粘在一起 */
+  margin-left: 2px;
+}
 .ci-edited {
   font-size: 11px;
   color: var(--text-3, #5e6c84);
@@ -207,6 +214,13 @@ function onReplyAdded(c: Comment): void {
   display: flex;
   align-items: center;
   gap: 2px;
+  /* 默认 actions 淡一些,hover 评论时再明显,减少视觉噪音 */
+  opacity: 0.55;
+  transition: opacity 80ms ease;
+}
+.comment-item:hover .ci-head-actions,
+.comment-item:focus-within .ci-head-actions {
+  opacity: 1;
 }
 /* 始终可见的图标按钮 — 替代之前的 kebab menu(那个太难点掉) */
 .ci-icon-btn {
@@ -242,16 +256,18 @@ function onReplyAdded(c: Comment): void {
   font-size: 14px;
   line-height: 1.5;
   word-wrap: break-word;
+  /* 长 URL 串行折行(中文/英文/数字) */
+  overflow-wrap: anywhere;
 }
-/* .mention-chip inherits from the global rule in components.css so editor
+/* .mention-chip inherits from the global rule in mention.css so editor
  * live view, saved HTML read view, and comment text all match. */
 .ci-reply-composer {
   margin-top: 8px;
 }
 .ci-replies {
-  margin-top: 8px;
-  margin-left: 8px;
-  padding-left: 12px;
+  margin-top: 6px;
+  margin-left: 4px;
+  padding-left: 14px;
   border-left: 2px solid var(--border, #ebeef0);
 }
 .ci-error {

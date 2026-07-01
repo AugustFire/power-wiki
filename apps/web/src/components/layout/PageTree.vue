@@ -21,7 +21,10 @@ const router = useRouter()
 const { confirm } = useConfirm()
 
 const depth = computed(() => props.depth ?? 0)
-const isExpanded = computed(() => uiStore.isExpanded(props.node.id))
+// tree-expanded state is keyed by activeSpaceId (Stage 7); each space keeps
+// its own expansion set so collapsing team-space tree doesn't affect personal.
+const spaceId = computed(() => spacesStore.activeSpaceId.value ?? '')
+const isExpanded = computed(() => uiStore.isExpanded(spaceId.value, props.node.id))
 const hasChildren = computed(() => props.node.children.length > 0)
 const isActive = computed(() => route.params.id === props.node.id)
 const isMenuOpen = computed(() => uiStore.openMenuId === props.node.id)
@@ -158,7 +161,7 @@ const menuStyle = computed(() => {
 
 function toggleCaret(e: MouseEvent) {
   e.stopPropagation()
-  if (hasChildren.value) uiStore.toggle(props.node.id)
+  if (hasChildren.value) uiStore.toggle(spaceId.value, props.node.id)
 }
 
 function navigate() {
@@ -177,7 +180,7 @@ function onMoreClick(e: MouseEvent) {
 
 async function addChild() {
   uiStore.closeMenu()
-  uiStore.expand(props.node.id)
+  uiStore.expand(spaceId.value, props.node.id)
   try {
     const p = await pagesStore.createPage({ parentId: props.node.id })
     router.push(`/p/${p.id}/edit`)

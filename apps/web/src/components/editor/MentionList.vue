@@ -22,15 +22,11 @@
  */
 import { ref, type Ref } from 'vue'
 import tippy, { type Instance as TippyInstance } from 'tippy.js'
-import { api } from '@/lib/api'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useMentionCandidates, type MentionItem } from '@/composables/useMentionCandidates'
 
-export interface MentionItem {
-  id: string
-  name: string
-  color: string
-  email: string
-}
+// Re-export for downstream consumers that historically imported from this file.
+export type { MentionItem }
 
 interface SuggestionProps {
   items: MentionItem[]
@@ -41,15 +37,25 @@ interface SuggestionProps {
   query?: string
 }
 
-/* ─── module-level refs + tippy instance ──────────────────────────── */
+/* ─── module-level popover state ────────────────────────────────────
+ * Only popover-lifecycle state stays here (Tippy instance, the latest
+ * Suggestion props, the keyboard selection index). The candidate cache
+ * + pageId + fetch state are owned by `useMentionCandidates` so the
+ * editor's `items` callback and the popover share a single source of
+ * truth.
+ */
 
 const tippyRef: { v: TippyInstance | null } = { v: null }
 let propsRef: SuggestionProps | null = null
 const indexRef: Ref<number> = ref(0)
-export const candidatesRef: Ref<MentionItem[]> = ref([])
-const loadingRef: Ref<boolean> = ref(false)
-export let pageIdRef: string | null = null
-let fetchSeq = 0
+const {
+  candidatesRef,
+  pageIdRef,
+  loadingRef,
+  fetchCandidatesImmediate,
+  bindPage,
+  reset: resetCandidates,
+} = useMentionCandidates()
 
 // Cached DOM nodes the search input writes to. Re-read on every render so
 // we always operate on the live popper (Tippy rebuilds it on close/open).
@@ -91,7 +97,12 @@ function initials(name: string): string {
   return trimmed[0]!
 }
 
-/* ─── search-driven refetch ───────────────────────────────────────── */
+/* ─── search-driven refetch ─────────────────────────────────────────
+ * The composable owns the API call + candidate cache + loading state.
+ * This wrapper layers the popover-specific UI side effects on top
+ * (spinner toggle, index clamp, list re-render). Debounced 150ms so
+ * the search input doesn't fire a request on every keystroke.
+ */
 
 function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -101,36 +112,20 @@ function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T {
   }) as T
 }
 
-export async function fetchCandidates(query: string): Promise<void> {
-  if (!pageIdRef) return
-  const seq = ++fetchSeq
-  loadingRef.value = true
+async function fetchCandidates(query: string): Promise<void> {
   const spinner = popperSpinner()
   if (spinner) spinner.classList.add('is-active')
   try {
-    const raw = await api.comments.mentionCandidates(pageIdRef, query)
-    if (seq !== fetchSeq) return
-    candidatesRef.value = raw.map((c) => ({
-      id: c.id,
-      name: c.name,
-      color: c.color,
-      email: c.email,
-    }))
-    if (indexRef.value >= candidatesRef.value.length) {
-      indexRef.value = 0
-    }
-    renderList()
-  } catch {
-    if (seq !== fetchSeq) return
-    candidatesRef.value = []
-    renderList()
+    await fetchCandidatesImmediate(query)
   } finally {
-    if (seq === fetchSeq) {
-      loadingRef.value = false
-      const s = popperSpinner()
-      if (s) s.classList.remove('is-active')
-    }
+    // Composable's `loadingRef` tracks the API request, but the
+    // spinner also needs to be hidden on error paths.
+    if (spinner) spinner.classList.remove('is-active')
   }
+  if (indexRef.value >= candidatesRef.value.length) {
+    indexRef.value = 0
+  }
+  renderList()
 }
 
 const debouncedFetch = debounce(fetchCandidates, 150)
@@ -243,9 +238,8 @@ function onSearchKeyDown(ev: KeyboardEvent): void {
 export const MentionList = {
   open(props: SuggestionProps): void {
     propsRef = props
-    pageIdRef = useActivePageId().activePageId.value
+    bindPage(useActivePageId().activePageId.value ?? '')
     indexRef.value = 0
-    candidatesRef.value = []
     const initialQuery = props.query ?? ''
 
     const host = document.createElement('div')
@@ -363,11 +357,8 @@ export const MentionList = {
       tippyRef.v = null
     }
     propsRef = null
-    pageIdRef = null
+    resetCandidates()
     indexRef.value = 0
-    candidatesRef.value = []
-    loadingRef.value = false
-    fetchSeq++
   },
 }
 </script>
@@ -383,187 +374,8 @@ export const MentionList = {
 
 <style scoped>
 /* No scoped styles — the host element lives outside Vue's subtree, so
- * selectors here wouldn't match. Global selectors live below. */
+ * selectors here wouldn't match. All global @mention visuals (chip,
+ * popover, search input, candidate rows, footer kbd) live in
+ * `apps/web/src/styles/mention.css`, imported once from main.ts. */
 </style>
 
-<style>
-/* ─── Tippy chrome override ──────────────────────────────────────── */
-/* Tippy's default `light-border` theme paints a hard 1px dark border and
- * a dark arrow. We use a custom theme and reset the chrome here so the
- * popover is a clean white card with a soft shadow. */
-.tippy-box[data-theme~='pw-mention'] {
-  background: transparent;
-  color: inherit;
-  box-shadow: none;
-}
-.tippy-box[data-theme~='pw-mention'] > .tippy-content {
-  padding: 0;
-}
-
-/* ─── popover container ──────────────────────────────────────────── */
-.mention-suggestion-host {
-  width: 280px;
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dfe1e6);
-  border-radius: 8px;
-  box-shadow: var(--shadow-lg, 0 16px 48px rgba(9, 30, 66, 0.2));
-  overflow: hidden;
-  font-family: var(--font-sans, 'Plus Jakarta Sans', system-ui, sans-serif);
-  color: var(--text-1, #172b4d);
-}
-
-/* ─── search header ──────────────────────────────────────────────── */
-.mention-header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  padding: 8px 10px;
-}
-.mention-search-icon {
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 16px;
-  color: var(--text-3, #6b778c);
-  pointer-events: none;
-}
-.mention-search {
-  flex: 1;
-  height: 32px;
-  padding: 0 32px 0 30px;
-  border: 0;
-  background: var(--bg-canvas, #f4f5f7);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text-1, #172b4d);
-  outline: none;
-  transition: background 80ms ease, box-shadow 80ms ease;
-}
-.mention-search::placeholder {
-  color: var(--text-3, #6b778c);
-}
-.mention-search:focus {
-  background: var(--bg, #fff);
-  box-shadow: 0 0 0 2px var(--accent-soft, #deebff);
-}
-.mention-spinner {
-  position: absolute;
-  right: 18px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 16px;
-  color: var(--text-3, #6b778c);
-  opacity: 0;
-  pointer-events: none;
-}
-.mention-spinner.is-active {
-  opacity: 1;
-  animation: mention-spin 0.8s linear infinite;
-}
-@keyframes mention-spin {
-  to {
-    transform: translateY(-50%) rotate(360deg);
-  }
-}
-
-/* ─── separator ──────────────────────────────────────────────────── */
-.mention-sep {
-  height: 1px;
-  background: var(--border, #dfe1e6);
-}
-
-/* ─── candidate list ─────────────────────────────────────────────── */
-.mention-suggestion-list {
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 4px;
-}
-.mention-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 5px;
-  font: inherit;
-  color: inherit;
-  transition: background 60ms ease;
-}
-.mention-row:hover,
-.mention-row.is-active {
-  background: var(--accent-softer, #f4f8ff);
-}
-.mention-row .avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-.mention-row .meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.mention-row .name {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--text-1, #172b4d);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mention-row .email {
-  font-size: 11px;
-  color: var(--text-3, #6b778c);
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mention-empty {
-  padding: 14px 10px;
-  color: var(--text-3, #6b778c);
-  font-size: 13px;
-  text-align: center;
-}
-
-/* ─── footer hint ────────────────────────────────────────────────── */
-.mention-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border, #dfe1e6);
-  background: var(--bg-canvas, #f4f5f7);
-  font-size: 11px;
-  color: var(--text-3, #6b778c);
-}
-.mention-footer kbd {
-  display: inline-block;
-  padding: 0 5px;
-  min-width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
-  background: var(--bg, #fff);
-  border: 1px solid var(--border-strong, #c1c7d0);
-  border-radius: 3px;
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  font-size: 10px;
-  color: var(--text-2, #44546f);
-  margin-right: 2px;
-}
-</style>

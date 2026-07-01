@@ -2,11 +2,13 @@
 /**
  * CommentsComposer — single comment / reply composer.
  *
- * Plain `<textarea>` + Cmd/Ctrl+Enter to submit. The Mention editor's
- * Suggestion only runs inside the page editor; for comments we keep
- * it simple — the server still re-validates any `mentionedUserIds` we
- * forward, but in v0 this composer doesn't auto-extract them (the page
- * editor's Tiptap Suggestion does).
+ * Plain `<textarea>` + Cmd/Ctrl+Enter to submit. @mention support
+ * is provided by `useCommentMention` (Stage 7) — typing `@` opens
+ * a Tippy popover anchored at the @ character, picking a candidate
+ * inserts `@name ` and adds the user id to the `mentionedUserIds`
+ * set forwarded to the server. The server re-verifies the ids
+ * against `mention-candidates` (so a client tampering with the
+ * payload is harmless).
  *
  * Used in two places:
  *   - Top-level comment (parentId = null)
@@ -16,6 +18,7 @@ import { ref, computed } from 'vue'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { useCommentMention } from '@/composables/useCommentMention'
 import type { Comment } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -33,6 +36,18 @@ const me = computed(() => auth.user)
 const text = ref('')
 const submitting = ref(false)
 const error = ref<string | null>(null)
+const textareaEl = ref<HTMLTextAreaElement | null>(null)
+/** User ids extracted from the @-mention popover. Forwarded on submit
+ *  and cleared after a successful create (so the next draft starts
+ *  fresh). The server still re-verifies; this is for UI purposes. */
+const mentionedUserIds = ref<Set<string>>(new Set())
+
+// `useCommentMention` returns three event handlers that wire the
+// textarea to the popover. Page id is forwarded via a computed ref
+// so the candidate list auto-refreshes when the parent (e.g. a
+// pinned sidebar) navigates between pages.
+const pageIdRef = computed(() => props.pageId)
+const mention = useCommentMention(textareaEl, mentionedUserIds, pageIdRef)
 
 async function submit(): Promise<void> {
   const content = text.value.trim()
@@ -44,8 +59,13 @@ async function submit(): Promise<void> {
       pageId: props.pageId,
       parentId: props.parentId ?? null,
       contentMd: content,
+      mentionedUserIds: mentionedUserIds.value.size > 0
+        ? Array.from(mentionedUserIds.value)
+        : undefined,
     })
     text.value = ''
+    mentionedUserIds.value = new Set()
+    mention.close()
     emit('submitted', c)
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '发送失败,请稍后再试'
@@ -55,10 +75,21 @@ async function submit(): Promise<void> {
 }
 
 function onKeyDown(ev: KeyboardEvent): void {
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+  // Let the mention popover handle its own keymap first (↑/↓/Enter/Esc).
+  if (mention.onTextareaKeydown(ev)) return
+  // Submit shortcut — only when no popover is open and no modifier
+  // other than Cmd/Ctrl is held (Shift+Enter still inserts a newline).
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter' && !ev.shiftKey) {
     ev.preventDefault()
     void submit()
   }
+}
+
+function onCancel(): void {
+  text.value = ''
+  mentionedUserIds.value = new Set()
+  mention.close()
+  emit('cancel')
 }
 </script>
 
@@ -72,14 +103,17 @@ function onKeyDown(ev: KeyboardEvent): void {
       class="cc-avatar"
     />
     <textarea
+      ref="textareaEl"
       v-model="text"
-      :placeholder="props.parentId ? '回复…' : '评论 (Cmd/Ctrl+Enter 发送)'"
+      :placeholder="props.parentId ? '回复…(输入 @ 提及成员)' : '评论 (Cmd/Ctrl+Enter 发送,输入 @ 提及成员)'"
       :disabled="submitting"
       rows="3"
       @keydown="onKeyDown"
+      @input="mention.onTextareaInput"
+      @scroll="mention.onTextareaScroll"
     />
     <div class="cc-actions">
-      <button v-if="props.parentId" class="cc-btn cc-cancel" type="button" @click="emit('cancel')">
+      <button v-if="props.parentId" class="cc-btn cc-cancel" type="button" @click="onCancel">
         取消
       </button>
       <button

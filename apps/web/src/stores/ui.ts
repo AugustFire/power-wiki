@@ -4,9 +4,36 @@ import { readJSON, writeJSON } from '@/lib/storage'
 import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 
 const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
+const LEGACY_KEY = '__legacy__'
+
+/**
+ * Stage 7: tree expansion is now keyed by `spaceId`, so a user who
+ * collapses the team space's tree doesn't lose that state when they
+ * switch to their personal space. Shape: `{ [spaceId]: pageId[] }`.
+ *
+ * The old v0.5 format was a flat `string[]` shared across all spaces.
+ * On read we promote it to a per-space record under a sentinel key
+ * (`__legacy__`); any space that hasn't been toggled yet transparently
+ * falls back to the legacy list, so existing users don't suddenly
+ * see their tree collapse when they reload. Once they toggle an
+ * expansion in a given space, that space gets its own materialized
+ * list and the legacy fallback is no longer consulted.
+ */
+type ExpandedBySpace = Record<string, string[]>
+
+function readInitial(): ExpandedBySpace {
+  const raw = readJSON<unknown>(KEY_EXPANDED, {})
+  if (Array.isArray(raw)) {
+    return { [LEGACY_KEY]: raw as string[] }
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as ExpandedBySpace
+  }
+  return {}
+}
 
 export const useUiStore = defineStore('ui', () => {
-  const expanded = ref<string[]>(readJSON<string[]>(KEY_EXPANDED, []))
+  const expanded = ref<ExpandedBySpace>(readInitial())
 
   watch(expanded, (val) => writeJSON(KEY_EXPANDED, val), { deep: true })
 
@@ -31,22 +58,47 @@ export const useUiStore = defineStore('ui', () => {
   const commentsPageId = ref<string | null>(null)
   const commentsOpen = ref(false)
 
-  function isExpanded(id: string): boolean {
-    return expanded.value.includes(id)
+  /**
+   * Resolve the expansion list for a given space, falling back to the
+   * legacy single-list state when the space hasn't been toggled yet.
+   * Returns a fresh array each call to avoid giving callers a live
+   * reference into the store (which would let them bypass the toggle
+   * helpers and mutate state without going through reactivity).
+   */
+  function listFor(spaceId: string): string[] {
+    return expanded.value[spaceId] ?? expanded.value[LEGACY_KEY] ?? []
   }
 
-  function toggle(id: string): void {
-    const idx = expanded.value.indexOf(id)
-    if (idx >= 0) expanded.value.splice(idx, 1)
-    else expanded.value.push(id)
+  function isExpanded(spaceId: string, id: string): boolean {
+    return listFor(spaceId).includes(id)
   }
 
-  function expand(id: string): void {
-    if (!isExpanded(id)) expanded.value.push(id)
+  /**
+   * Materialize the space's expansion list from the legacy fallback (if
+   * any) before mutating it. We only do this on the first user-driven
+   * toggle for a given space — subsequent toggles operate on the
+   * space's own list. Without this step, the first click in a new
+   * space would inherit the entire legacy state and clobber it on the
+   * next mutation.
+   */
+  function ensureList(spaceId: string): string[] {
+    if (!expanded.value[spaceId]) {
+      const seed = expanded.value[LEGACY_KEY]
+      expanded.value[spaceId] = seed ? [...seed] : []
+    }
+    return expanded.value[spaceId]!
   }
 
-  function setExpanded(ids: string[]): void {
-    expanded.value = [...ids]
+  function toggle(spaceId: string, id: string): void {
+    const list = ensureList(spaceId)
+    const idx = list.indexOf(id)
+    if (idx >= 0) list.splice(idx, 1)
+    else list.push(id)
+  }
+
+  function expand(spaceId: string, id: string): void {
+    const list = ensureList(spaceId)
+    if (!list.includes(id)) list.push(id)
   }
 
   function openMenu(id: string, x: number, y: number): void {
@@ -99,7 +151,6 @@ export const useUiStore = defineStore('ui', () => {
     isExpanded,
     toggle,
     expand,
-    setExpanded,
     openMenu,
     closeMenu,
     startRename,
