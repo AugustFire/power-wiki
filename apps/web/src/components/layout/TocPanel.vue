@@ -54,7 +54,13 @@ function readHeading(el: HTMLElement, idx: number): TocItem | null {
   // 普通 h1/h2/h3(ReadView v-html 渲染后由 headingAnchors.ts 注入 id)
   const tag = el.tagName.toLowerCase()
   const lv = Number(tag.substring(1)) as 1 | 2 | 3
-  const text = (el.textContent || '').trim()
+  // headingAnchors.ts 在每个 h2/h3 前面注入了 <a class="heading-anchor">#</a>
+  // 链接,它的 textContent 是 "#"。直接读 `el.textContent` 会把 "#" 带进
+  // TOC 的标题里。ReadView 自己也是 clone + remove anchor 之后才读
+  // (见 ReadView.vue:152),TOC 这边照做。
+  const clone = el.cloneNode(true) as HTMLElement
+  clone.querySelectorAll('a.heading-anchor').forEach((a) => a.remove())
+  const text = (clone.textContent || '').trim()
   if (!text) return null
   if (!el.id) {
     el.id = `${tag}-${idx}-${text.replace(/\s+/g, '-').slice(0, 30)}`

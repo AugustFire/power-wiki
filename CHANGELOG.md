@@ -28,6 +28,24 @@
 - `packages/shared/src/schemas.ts` / `types.ts`:加 `Comment` / `Notification` / `MentionCandidate` + 4 个 Input + `MarkReadInput` + `UnreadCountResponseSchema`,类型走 `z.infer` 重导出
 - `apps/web/src/lib/api.ts` 增 `api.comments.*` + `api.notifications.*` namespace
 - `apps/web/src/styles/components.css` 删 `.comments` / `.comment-input` 死样式
+- **评论区 UX 三连修**:
+  - 去列表圆形头像(垂直间距省一半,Username-only 行);composer 保留
+  - `CommentsSection.vue` 加 `watch(props.pageId)`:切页时清空 `items` 并重 fetch,避免上一页评论带过来
+  - `回复` / `删除` 直接图标(`reply` / `delete`,`material-symbols-outlined`),kebab menu + onClickOutside 模式整体废弃 — 旧菜单"很难收回"就是因为没有 dismiss 监听
+- **@mention 弹层换皮肤 + 搜索框**(`MentionList.vue` + `mentionExtension.ts`):
+  - Tippy 加自定义 `theme: 'pw-mention'` + `arrow: false` 干掉默认 `light-border` 的硬黑边;卡片用 `--bg` / `--border` / `--shadow-lg` 重做,8px 圆角 + 浅灰边 + 蓝色 soft focus 环
+  - 弹层顶部加 `<input class="mention-search">` 配 `search` 图标 + `progress_activity` 加载 spinner,`open()` 时 `requestAnimationFrame` 自动 focus,预填 Tiptap 给的 `props.query`
+  - 150ms debounce 调 `api.comments.mentionCandidates(pageId, q)`,`fetchSeq` 丢弃过期响应
+  - 弹层内的 `↑/↓/Enter/Esc` 由 input 的 `onkeydown` 自处理(编辑器 keymap 不冒泡到 popover 节点)
+  - 底部 footer 三个 kbd 提示(`↑↓ 选择 / Enter 选中 / Esc 关闭`);`hideOnClick: true` — 点回编辑器自动关
+  - 候选缓存(`candidatesRef`)+ `pageIdRef` + `fetchCandidates` 提到 module-scope,`items` 改返缓存(首次空时 await 一次填充);`@query` 文档文本只在选中时由 Suggestion `command` 替掉,搜索框内打字不动文档
+- **ReadView TOC 不再带 `#` 前缀**(`TocPanel.vue`):
+  - 根因:`headingAnchors.ts` 给每个 `h2/h3` 前注的 `<a class="heading-anchor">#</a>` 复制链接被 `el.textContent` 读走,变成 TOC 行首的 `#`
+  - 修法:跟 `ReadView.vue:152` 对齐,clone 节点 + 删 `a.heading-anchor` 再读 `textContent`;编辑模式本来走 `.heading-content` 选择器,不受影响
+- **登出空闪屏修掉**(`App.vue` + `UserMenu.vue`):
+  - 根因:登录时 `transitioning` 罩被 `showBoot = authInitialising || (isAuthed && transitioning)` 双重门住;登出时 `isAuthed` 变 false,罩出不来,中间会经过"authed shell 卸载 + RouterView 渲染一个空 HomeView"的空白帧
+  - `showBoot` 改成 `authInitialising || authStore.transitioning`,`isAuthed` 守卫去掉 — 进出方向同一根管
+  - `UserMenu.onLogout` 跟 `LoginView.onSubmit` 对称:`transitioning = true` → `await logout()` → `await router.replace({ name: 'login' })` → 80ms 尾延迟 → `finally { transitioning = false }`
 - 修正过期文档(README / CLAUDE.md / CHANGELOG):去除文档里的旧里程碑编号,改写为"功能 + 状态"描述;token 速查表与 `tokens.css` 对齐;补全 admin / manager 章节;API 端点列表与代码 1:1
 
 ### Stage 7: 个人空间"发布到" + 编辑器 + 树拖拽 + 任务列表对齐

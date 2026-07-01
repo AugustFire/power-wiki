@@ -7,10 +7,11 @@
  * access to the page's space.
  *
  * Wire-up:
- *   - candidates come from `api.comments.mentionCandidates(pageId, query)`
- *     via `useActivePageId()` so we never leak users from spaces the
- *     current user can't access.
- *   - `MentionList.vue` is the dropdown component (keyboard nav).
+ *   - `MentionList.vue` owns the popover, the search input, the candidate
+ *     cache (`candidatesRef`), and the pageId it should query against
+ *     (`pageIdRef` — set on `open()` from `useActivePageId()`). The
+ *     `items` callback here just returns the cache; the search input
+ *     drives refetches via `fetchCandidates`.
  *   - `MentionView.vue` is the NodeView (inline render, hover tooltip).
  *
  * No toolbar / BubbleMenu entry in v0 — typing `@` is the only entry
@@ -19,11 +20,15 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import MentionView from '@/components/editor/MentionView.vue'
-import { MentionList, type MentionItem } from '@/components/editor/MentionList.vue'
+import {
+  MentionList,
+  type MentionItem,
+  candidatesRef,
+  pageIdRef,
+  fetchCandidates,
+} from '@/components/editor/MentionList.vue'
 import Suggestion from '@tiptap/suggestion'
 import { PluginKey } from '@tiptap/pm/state'
-import { api } from '@/lib/api'
-import { useActivePageId } from '@/composables/useActivePageId'
 
 export interface MentionAttrs {
   userId: string
@@ -95,23 +100,16 @@ export const Mention = Node.create({
         char: '@',
         pluginKey: suggestionKey,
         allowSpaces: false,
-        // Items are computed on-demand by reading the active page id;
-        // a `AbortController` cancels stale fetches when the user keeps
-        // typing or closes the suggestion.
+        // Items are now driven by the popover's own search input (see
+        // `MentionList.vue`). On the first call, the cache is empty, so
+        // we await the initial fetch to avoid an empty flash. Subsequent
+        // calls just return the cache — the search input's debounced
+        // refetch keeps it fresh as the user types.
         items: async ({ query }: { query: string }) => {
-          const pageId = useActivePageId().activePageId.value
-          if (!pageId) return [] as MentionItem[]
-          try {
-            const candidates = await api.comments.mentionCandidates(pageId, query)
-            return candidates.map((c) => ({
-              id: c.id,
-              name: c.name,
-              color: c.color,
-              email: c.email,
-            })) satisfies MentionItem[]
-          } catch {
-            return [] as MentionItem[]
+          if (candidatesRef.value.length === 0 && pageIdRef) {
+            await fetchCandidates(query)
           }
+          return candidatesRef.value
         },
         render: () => {
           // The MentionList module owns the live Tippy instance + index

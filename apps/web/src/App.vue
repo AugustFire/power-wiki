@@ -38,8 +38,13 @@ const { status: authStatus } = storeToRefs(authStore)
  *      isResetPasswordRoute below.
  *   3. transitioning → centered spinner. Set by LoginView between
  *      auth.login() resolving and router.replace() settling on the
- *      destination, so the brief unmount frame between LoginView (branch 2)
- *      and the authed shell (branch 4) doesn't flash blank.
+ *      destination, AND by UserMenu between auth.logout() and the
+ *      /login route settling. The `transitioning` flag alone (not gated on
+ *      `isAuthed`) covers BOTH directions — otherwise the logout handoff
+ *      would briefly unmount the authed shell and mount whatever the
+ *      RouterView decides for the current authed route (e.g. an empty
+ *      HomeView after `resetSessionState` wiped the page tree), which
+ *      manifests as a white flash before the route changes to /login.
  *   4. authed → full shell with topbar + sidebar + RouterView.
  */
 const isAuthed = computed(() => authStore.isAuthed)
@@ -47,7 +52,7 @@ const authInitialising = computed(
   () => authStatus.value === 'idle' || authStatus.value === 'loading',
 )
 const showBoot = computed(
-  () => authInitialising.value || (isAuthed.value && authStore.transitioning),
+  () => authInitialising.value || authStore.transitioning,
 )
 /**
  * ResetPasswordView is a full-bleed split layout (brand panel + form), not

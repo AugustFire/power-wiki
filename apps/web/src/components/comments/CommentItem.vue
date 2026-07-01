@@ -2,7 +2,8 @@
 /**
  * CommentItem — single rendered comment with optional replies.
  *
- *   - Header: avatar · author · relative time
+ *   - Header: author · relative time · always-visible icon buttons
+ *     (reply for top-level; delete for author / admin)
  *   - Body: renders `contentMd` with @-mention promotion: only names
  *     listed in the row's `mentionedUserIds` are wrapped in
  *     `<span class="mention-chip">` (so a casual `email@example.com`
@@ -10,19 +11,20 @@
  *     controlled by the GLOBAL `.mention-chip` rule in
  *     `apps/web/src/styles/components.css` so it matches editor live
  *     view and saved-HTML read view exactly.
- *   - Footer: reply button (top-level only) + author/admin delete menu.
- *   - Replies: nested list, indented, rendered with the same component.
+ *   - Footer: reply composer (when toggled) + nested replies.
  *
- * The `<UserAvatar>` import path mirrors CommentsComposer. The `useAuth`
- * store is used only to know if the current user is the author or admin
- * (which gates the delete affordance). Mutation events bubble up to the
- * parent so it can update the local tree without refetching.
+ * No avatar in the list — kept the composer avatar only, per UX feedback
+ * ("圆形头部太占行高"). Buttons are direct icons, not a kebab menu — the
+ * old kebab was hard to dismiss.
+ *
+ * `useAuth` is used only to know if the current user is the author or
+ * admin (which gates the delete affordance). Mutation events bubble up to
+ * the parent so it can update the local tree without refetching.
  */
 import { ref, computed } from 'vue'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
-import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsComposer from './CommentsComposer.vue'
 import type { Comment } from '@power-wiki/shared'
 
@@ -44,7 +46,6 @@ const canModify = computed(
 )
 
 const showReply = ref(false)
-const menuOpen = ref(false)
 const error = ref<string | null>(null)
 
 function relativeTime(ts: number): string {
@@ -99,7 +100,6 @@ function renderBody(): string {
 }
 
 async function onDelete(): Promise<void> {
-  menuOpen.value = false
   // 自研 confirm 弹窗 — 跟全站 admin 操作的删除确认一致(同一个 ConfirmDialog)
   const ok = await confirm({
     title: '删除这条评论?',
@@ -126,12 +126,6 @@ function onReplyAdded(c: Comment): void {
 
 <template>
   <div class="comment-item" :data-author="comment.authorName ?? comment.authorId">
-    <UserAvatar
-      :label="comment.authorName ?? comment.authorId"
-      :color="comment.authorColor ?? '#0052CC'"
-      :size="32"
-      class="ci-avatar"
-    />
     <div class="ci-body">
       <div class="ci-head">
         <span class="ci-author">{{ comment.authorName ?? comment.authorId }}</span>
@@ -140,25 +134,25 @@ function onReplyAdded(c: Comment): void {
         <div class="ci-head-actions">
           <button
             v-if="!comment.parentId"
-            class="ci-reply-btn"
+            class="ci-icon-btn"
             type="button"
+            :class="{ 'is-active': showReply }"
+            :aria-label="showReply ? '取消回复' : '回复'"
+            :title="showReply ? '取消回复' : '回复'"
             @click="showReply = !showReply"
           >
-            {{ showReply ? '取消回复' : '回复' }}
+            <span class="material-symbols-outlined">reply</span>
           </button>
-          <div class="ci-menu-wrap" v-if="canModify">
-            <button
-              class="ci-kebab"
-              type="button"
-              aria-label="更多操作"
-              @click="menuOpen = !menuOpen"
-            >
-              <span class="material-symbols-outlined">more_vert</span>
-            </button>
-            <div v-if="menuOpen" class="ci-menu">
-              <button type="button" @click="onDelete">删除</button>
-            </div>
-          </div>
+          <button
+            v-if="canModify"
+            class="ci-icon-btn ci-icon-btn-danger"
+            type="button"
+            aria-label="删除评论"
+            title="删除评论"
+            @click="onDelete"
+          >
+            <span class="material-symbols-outlined">delete</span>
+          </button>
         </div>
       </div>
       <div class="ci-text" v-html="renderBody()" />
@@ -187,20 +181,10 @@ function onReplyAdded(c: Comment): void {
 
 <style scoped>
 .comment-item {
-  display: grid;
-  grid-template-columns: 32px 1fr;
-  column-gap: 10px;
-  padding: 6px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border, #ebeef0);
 }
-.ci-avatar {
-  grid-row: 1;
-  grid-column: 1;
-  margin-top: 2px;
-}
 .ci-body {
-  grid-row: 1;
-  grid-column: 2;
   min-width: 0;
 }
 .ci-head {
@@ -224,47 +208,33 @@ function onReplyAdded(c: Comment): void {
   align-items: center;
   gap: 2px;
 }
-.ci-menu-wrap {
-  position: relative;
-}
-.ci-kebab {
+/* 始终可见的图标按钮 — 替代之前的 kebab menu(那个太难点掉) */
+.ci-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: 0;
-  padding: 4px;
-  border-radius: 3px;
+  border-radius: 4px;
   color: var(--text-3, #5e6c84);
   cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
 }
-.ci-kebab:hover {
+.ci-icon-btn:hover {
   background: var(--hover-bg, #f4f5f7);
+  color: var(--accent, #0052cc);
 }
-.ci-kebab .material-symbols-outlined {
-  font-size: 16px;
+.ci-icon-btn.is-active {
+  background: var(--hover-bg, #f4f5f7);
+  color: var(--accent, #0052cc);
 }
-.ci-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  min-width: 120px;
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dfe1e6);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
-  z-index: 20;
-}
-.ci-menu button {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  background: transparent;
-  border: 0;
-  text-align: left;
+.ci-icon-btn-danger:hover {
   color: var(--danger, #de350b);
-  font-size: 13px;
-  cursor: pointer;
 }
-.ci-menu button:hover {
-  background: var(--hover-bg, #f4f5f7);
+.ci-icon-btn .material-symbols-outlined {
+  font-size: 18px;
 }
 .ci-text {
   margin-top: 4px;
@@ -275,21 +245,8 @@ function onReplyAdded(c: Comment): void {
 }
 /* .mention-chip inherits from the global rule in components.css so editor
  * live view, saved HTML read view, and comment text all match. */
-.ci-reply-btn {
-  background: transparent;
-  border: 0;
-  color: var(--text-3, #5e6c84);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 3px;
-}
-.ci-reply-btn:hover {
-  background: var(--hover-bg, #f4f5f7);
-  color: var(--accent, #0052cc);
-}
 .ci-reply-composer {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 .ci-replies {
   margin-top: 8px;

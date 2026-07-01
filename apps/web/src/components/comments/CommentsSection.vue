@@ -12,7 +12,7 @@
  * Level-2 only (v0): no nested replies-of-replies. The server enforces the
  * same shape — see `apps/api/src/routes/comments.ts`.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import CommentItem from './CommentItem.vue'
 import CommentsComposer from './CommentsComposer.vue'
@@ -42,6 +42,20 @@ async function load(): Promise<void> {
 }
 
 onMounted(load)
+
+// 当父组件切换 pageId(用户点击别的 page、Router 把 ReadView 路由到新 page)
+// 时,清空旧评论并重新拉取。否则会出现:
+//   - 从有评论的 page 切到无评论的 page,旧评论还显示着
+//   - 切到新 page 但本地 items 是空的,要手动刷新才看到
+// `immediate: false` 因为 onMounted 已经拉过一次了
+watch(
+  () => props.pageId,
+  () => {
+    items.value = []
+    error.value = null
+    void load()
+  },
+)
 
 function onSubmitted(c: Comment): void {
   // `parentId` is null for top-level (composer we render right below the

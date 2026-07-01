@@ -71,10 +71,24 @@ function goMySpace() {
 
 async function onLogout() {
   close()
-  await authStore.logout()
-  // After logout the auth guard will redirect any protected route to /login.
-  // We use replace (not push) so back-button doesn't return to a protected page.
-  void router.replace({ name: 'login' })
+  // Cover the logout handoff with the boot spinner (App.vue showBoot),
+  // mirroring LoginView's login-time pattern. Without this the moment
+  // `auth.logout()` sets `user = null` the authed shell unmounts; the
+  // RouterView then re-renders the current authed route (e.g. a HomeView
+  // whose page tree was just wiped by `resetSessionState`), giving us a
+  // visible blank frame before the router settles on /login.
+  authStore.transitioning = true
+  try {
+    await authStore.logout()
+    // After logout the auth guard will redirect any protected route to /login.
+    // We use replace (not push) so back-button doesn't return to a protected page.
+    await router.replace({ name: 'login' })
+    // Small delay so the LoginView has at least started mounting before
+    // we drop the boot overlay (matches the 80ms tail in LoginView.onSubmit).
+    await new Promise((r) => setTimeout(r, 80))
+  } finally {
+    authStore.transitioning = false
+  }
 }
 </script>
 
