@@ -32,7 +32,7 @@ import {
   UpdateSpaceInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { spaceGroupAccess, spaces, userGroups, pageTemplates } from '../db/schema'
+import { spaceGroupAccess, spaces, userGroups } from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
@@ -229,11 +229,9 @@ adminSpacesRouter.delete('/:id', async (c) => {
     )
   }
   // No FK CASCADE — sweep the access join table explicitly so we don't
-  // leave rows pointing at a deleted space. Stage 8: also wipe any
-  // space-scoped templates (global templates survive — they're spaceId null).
+  // leave rows pointing at a deleted space.
   await db.transaction(async (tx) => {
     await tx.delete(spaceGroupAccess).where(eq(spaceGroupAccess.spaceId, id))
-    await tx.delete(pageTemplates).where(eq(pageTemplates.spaceId, id))
     await tx.delete(spaces).where(eq(spaces.id, id))
   })
   return c.body(null, 204)

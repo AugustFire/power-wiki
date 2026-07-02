@@ -186,7 +186,6 @@ export type {
   MentionCandidatesQuery,
   // Stage 8
   PageVersion,
-  PageTemplate,
   AddLabelInput,
-  CreateTemplateInput,
+  DuplicatePageInput,
 } from './schemas'

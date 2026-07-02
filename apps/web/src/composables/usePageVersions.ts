@@ -93,6 +93,13 @@ async function restore(pageId: string, versionId: string): Promise<PageNode> {
   return updated
 }
 
+async function refresh(pageId: string): Promise<void> {
+  // 用户每次打开版本历史面板都强制重拉 —— 边界快照在 EditView idle / route
+  // leave 时打,别的标签页 / 同事都可能在写当前 page,缓存会过时。
+  byPage.delete(pageId)
+  return ensureLoaded(pageId)
+}
+
 /** Called from auth.resetSessionState on login/logout. */
 function invalidate(): void {
   byPage.clear()
@@ -101,6 +108,7 @@ function invalidate(): void {
 export function usePageVersions() {
   return {
     ensureLoaded,
+    refresh,
     loadMore,
     restore,
     invalidate,

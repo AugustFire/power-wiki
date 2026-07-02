@@ -396,42 +396,6 @@ export const pageLabels = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
- *  Page templates — Stage 8
- *
- *  Reusable page skeletons. spaceId null = global template (visible
- *  to everyone); set = space-scoped (visible to space members + admin
- *  bypass). Seeding: bootstrap.ts installs 5 built-ins on first run
- *  (idempotent — checks for existence by title before insert).
- *  Built-ins: 空白 / 会议纪要 / RFC / SOP / 周报.
- *
- *  No FK — space hard-delete wipes this table by spaceId in the
- *  adminSpaces DELETE transaction.
- * ───────────────────────────────────────────────────────────────── */
-export const pageTemplates = pgTable(
-  'page_templates',
-  {
-    id: text('id').primaryKey(),
-    /** Null = global template (visible to everyone).
-     *  Set = space-scoped (visible to space members + admin). */
-    spaceId: text('space_id'),
-    title: text('title').notNull(),
-    description: text('description'),
-    /** Tiptap doc + HTML snapshot (contentHTML is pre-sanitized for v-html). */
-    contentJson: jsonb('content_json').$type<TiptapJSON>().notNull().default({}),
-    contentHtml: text('content_html').notNull().default(''),
-    icon: text('icon'),
-    /** Built-in flag: bootstrap-installed templates can't be deleted by
-     *  users; admin can override (but bootstrap never re-inserts). */
-    isBuiltIn: boolean('is_built_in').notNull().default(false),
-    /** No FK — disabled users get their templates left as-is (orphan authorId
-     *  is handled in the UI like other free-form id references). */
-    createdBy: text('created_by').notNull(),
-    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
-  },
-  (t) => [index('page_templates_space_idx').on(t.spaceId)],
-)
-
-/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -453,5 +417,3 @@ export type PageVersionRow = typeof pageVersions.$inferSelect
 export type NewPageVersionRow = typeof pageVersions.$inferInsert
 export type PageLabelRow = typeof pageLabels.$inferSelect
 export type NewPageLabelRow = typeof pageLabels.$inferInsert
-export type PageTemplateRow = typeof pageTemplates.$inferSelect
-export type NewPageTemplateRow = typeof pageTemplates.$inferInsert

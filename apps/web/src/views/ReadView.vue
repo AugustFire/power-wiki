@@ -94,6 +94,19 @@ async function toggleStar() {
   await pagesStore.updatePage(page.value.id, { starred: !page.value.starred })
 }
 
+/**
+ * Copy this page in place — POST /api/pages/:id/duplicate. On success
+ * the store renumbers the source's sibling group so the copy lands
+ * immediately after the source, and we navigate to the new copy's read
+ * view (mirrors `publishPageToSpace`'s navigation pattern from PageTree).
+ * Store shows the error banner on failure; no inner try/catch needed.
+ */
+async function onDuplicate() {
+  if (!page.value) return
+  const created = await pagesStore.duplicatePage(page.value.id)
+  await router.push(`/p/${created.id}`)
+}
+
 watch(page, async () => {
   await new Promise((r) => setTimeout(r, 50))
   contentEl.value = document.querySelector('.read-content')
@@ -238,6 +251,16 @@ watch(
             {{ page.starred ? 'star' : 'star_outline' }}
           </span>
         </button>
+        <button
+          v-if="page"
+          class="btn ghost"
+          type="button"
+          aria-label="复制页面"
+          title="复制页面"
+          @click="onDuplicate"
+        >
+          <span class="material-symbols-outlined icon-lg">content_copy</span>
+        </button>
         <ExportMenu v-if="page" :page-id="page.id" />
         <VersionPanelToggle v-if="page" :open="historyOpen" @toggle="historyOpen = !historyOpen" />
         <button class="btn primary" @click="goEdit">
@@ -269,8 +292,6 @@ watch(
               </span>
             </div>
 
-            <LabelPills v-if="page" :page="page" />
-
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
               <span class="author">
@@ -284,6 +305,8 @@ watch(
             </div>
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>
+
+            <LabelPills v-if="page" :page="page" />
 
             <div v-if="subPages.length > 0" class="subpages">
               <div class="subpages-title">
@@ -336,7 +359,11 @@ watch(
         </div>
       </div>
 
-      <TocPanel :content-ref="contentEl" :page-key="page?.id" />
+      <TocPanel
+        :content-ref="contentEl"
+        :page-key="page?.id"
+        :labels="page?.labels ?? []"
+      />
       <VersionPanel
         v-if="historyOpen && page"
         :page-id="page.id"

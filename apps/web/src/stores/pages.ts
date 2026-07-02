@@ -157,12 +157,9 @@ export const usePagesStore = defineStore('pages', () => {
     // Guard: if user is in the manager UI without an active space, refuse cleanly.
     const spaceId = opts.spaceId ?? useSpacesStore().activeSpaceId.value
     if (!spaceId) throw new Error('no active space — cannot create page')
-    // Stage 8: forward template fields. The previous signature only
-    // accepted {id, parentId, title}, so Sidebar's `createFromTemplate`
-    // silently dropped contentJSON/contentHTML/icon — the new page came
-    // out with the right title but an empty body, exactly the user-reported
-    // bug. Reuse the incoming content for the optimistic insert so the
-    // editor sees the template body immediately on mount.
+    // Forward the caller's body fields into the optimistic placeholder so
+    // the editor sees real content immediately on mount (instead of an
+    // empty doc that "snaps" to the real content when the POST resolves).
     const optimistic: PageNode = {
       id,
       parentId,
@@ -183,14 +180,18 @@ export const usePagesStore = defineStore('pages', () => {
     pages.value.push(optimistic)
 
     try {
-      // Forward every field the caller passed — including template body +
+      // Forward every field the caller passed — including content +
       // icon + optional explicit `order` (seed scripts use this) — so the
       // server-side row matches what the optimistic entry already shows.
+      // title MUST always be sent (even when caller didn't supply one):
+      // backend defaults `input.title ?? DEFAULT_TITLE`, but if we omit the
+      // field entirely the default branch still runs and the response parse
+      // passes. Sending it here is belt-and-braces for forward compat.
       const apiPayload: CreatePageInput = {
         id,
         parentId,
         spaceId,
-        ...(opts.title !== undefined ? { title: opts.title } : {}),
+        title: opts.title ?? DEFAULT_TITLE,
         ...(opts.icon !== undefined ? { icon: opts.icon } : {}),
         ...(opts.contentJSON !== undefined
           ? { contentJSON: opts.contentJSON as CreatePageInput['contentJSON'] }
@@ -496,6 +497,96 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
+   * In-place sibling copy (POST /api/pages/:id/duplicate). Mirrors
+   * `publishPageToSpace`'s optimistic-placeholder pattern, then on the
+   * server response it:
+   *
+   * 1. swaps the placeholder for the real row (with the server-computed
+   *    title prefix `复制自` and correct sortOrder),
+   * 2. **renumbers every sibling** in source's parent group so the copy
+   *    visibly lands immediately after the source — same trick `movePage`
+   *    uses locally so the tree re-renders in the right position without
+   *    a full reload.
+   *
+   * Local positions are approximated to the canonical 0..N sequence. The
+   * server's authoritative order is observable when the next list refresh
+   * lands; this avoids a tree "shuffle" in the meantime.
+   */
+  async function duplicatePage(id: string): Promise<PageNode> {
+    const source = pages.value.find((p) => p.id === id)
+    if (!source) throw new Error(`page not found: ${id}`)
+
+    const tempId = '__pending__' + Math.random().toString(36).slice(2, 8)
+    const optimistic: PageNode = {
+      id: tempId,
+      parentId: source.parentId,
+      spaceId: source.spaceId,
+      title: `复制自${(source.title ?? '').trim() || '未命名'}`,
+      // Carry content over optimistically — the editor (if the user
+      // navigates straight into it) shouldn't render a blank doc.
+      contentJSON: source.contentJSON,
+      contentHTML: source.contentHTML,
+      icon: source.icon,
+      order: -1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      authorId: '',
+      authorName: null,
+      authorColor: null,
+    }
+    pages.value = [...pages.value, optimistic]
+
+    try {
+      const real = await api.pages.duplicate(id)
+
+      // 1. Drop the placeholder; ensure `real` is in the array.
+      const withoutPlaceholder = pages.value.filter((p) => p.id !== tempId)
+      const withReal = withoutPlaceholder.some((p) => p.id === real.id)
+        ? withoutPlaceholder.map((p) => (p.id === real.id ? real : p))
+        : [...withoutPlaceholder, real]
+
+      // 2. Renumber source's sibling group so `real` lands at sourceIdx+1.
+      const group = withReal
+        .filter(
+          (p) =>
+            p.spaceId === source.spaceId && p.parentId === source.parentId,
+        )
+        .sort((a, b) => a.order - b.order)
+      const sourceIdx = group.findIndex((p) => p.id === source.id)
+      const insertAt = sourceIdx < 0 ? group.length : sourceIdx + 1
+      const reordered = [
+        ...group.slice(0, insertAt),
+        real,
+        ...group.slice(insertAt),
+      ].map((p, i) => ({ ...p, order: i }))
+      const reorderedMap = new Map(reordered.map((p) => [p.id, p]))
+
+      pages.value = withReal.map((p) => reorderedMap.get(p.id) ?? p)
+      return real
+    } catch (e) {
+      pages.value = pages.value.filter((p) => p.id !== tempId)
+      ui().setError(`复制失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
+   * 边界 / idle boundary checkpoint —— POST /api/pages/:id/snapshots。
+   *
+   * EditView 在以下两种情况调用:
+   *   1. 停笔 30s 后 scheduleIdleSnapshot 触发
+   *   2. flushPendingSave(route leave / unmount)成功后,如果还有未
+   *      snapshot 的改动,补一份 boundary 版本
+   *
+   * 不写本地缓存 —— usePageVersions 是按 (pageId) 懒加载的,下次打开
+   * VersionPanel 时自己 refetch。invalidation 会拉所有打开的 page,
+   * 反而刷掉别人正在看的东西。
+   */
+  async function snapshotPage(id: string, changeNote?: string): Promise<void> {
+    await api.pageSnapshots.create(id, changeNote)
+  }
+
+  /**
    * Cross-space move: relocate a page (with its subtree) from its current
    * space into a different space as a root-level page. Used by the sidebar
    * "移动到..." menu to publish a personal-space draft into a team space.
@@ -697,6 +788,8 @@ export const usePagesStore = defineStore('pages', () => {
     movePage,
     movePageToSpace,
     publishPageToSpace,
+    duplicatePage,
+    snapshotPage,
     getTree,
     getTreeForSpace,
     loadTrash,

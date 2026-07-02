@@ -10,6 +10,50 @@
 ## [Unreleased]
 
 ### Added
+- **页面复制**:`POST /api/pages/:id/duplicate` —— 同空间同父的新页紧跟源页之后(sibling group 内 insert-after-source),内容(title / icon / contentJSON / contentHTML)逐字复制,starred / labels / soft-delete 不继承;title 前缀 `复制自`(用户字面要求);admin 写他人 personal space 仍 403;前端 `<LabelPills>` 右栏不变,补 PageTree 菜单「复制页面」项 + ReadView 操作栏「复制」按钮
+- **历史 checkpoint 边界触发**:`POST /api/pages/:id/snapshots` ——「自动打版本」替代每 PATCH 写一行历史;EditView 30s idle(`IDLE_SNAPSHOT_MS = 30_000`)+ route leave 末段自动打 boundary snapshot;Restore 端点照旧自管 version insert(`changeNote = "restored from v{N}"`);Retention 30 行复用 `pageVersions.ts` 的 `RETENTION`
+- **共享常量** `packages/shared/src/constants.ts`:`DEFAULT_TITLE = '无标题页面'`,前后端 createPage 默认 title 同源,避免历史上后端 `''` 默认值漂移导致的 schema `min(1)` 拒收
+
+### Fixed
+- **空标题脏数据 backfill**:4 行 commit b2e0605 种出来的 live page(`title IS NULL OR title = ''`)批量 UPDATE 为 `未命名`,清空 GET /api/pages 的 ZodError 噪声
+- **历史记录噪声根因**:移除 `PATCH /api/pages/:id` 里每个 content-mutating PATCH 自动写 `page_versions` 的逻辑;auto-save 永远静默,version 只在 idle / route leave 边界打(跟 Notion / Google Docs / Figma 一致)
+- **创建页面失败 `标题不能为空`**:Backend `apps/api/src/routes/pages.ts:269` 用 `input.title ?? DEFAULT_TITLE` 替换 `input.title ?? ''`;Frontend `apps/web/src/stores/pages.ts` `createPage` 永远在 API payload 里带 `title`,不再 `...(opts.title !== undefined ? { title } : {})` 省略
+- **标签添加 Enter 无反应**:`LabelAddPopover.vue:112` 的 `@keydown.stop` 把所有按键(包括 Enter)冒泡终止,document 监听器收不到事件 → 删该修饰符,Enter 走 `submit()` 创建;Esc 仍由 document 监听器关闭
+- **标签位置从顶部 H1 上挪到右 TocPanel 「页面关注者」之上**:ReadView / EditView 主体底部仍保留可编辑 `<LabelPills>`(用户可在阅读时打标签);右 TOC 加 read-only chip 镜像区(同名同源 `page.labels` reactive),同步双向更新。标签样式重做按 `design/wiki-read.html` line 418 风格:左侧 `sell` icon + chips(bg-subtle / text-2 / weight 600 / 12px / 2px 6px / 3px radius)+ 文字按钮「添加标签 / 编辑标签」(accent 蓝),去掉 dashed `+` chip + 常驻 `×` 移除按钮(改为 hover 才显形)
+- **发布按钮的 boundary snapshot bug**:`flushPendingSave` 早返条件从 `if (!isDirty.value) return` 改成 `if (!isDirty.value && !hasUnsnapshottedEdits.value) return` —— publish 路径下 `persistNow` 已经清掉 `isDirty` 但 `hasUnsnapshottedEdits` 是 true,旧逻辑提前 return 导致 boundary snapshot 走不到
+- **删除「保存草稿」按钮**(`EditView.vue`):跟 auto-save 行为完全重复(`persistNow` 走同一条 PATCH 路径),「草稿」语义在 wiki 上下文里错位(没有 draft 状态),主流编辑器(Notion / GDocs / Confluence)均不提供;footer 只剩 meta + 字数统计
+- **VersionPanel 打开即刷新**:`usePageVersions.refresh(pageId)` 强清缓存重拉,确保看到最新边界快照(用户在别的标签页 / 同事刚写的版本);列表为空时仍走 skeleton
+- **VersionDiffView 简化**:不再 2-列 side-by-side 矩阵(空 unchanged-run 产空白行丑);改单列 unified diff:空态「当前版本与 v{N} 内容一致」;有变化时显示 summary(−N 行 / +N 行)+ 顺序行的 `− / +` 列表(strikethrough 红 / 绿);long unchanged-run 不再展开,折叠到自然跳过
+- **VersionPanel 样式重做**:从「v1 LE 刚刚 ▾」五列 grid + 「当前版本 | V1 · 测试一下历史快照」表头感 → 「头像 + 信息(版本号 + 作者 + 时间 / 当前版本 tag + 自动/恢复 note)+ caret」卡片布局,空态 / hover / active / current-tag 状态清晰
+
+### Removed
+- **页面模板功能(commit b2e0605 中未验证的整块)** —— 删 5 个文件 + 11 个混合文件模板片段:
+  - D `apps/api/src/auth/seedBuiltInTemplates.ts`(422 行)
+  - D `apps/api/src/routes/pageTemplates.ts`(228 行)
+  - D `apps/web/src/components/page/TemplatePickerDialog.vue`(253 行)
+  - D `apps/web/src/components/page/TemplatePickerTrigger.vue`(162 行)
+  - D `apps/web/src/composables/useTemplates.ts`(97 行)
+  - `apps/api/src/db/schema.ts`:删 `pageTemplates` pgTable + 2 个 RowType
+  - `apps/api/src/db/migrations/0006`:删 `page_templates` CREATE TABLE + index
+  - `apps/api/src/auth/bootstrap.ts`:删 stage-6 seed 调用 + `builtInTemplatesSeeded` 字段
+  - `apps/api/src/index.ts`:卸 `/api/templates` 路由挂载
+  - `apps/api/src/routes/adminSpaces.ts`:恢复 `pages` import + 删 `tx.delete(pageTemplates)` 段
+  - `apps/web/src/lib/api.ts`:删 `templates.{list,create,delete}` 块 + 3 个 import
+  - `apps/web/src/stores/auth.ts`:删 `useTemplates().invalidate()` 调用
+  - `apps/web/src/components/layout/Sidebar.vue`:模板选择器整段拆掉,按钮还原 `<button class="create-page-btn">`
+  - `packages/shared/src/schemas.ts`:删 `PageTemplateSchema` + `CreateTemplateInputSchema` + 两条 type + 注释里指向已删 schema 的引用
+  - `packages/shared/src/types.ts`:删 PageTemplate / CreateTemplateInput re-export
+
+### CLAUDE.md 硬约束新增
+- **不做页面模板功能。** 不建 `page_templates` 表、不挂 `/api/templates` 路由、不做模板选择器 / 模板按钮 / 内置模板 seed。复制需求一律走页面复制(`POST /api/pages/:id/duplicate`,title 前缀 `复制自`,新页落在源页正下方同 sibling 组)。
+- **Labels：ReadView / EditView 内容底部都有可编辑 `<LabelPills>`；右 TOC 另有只读 chip 镜像展示。** ReadView 在 `.read-content` 之后、`.subpages` / `.reactions` / `CommentsSection` 之前;EditView 在 `RichEditor` 之后、`.edit-footer` 之前。两边始终同步(同一份 reactive `page.labels`)。
+- **Auto-save 永远静默,version 只在 idle / route-leave 边界自动打;不做手动「保存为版本」按钮。** `PATCH /api/pages/:id` 只更新 `pages` 行,**不**写 `page_versions`。`POST /api/pages/:id/snapshots` 是打 checkpoint 的唯一入口(前端 EditView 30s idle timer + `flushPendingSave` 末尾各调一次)。Restore 端点自管 version insert。Retention 30 行复用 `apps/api/src/routes/pageVersions.ts` 的 `RETENTION`。
+
+---
+
+## [Unreleased-prior]
+
+### Added
 - **Stage 6: 评论 / @mention / 通知**:`comments` + `notifications` 两张表 + 5 + 4 个端点
   - **评论区**:嵌在 `ReadView` 末尾(替换原死代码 `<div class="comments">`);`/api/comments?pageId=X` 列表 + POST / PATCH / DELETE;支持二级嵌套(顶 + replies);v0 内嵌 section,v0.1 可升级右抽屉(uiStore 预留 `commentsOpen/commentsPageId` state)
   - **@mention**:Tiptap `Mention` 扩展 + Suggestion 弹层;`@` 触发,**候选人限定为该 page 所在 space 的访问组成员**(`space_group_access × user_group_members × users WHERE status='active'`,符合用户硬约束);SlashMenu 加 `mention` item

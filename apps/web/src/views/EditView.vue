@@ -112,6 +112,9 @@ onMounted(async () => {
       lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
       lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
       isDirty.value = false
+      // 进入编辑页不需要立刻打 checkpoint —— hasUnsnapshottedEdits 必须 false,
+      // 否则 idle timer fire 时会打一个「啥都没改」的 version。
+      hasUnsnapshottedEdits.value = false
       // Stage 6: make this page id available to the Mention extension's
       // Suggestion plugin so @-mentions resolve against THIS page's space,
       // not the last-edited page. We re-set it whenever localId changes too
@@ -219,19 +222,17 @@ async function persistNow(): Promise<boolean> {
     lastSavedJSON.value = json
     lastSavedHTML.value = html
     isDirty.value = false
+    // PATCH 成功后:标记「还有未打 checkpoint 的改动」,由 idle 计时器
+    // 或 route leave hook 触发 boundary snapshot(POST /:id/snapshots)。
+    // 把 schedule 紧贴 success 之后,让 timer 从「上次编辑时间」重新起算。
+    hasUnsnapshottedEdits.value = true
+    scheduleIdleSnapshot()
     return true
   } catch {
     // 失败时 store 已经回滚 + uiStore.setError 弹了 banner,这里只翻状态
     saveState.value = 'error'
     return false
   }
-}
-
-async function saveDraft() {
-  if (!localId.value) return
-  saveState.value = 'saving'
-  const ok = await persistNow()
-  if (ok) flashSaved()
 }
 
 async function publish() {
@@ -304,6 +305,13 @@ watch(
         lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
         isDirty.value = false
         saveState.value = 'idle'
+        // 切到另一个 page:idle timer 还可能持有上一 page 的 callback,清掉。
+        // hasUnsnapshottedEdits 也重置,避免跨 page 误触发 snapshot。
+        if (idleSnapshotTimer) {
+          window.clearTimeout(idleSnapshotTimer)
+          idleSnapshotTimer = null
+        }
+        hasUnsnapshottedEdits.value = false
       }
     }
   }
@@ -321,6 +329,30 @@ async function scheduleAutoSave() {
   }, 500)
 }
 
+/** Version 边界:停笔 N 秒就当一个「编辑会话」结束,打一个 checkpoint
+ *  (POST /:id/snapshots)。跟 Notion / Google Docs 的习惯一致 —— PATCH
+ *  永远静默,version 只在 idle / route leave 这种机器化边界打。
+ *  用户偏好:不提供手动「保存为版本」按钮。 */
+const IDLE_SNAPSHOT_MS = 30_000
+let idleSnapshotTimer: number | null = null
+const hasUnsnapshottedEdits = ref(false)
+
+function scheduleIdleSnapshot() {
+  if (idleSnapshotTimer) window.clearTimeout(idleSnapshotTimer)
+  idleSnapshotTimer = window.setTimeout(async () => {
+    // timer fire 时如果用户已经走了(`localId` 变了,或 `flushPendingSave`
+    // 已把 hasUnsnapshottedEdits 翻回 false),直接退出。
+    if (!localId.value || !hasUnsnapshottedEdits.value) return
+    try {
+      await pagesStore.snapshotPage(localId.value)
+      hasUnsnapshottedEdits.value = false
+    } catch {
+      // 静默。失败只是少一个 checkpoint,用户下次的 snapshot 还会
+      // 自然触发。已经在 store 里弹过 ui().setError 才到这里的。
+    }
+  }, IDLE_SNAPSHOT_MS)
+}
+
 /**
  * Stage 7: route-leave guard. If there's a pending autosave timer, flush
  * it BEFORE the route actually changes — otherwise the user can set color /
@@ -330,6 +362,9 @@ async function scheduleAutoSave() {
  *
  * `persistNow()` returns true on success; we only block navigation on a
  * real save failure so the user gets to see the banner.
+ *
+ * 追加:flush 成功后,若仍有未打 checkpoint 的改动,补一个 boundary
+ * snapshot —— 离开页面自然结束一个编辑会话。
  */
 let isFlushingOnLeave = false
 async function flushPendingSave(): Promise<void> {
@@ -338,12 +373,32 @@ async function flushPendingSave(): Promise<void> {
     window.clearTimeout(saveTimer)
     saveTimer = null
   }
-  if (!isDirty.value) return
+  if (idleSnapshotTimer) {
+    window.clearTimeout(idleSnapshotTimer)
+    idleSnapshotTimer = null
+  }
+  // 早返条件:**不**用 `!isDirty` 一刀切 —— publish 在调 persistNow 时
+  // 已经把 isDirty 翻回 false,但 hasUnsnapshottedEdits 还是 true(刚刚那次
+  // PATCH 没打 boundary snapshot)。这时进 flushPendingSave 仍应补一个
+  // checkpoint,所以两个 flag 都要看。
+  if (!isDirty.value && !hasUnsnapshottedEdits.value) return
+
   isFlushingOnLeave = true
-  saveState.value = 'saving'
-  await persistNow()
+  if (isDirty.value) {
+    saveState.value = 'saving'
+    const ok = await persistNow()
+    if (ok) flashSaved()
+  }
+  // publish 已经替我们跑过 persistNow 时(此时 isDirty=false),只补 snapshot 这一段。
+  if (hasUnsnapshottedEdits.value) {
+    try {
+      await pagesStore.snapshotPage(localId.value)
+      hasUnsnapshottedEdits.value = false
+    } catch {
+      /* 同 scheduleIdleSnapshot 的静默:失败不阻塞导航 */
+    }
+  }
   isFlushingOnLeave = false
-  flashSaved()
 }
 
 onBeforeRouteLeave(async (_to, _from) => {
@@ -361,6 +416,7 @@ watch([localTitle, localJSON, localHTML], () => {
 onBeforeUnmount(() => {
   if (saveTimer) window.clearTimeout(saveTimer)
   if (savedHideTimer) window.clearTimeout(savedHideTimer)
+  if (idleSnapshotTimer) window.clearTimeout(idleSnapshotTimer)
   // Stage 7: best-effort flush for navigations that bypass the router guard
   // (e.g. tab close, hard reload). For SPA navigation the `onBeforeRouteLeave`
   // guard above awaits `persistNow()` first; this is a defensive backstop.
@@ -429,8 +485,6 @@ onBeforeUnmount(() => {
         <div class="content-inner edit-page">
           <EditorToolbar :editor="editorRef" @close="closeEditor" @publish="publish" />
 
-          <LabelPills v-if="page" :page="page" compact />
-
           <input
             ref="titleInputRef"
             class="edit-title-input"
@@ -456,23 +510,22 @@ onBeforeUnmount(() => {
             @content-mount="captureEditorEl"
           />
 
+          <LabelPills v-if="page" :page="page" />
+
           <div class="edit-footer">
-            <div class="footer-meta">
-              <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-3)">info</span>
-              <span>所有编辑自动保存到后端</span>
-              <span class="footer-sep">·</span>
-              <span class="word-count">{{ wordCount.words }} 字</span>
-            </div>
-            <div class="spacer"></div>
-            <button class="btn ghost" @click="saveDraft">
-              <span class="material-symbols-outlined icon-lg">save</span>
-              保存草稿
-            </button>
+            <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-3)">info</span>
+            <span>所有编辑自动保存到后端</span>
+            <span class="footer-sep">·</span>
+            <span class="word-count">{{ wordCount.words }} 字</span>
           </div>
         </div>
       </div>
 
-      <TocPanel :content-ref="editorContentEl" :page-key="localId ?? undefined" />
+      <TocPanel
+        :content-ref="editorContentEl"
+        :page-key="localId ?? undefined"
+        :labels="page?.labels ?? []"
+      />
     </div>
 
   </div>

@@ -27,7 +27,6 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useManagerActions } from '@/composables/useManagerActions'
 import { usePageVersions } from '@/composables/usePageVersions'
-import { useTemplates } from '@/composables/useTemplates'
 import { useRecentPages } from '@/composables/useRecentPages'
 import { useUiStore } from '@/stores/ui'
 
@@ -150,7 +149,6 @@ export const useAuthStore = defineStore('auth', () => {
     useSpacesStore().reset()
     useManagerActions().resetAll()
     usePageVersions().invalidate()
-    useTemplates().invalidate()
     // 清掉 recents — 这是 per-device 的本地数据,但登出后下一个用户看到
     // 前任的访问历史仍然不对劲。localStorage 是当前登录态的边界,清空。
     useRecentPages().clear()

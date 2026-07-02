@@ -109,7 +109,6 @@ function pick(label: string) {
       maxlength="32"
       autocomplete="off"
       spellcheck="false"
-      @keydown.stop
     />
     <div v-if="loading" class="lap-hint">搜索中…</div>
     <div v-else-if="query.trim() && suggestions.length === 0" class="lap-hint">
@@ -118,7 +117,7 @@ function pick(label: string) {
     <ul v-else-if="suggestions.length > 0" class="lap-list">
       <li v-for="s in suggestions" :key="s">
         <button class="lap-item" type="button" @click="pick(s)">
-          <span class="material-symbols-outlined icon-xs">label</span>
+          <span class="material-symbols-outlined icon-xs">sell</span>
           {{ s }}
         </button>
       </li>

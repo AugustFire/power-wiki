@@ -1,12 +1,19 @@
 /**
- * Pages API — 9 routes (Stage 5 — soft-delete / trash / restore):
+ * Pages API — 12 routes (Stage 5 — soft-delete / trash / restore; Stage 8 —
+ * history / labels / duplicate; v2 — auto-save 静默 / snapshot 边界触发):
  *
  *   GET    /api/pages                  → PageNode[] (filtered by visible spaces, excludes trashed)
  *   GET    /api/pages/trash?space=     → PageNode[] (admin only, trashed pages in space)
  *   GET    /api/pages/:id              → PageNode (404 if not in visible space, excludes trashed)
  *   POST   /api/pages                  → 201 + PageNode (spaceId required + access check)
  *   PATCH  /api/pages/:id              → PageNode (404 if not in visible space, excludes trashed)
+ *                                         内容更新 — **不**写 page_versions(version 由
+ *                                         前端在 idle boundary / route leave 时主动打
+ *                                         POST /:id/snapshots 触发)
+ *   POST   /api/pages/:id/snapshots    → 201 + PageVersion (边界 / idle checkpoint,manual)
  *   PATCH  /api/pages/:id/move         → PageNode (404 if not in visible space, excludes trashed)
+ *   POST   /api/pages/:id/publish      → 201 + PageNode (personal → team space copy)
+ *   POST   /api/pages/:id/duplicate    → 201 + PageNode (in-place sibling copy, title "复制自+原标题")
  *   POST   /api/pages/:id/restore      → 204 (admin only, 409 parent_trashed / not_trashed)
  *   DELETE /api/pages/:id              → 204 soft-delete (409 has_children, 404 not accessible)
  *   DELETE /api/pages/:id?purge=true   → 204 hard-delete (admin only, must already be trashed)
@@ -42,12 +49,18 @@ import { Hono } from 'hono'
 import { and, eq, getTableColumns, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import {
   CreatePageInputSchema,
+  DuplicatePageInputSchema,
   PageNodeSchema,
+  PageVersionSchema,
   PaginatedListSchema,
+  SnapPageInputSchema,
   UpdatePageInputSchema,
   MovePageInputSchema,
   PublishPageInputSchema,
 } from '@power-wiki/shared/schemas'
+import { DEFAULT_TITLE } from '@power-wiki/shared'
+import type { PageVersion } from '@power-wiki/shared'
+import { RETENTION } from './pageVersions'
 import { db } from '../db/client'
 import {
   pages,
@@ -262,7 +275,7 @@ pagesRouter.post('/', async (c) => {
       id,
       parentId: input.parentId ?? null,
       spaceId: input.spaceId,
-      title: input.title ?? '',
+      title: input.title ?? DEFAULT_TITLE, // '' would violate PageTitleSchema.min(1)
       icon: input.icon ?? null,
       contentJson: input.contentJSON ?? {},
       contentHtml: input.contentHTML ?? '',
@@ -317,16 +330,12 @@ pagesRouter.patch('/:id', async (c) => {
   if (input.icon !== undefined) patch.icon = input.icon
   if (input.starred !== undefined) patch.starred = input.starred
 
-  // Stage 8: content mutations create a history snapshot. BUT only when
-  // the value actually differs from what's already on disk — debounced
-  // auto-save or EditView mount-then-unmount may PATCH with no real edit,
-  // which would otherwise flood history with duplicate snapshots.
+  // PATCH 只更新 pages 行,**不再写 page_versions**。版本(checkpoint)由
+  // 前端在 idle boundary / route leave 时主动打 POST /:id/snapshots 触发。
   //
-  // Comparing each *effective* field (incoming or existing) against the
-  // existing row is the right primitive: if you sent title and it matches,
-  // but also bumped contentHTML which also matches, neither is a change.
-  // We compare rendered HTML (canonical from the editor pipeline) and JSON
-  // (defense-in-depth for edits that touched JSON only).
+  // 但保留 `isContentChange` 闸门避免空 UPDATE:ReadView 重复点同一 task
+  // checkbox / Tiptap re-serialize 后端没法判 trivial diff,会让 hot row
+  // 产生 no-op UPDATE 噪声。
   const effTitle = input.title ?? existing.title
   const effHtml = input.contentHTML ?? existing.contentHtml
   const effIcon = input.icon !== undefined ? input.icon : existing.icon
@@ -339,38 +348,6 @@ pagesRouter.patch('/:id', async (c) => {
     (input.contentJSON !== undefined && stableJson(effJson) !== stableJson(existing.contentJson))
 
   if (isContentChange) {
-    await db.transaction(async (tx) => {
-      // Compute next version number for this page inside the tx.
-      const versionResult = await tx.execute<{ nextVersion: number }>(sql`
-        SELECT COALESCE(MAX(version_number), 0) + 1 AS "nextVersion"
-        FROM page_versions
-        WHERE page_id = ${id}
-      `)
-      const nextVersion = Number(versionResult.rows[0]?.nextVersion ?? 1)
-      await tx.insert(pageVersions).values({
-        id: generatePageId(),
-        pageId: id,
-        versionNumber: nextVersion,
-        title: patch.title ?? existing.title,
-        contentJson: patch.contentJson ?? existing.contentJson,
-        contentHtml: patch.contentHtml ?? existing.contentHtml,
-        icon: patch.icon !== undefined ? patch.icon : existing.icon,
-        editedBy: me.id,
-        editedAt: patch.updatedAt!,
-        changeNote: null,
-      })
-      await tx.update(pages).set(patch).where(eq(pages.id, id))
-      // Trim retention: keep latest 30 per page. Idempotent when < 30.
-      await tx.execute(sql`
-        DELETE FROM page_versions
-        WHERE page_id = ${id}
-          AND version_number <= (
-            SELECT MAX(version_number) FROM page_versions WHERE page_id = ${id}
-          ) - 30
-      `)
-    })
-  } else {
-    // starred-only (or empty-but-zod-validated) PATCH — no history entry.
     await db.update(pages).set(patch).where(eq(pages.id, id))
   }
 
@@ -378,6 +355,101 @@ pagesRouter.patch('/:id', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404)
 
   return c.json(PageNodeSchema.parse(rowToPageNode(row)))
+})
+
+/* ─── POST /api/pages/:id/snapshots ──────────────────────────────────
+ *  打一个 boundary / idle checkpoint —— 镜像 pageVersions.ts restore
+ *  handler 的 version-insert 写法(行 158-198),但**不恢复 page 行**,只
+ *  往 page_versions 插一行。version create 时机由前端控制:
+ *    - EditView idle 30s 自动触发(boundary)
+ *    - EditView route leave 时 flush 触发
+ *  PATCH 永远不自动打 snapshot —— 防止 auto-save 噪声灌满 history。
+ *
+ *  返回 201 + PageVersion DTO。同样的访问检查链(canAccessSpace +
+ *  assertAdminNotWritingPersonalSpace)与 PATCH 一致;trashed page → 404。
+ *  Retention 30 行复用 pageVersions.ts 的 RETENTION 常量(同 tx 裁剪)。
+ */
+pagesRouter.post('/:id/snapshots', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const parsed = SnapPageInputSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+
+  // 源页检查(同 PATCH / publish / duplicate)
+  const [page] = await db.select().from(pages).where(eq(pages.id, id)).limit(1)
+  if (!page || page.spaceId === null || page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  if (blocked) return blocked
+
+  // 写 version + 裁剪 retention
+  const now = Date.now()
+  const versionId = generatePageId()
+  let versionNumber = 1
+  await db.transaction(async (tx) => {
+    const versionResult = await tx.execute<{ nextVersion: number }>(sql`
+      SELECT COALESCE(MAX(version_number), 0) + 1 AS "nextVersion"
+      FROM page_versions WHERE page_id = ${id}
+    `)
+    versionNumber = Number(versionResult.rows[0]?.nextVersion ?? 1)
+    await tx.insert(pageVersions).values({
+      id: versionId,
+      pageId: id,
+      versionNumber,
+      title: page.title,
+      contentJson: page.contentJson,
+      contentHtml: page.contentHtml,
+      icon: page.icon,
+      editedBy: me.id,
+      editedAt: now,
+      changeNote: parsed.data?.changeNote ?? null,
+    })
+    await tx.execute(sql`
+      DELETE FROM page_versions
+      WHERE page_id = ${id}
+        AND version_number <= (
+          SELECT MAX(version_number) FROM page_versions WHERE page_id = ${id}
+        ) - ${RETENTION}
+    `)
+  })
+
+  // refetch + 渲染 DTO(LEFT JOIN users 拿编辑者姓名/颜色)
+  const rows = await db
+    .select({
+      ...getTableColumns(pageVersions),
+      editedByName: users.name,
+      editedByColor: users.color,
+    })
+    .from(pageVersions)
+    .leftJoin(users, eq(users.id, pageVersions.editedBy))
+    .where(eq(pageVersions.id, versionId))
+    .limit(1)
+  const row = rows[0]
+  if (!row) return c.json({ error: 'not_found' }, 404)
+
+  // 组装 PageVersion DTO —— mirror pageVersions.ts:55-70 的 rowToPageVersion
+  const v: PageVersion = {
+    id: row.id,
+    pageId: row.pageId,
+    versionNumber: row.versionNumber,
+    title: row.title,
+    contentJSON: row.contentJson,
+    contentHTML: row.contentHtml,
+    editedBy: row.editedBy,
+    editedByName: row.editedByName,
+    editedByColor: row.editedByColor,
+    editedAt: row.editedAt,
+    changeNote: row.changeNote,
+  }
+  if (row.icon !== null) v.icon = row.icon
+  return c.json(PageVersionSchema.parse(v), 201)
 })
 
 /* ─── PATCH /api/pages/:id/move ────────────────────────────────────── */
@@ -671,6 +743,125 @@ pagesRouter.post('/:id/publish', async (c) => {
     createdAt: now,
     updatedAt: now,
     authorId: me.id,
+  })
+
+  const [row] = await selectPagesWithAuthor(eq(pages.id, newId)).limit(1)
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
+})
+
+/* ─── POST /api/pages/:id/duplicate ───────────────────────────────────
+ *  In-place sibling copy: creates a fresh page in the SAME space and SAME
+ *  parent as the source, immediately AFTER the source in sibling order.
+ *  Title is prefixed with `复制自` (per spec). Content (Tiptap JSON + HTML
+ *  + icon) is copied verbatim; starred / labels are intentionally NOT
+ *  inherited — they're user-level opinions that don't follow a copy.
+ *
+ *  Mirrors `/publish` for read+copy+refetch and `/move` for the sibling
+ *  renumber transaction (`sortOrder: -1` sentinel dodges the unique-index
+ *  conflict window when we rewrite every sibling in the source's group).
+ *
+ *  Personal-space guard (assertAdminNotWritingPersonalSpace) applies the
+ *  same way as PATCH/DELETE — an admin duplicating someone else's personal
+ *  draft gets 403 `personal_space_readonly` instead of leaking content.
+ */
+pagesRouter.post('/:id/duplicate', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  // Empty body is fine — schema is z.object({}).optional().
+  await c.req.json().catch(() => ({}))
+  const parsed = DuplicatePageInputSchema.safeParse({})
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+
+  // Source must exist and be a live (non-trashed) page.
+  const [source] = await db
+    .select()
+    .from(pages)
+    .where(and(eq(pages.id, id), isNull(pages.deletedAt)))
+    .limit(1)
+  if (!source || source.spaceId === null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  // Must be able to read the source — pre-flight for the visible-space set.
+  if (!(await canAccessSpace(me.id, me.role === 'admin', source.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  // Personal-space reverse-guard: same rule as PATCH / DELETE / move for
+  // non-owner admins. The new page lives in the source's space, so an admin
+  // duplicating someone else's personal-space draft is rejected here.
+  const blocked = await assertAdminNotWritingPersonalSpace(c, me, source.spaceId)
+  if (blocked) return blocked
+
+  // Title — spec is literally `复制自{原标题}`. Trim to satisfy PageTitleSchema's
+  // min(1) on the off-chance the source title is empty/whitespace.
+  const baseTitle = (source.title ?? '').trim() || '未命名'
+  const newTitle = `复制自${baseTitle}`
+  // No idempotency loop on `复制自`-prefix: continuous duplication yields
+  // "复制自复制自X" chains, matching Confluence's behavior and keeping the
+  // semantics simple.
+
+  // Position — sibling list ordered by sortOrder. We want the new page to
+  // land at source.index+1. Since this page doesn't exist yet, we don't need
+  // to bump a row to sortOrder=-1 first — the sentinel is only needed when
+  // rewriting an existing row's group. The INSERT with sortOrder=-1 + the
+  // sibling rename below together produce the same observable end state.
+  const siblings = await db
+    .select({ id: pages.id })
+    .from(pages)
+    .where(
+      and(
+        eq(pages.spaceId, source.spaceId),
+        source.parentId === null
+          ? isNull(pages.parentId)
+          : eq(pages.parentId, source.parentId),
+      ),
+    )
+    .orderBy(pages.sortOrder)
+
+  const orderedSiblingIds = siblings.map((s) => s.id)
+  const sourceIdx = orderedSiblingIds.indexOf(id)
+  // sourceIdx is guaranteed ≥ 0 (source is in the list) since we queried
+  // the same (spaceId, parentId) bucket. Fall back to append-only if a
+  // concurrent race somehow removes the source row between SELECTs.
+  const insertAt = sourceIdx < 0 ? orderedSiblingIds.length : sourceIdx + 1
+  const newId = generatePageId()
+  const now = Date.now()
+
+  await db.transaction(async (tx) => {
+    await tx.insert(pages).values({
+      id: newId,
+      parentId: source.parentId,
+      spaceId: source.spaceId,
+      title: newTitle,
+      icon: source.icon ?? null,
+      contentJson: source.contentJson,
+      contentHtml: source.contentHtml,
+      sortOrder: -1, // sentinel — rewritten below; avoids unique-index conflict
+      createdAt: now,
+      updatedAt: now,
+      authorId: me.id, // the duplicator becomes the new page's author
+      // starred / labels / deleted_* intentionally NOT copied — fresh page.
+    })
+    // Sequentially rewrite sortOrder 0..N with newId at position insertAt.
+    // Await every update (don't fire-and-forget) so the post-tx SELECT
+    // observes the final state — mirrors the comment in /move.
+    for (let i = 0; i < orderedSiblingIds.length + 1; i++) {
+      const targetId =
+        i < insertAt
+          ? orderedSiblingIds[i]!
+          : i === insertAt
+            ? newId
+            : orderedSiblingIds[i - 1]!
+      await tx
+        .update(pages)
+        .set({ sortOrder: i, updatedAt: now })
+        .where(eq(pages.id, targetId))
+    }
   })
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, newId)).limit(1)

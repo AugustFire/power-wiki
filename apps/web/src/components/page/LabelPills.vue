@@ -85,6 +85,11 @@ async function removeLabel(label: string) {
 
 <template>
   <div v-if="showRow" class="labels" @click.stop>
+    <!-- 左侧 sell icon — 标签牌形状,比 label 像「tag」一点 -->
+    <span
+      class="material-symbols-outlined label-leading-icon"
+      aria-hidden="true"
+    >sell</span>
     <span v-for="l in labels" :key="l" class="label-chip label-chip-removable">
       {{ l }}
       <button
@@ -97,14 +102,13 @@ async function removeLabel(label: string) {
         <span class="material-symbols-outlined icon-xs">close</span>
       </button>
     </span>
+    <!-- 文字按钮触发 popover — 跟 design 一致,用 accent 文字而不是 dashed chip -->
     <button
-      class="label-chip label-add"
+      class="label-add-text"
       type="button"
-      title="添加标签"
-      aria-label="添加标签"
       @click="openPopover"
     >
-      <span class="material-symbols-outlined icon-xs">add</span>
+      {{ labels.length > 0 ? '编辑标签' : '添加标签' }}
     </button>
     <LabelAddPopover
       v-if="popoverOpen && popoverAnchor"
@@ -116,53 +120,80 @@ async function removeLabel(label: string) {
 </template>
 
 <style scoped>
+/* Match design/wiki-read.html line 297 + 320-324 + 418:
+ *   bg-subtle background, text-2 color, 2px 6px padding, 3px radius,
+ *   12px font, weight 600, leading 18px label icon. */
 .labels {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 16px;
+  gap: 4px;
+  margin: 32px 0;
   align-items: center;
 }
 
-.label-chip-removable {
+.label-leading-icon {
+  font-size: 18px;
+  color: var(--text-3);
+  margin-right: 4px;
+}
+
+/* 覆盖全局 .label-chip(799 行)的固定 22px 高度和 weight 500 —— design
+ * chips 高度自动 + weight 600。 */
+.label-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding-right: 4px;
+  padding: 2px 6px;
+  height: auto;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: default;
 }
+
+.label-chip-removable:hover {
+  /* hover 时透出 × —— 静态态隐藏。 */
+}
+
 .label-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 0;
   background: transparent;
   color: var(--text-3);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.label-chip-removable:hover .label-remove {
+  opacity: 1;
 }
 .label-remove:hover {
   background: rgba(9, 30, 66, 0.1);
   color: var(--text-1);
 }
 .label-remove .material-symbols-outlined {
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.label-add {
+.label-add-text {
   background: transparent;
-  border: 1px dashed var(--border);
-  color: var(--text-3);
-  cursor: pointer;
-  width: 24px;
-  padding: 0;
-  justify-content: center;
-}
-.label-add:hover {
-  background: var(--bg-subtle);
+  border: 0;
   color: var(--accent);
-  border-color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-left: 4px;
+  border-radius: 3px;
+}
+.label-add-text:hover {
+  background: var(--bg-subtle);
 }
 </style>

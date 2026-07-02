@@ -35,7 +35,8 @@ import { type Variables } from '../auth/middleware'
 
 export const pageVersionsRouter = new Hono<{ Variables: Variables }>()
 
-const RETENTION = 30
+/** 历史保留条数 —— 同步给 `pages.ts` 的 snapshot route。 */
+export const RETENTION = 30
 
 type VersionRowWithEditor = {
   id: string

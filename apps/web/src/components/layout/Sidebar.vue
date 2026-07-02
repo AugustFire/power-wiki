@@ -1,25 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { newId } from '@/lib/id'
-import { emptyDoc, EMPTY_HTML } from '@/lib/constants'
 import PageTree from './PageTree.vue'
-import TemplatePickerTrigger from '@/components/page/TemplatePickerTrigger.vue'
-import TemplatePickerDialog from '@/components/page/TemplatePickerDialog.vue'
-import type { PageTemplate } from '@power-wiki/shared'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
-
-/** Stage 8: template picker visibility. */
-const pickerOpen = ref(false)
 
 // Tree is scoped to the active space. Server already filters by accessibility
 // but the local store holds pages from every accessible space — scoping the
@@ -61,42 +54,6 @@ async function createRoot() {
   } catch {
     // store already shows the error banner; user can retry or close the editor
   }
-}
-
-/**
- * Stage 8: create a page from a template. Same B.3 clientId pattern as
- * createRoot, but we pre-fill title + content from the template. The
- * `api.pages.create` POST already accepts these fields.
- */
-async function createFromTemplate(t: PageTemplate) {
-  const clientId = newId()
-  router.push(`/p/${clientId}/edit`)
-  try {
-    const spaceId = spacesStore.activeSpaceId.value
-    if (!spaceId) {
-      router.replace('/')
-      return
-    }
-    // Stage 8: createPage's signature accepts the full CreatePageInput
-    // (title, contentJSON, contentHTML, icon) — no `as` cast needed now.
-    // Earlier the type only accepted {id, parentId, title}, so the body was
-    // silently dropped when the user picked a template and saw only the
-    // title with an empty editor.
-    await pagesStore.createPage({
-      id: clientId,
-      parentId: null,
-      title: t.title,
-      contentJSON: t.contentJSON ?? emptyDoc(),
-      contentHTML: t.contentHTML ?? EMPTY_HTML,
-      icon: t.icon,
-    })
-  } catch {
-    router.replace('/')
-  }
-}
-
-function openTemplatePicker() {
-  pickerOpen.value = true
 }
 
 function goHome() {
@@ -171,17 +128,13 @@ void authStore
       </div>
     </div>
 
-
-
     <div class="sidebar-bottom">
-      <TemplatePickerTrigger @blank="createRoot" @from-template="openTemplatePicker" />
+      <button class="create-page-btn" @click="createRoot">
+        <span class="material-symbols-outlined icon-lg">add</span>
+        创建页面
+        <kbd>/</kbd>
+      </button>
     </div>
-    <TemplatePickerDialog
-      v-if="pickerOpen"
-      :space-id="spacesStore.activeSpaceId.value"
-      @pick="createFromTemplate"
-      @close="pickerOpen = false"
-    />
   </aside>
 </template>
 

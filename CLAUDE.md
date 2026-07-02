@@ -191,6 +191,9 @@ Tiptap 官方扩展(`apps/web/src/editor/extensions.ts`):StarterKit 关闭 `head
   - 删 space → `adminSpaces.ts` DELETE 在事务里先扫 `spaceGroupAccess`
   - 删 user(禁用 / 重置)→ `adminUsers.ts` 的 `disable` / `reset-password` 先调 `killSessionsForUser` 清 sessions
   写新表 / 新列也要遵守这条。
+- **不做页面模板功能。** 不建 `page_templates` 表、不挂 `/api/templates` 路由、不做模板选择器 / 模板按钮 / 内置模板 seed。复制需求一律走页面复制(`POST /api/pages/:id/duplicate`,标题前缀 `复制自`,新页落在源页正下方同 sibling 组)。
+- **Labels：ReadView / EditView 内容底部都有可编辑 `<LabelPills>`；右 TOC 另有只读 chip 镜像展示**。两个视图的 `<LabelPills>` 落在内容区域底部（ReadView 在 `.read-content` 之后、`.subpages` 之前；EditView 在 `RichEditor` 之后、`.edit-footer` 之前），**不**用 `compact` prop（affordance 不能因新页无标签就整行藏起来）。`<TocPanel>` 在「页面关注者」之上额外渲染一段只读 chip 区（不带 add / remove；参 `design/wiki-read.html` line 418 的 design 范式—— TOC 是 readonly nav，写操作不该混进来），父组件传 `:labels="page?.labels ?? []"`。两边始终同步：主体编辑 → 右 TOC 同步更新（同一份 reactive `page.labels`）。
+- **Auto-save 永远静默，version 只在 idle / route-leave 边界自动打；不做手动「保存为版本」按钮。** `PATCH /api/pages/:id` 只更新 `pages` 行，**不**写 `page_versions`（防止 auto-save 噪声灌满 history）。`POST /api/pages/:id/snapshots` 是打 checkpoint 的唯一入口（前端在 `EditView.vue` 的 `IDLE_SNAPSHOT_MS = 30_000` idle timer + `flushPendingSave` 末尾各调一次）。Restore 端点自管 version insert（用户主动 restore 必须留痕）。Retention 30 行复用 `apps/api/src/routes/pageVersions.ts` 的 `RETENTION`。不要新增任何「手动保存版本」UI—— 主流编辑器（Notion / Google Docs / Figma）都是这套，用户不会主动点。
 
 ## 约定
 

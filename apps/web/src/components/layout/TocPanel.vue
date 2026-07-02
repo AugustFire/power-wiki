@@ -1,11 +1,29 @@
 ﻿<script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 
 const props = defineProps<{
   contentRef: HTMLElement | null
   /** 当页面切换时,vue 会复用 contentRef 同一个 DOM 节点,必须传一个外部 trigger 来强制重收集 */
   pageKey?: string | number
+  /** Read-only:由父组件(ReadView / EditView)传入当前页面的 labels 数组。
+   *  此处只展示不可编辑 —— 编辑能力在 EditView 底部的 `<LabelPills>`。 */
+  labels?: string[]
 }>()
+
+/** 过滤空 + 去重,避免上游偶发塞入脏数据。 */
+const safeLabels = computed(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const l of props.labels ?? []) {
+    if (typeof l !== 'string') continue
+    const t = l.trim()
+    if (!t || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
+})
+const hasLabels = computed(() => safeLabels.value.length > 0)
 
 type TocItem = { id: string; text: string; level: 1 | 2 | 3 }
 const items = ref<TocItem[]>([])
@@ -204,6 +222,20 @@ watch(
       </button>
     </div>
 
+    <!-- 标签只读展示:出现在「目录」和「关注者」之间 -->
+    <div v-if="hasLabels" class="toc-labels">
+      <div class="toc-title">页面标签</div>
+      <div class="toc-labels-row">
+        <span class="material-symbols-outlined toc-labels-icon" aria-hidden="true">sell</span>
+        <span
+          v-for="l in safeLabels"
+          :key="l"
+          class="toc-label-chip"
+          :title="l"
+        >{{ l }}</span>
+      </div>
+    </div>
+
     <div class="toc-followers">
       <div class="toc-title">页面关注者</div>
       <div class="av-stack">
@@ -218,5 +250,36 @@ watch(
   color: var(--text-3);
   font-size: 13px;
   padding: 4px 0;
+}
+
+/* 标签只读块 —— 跟 wiki-read.html 风格一致:bg-subtle + text-2 +
+ * 12px weight 600 + 2px 6px + 3px radius。EditView 底部 LabelPills
+ * 仍是编辑入口,这里没有 edit affordance。 */
+.toc-labels {
+  margin-top: 24px;
+}
+.toc-labels-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.toc-labels-icon {
+  font-size: 16px;
+  color: var(--text-3);
+  margin-right: 2px;
+}
+.toc-label-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

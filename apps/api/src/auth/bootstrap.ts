@@ -20,10 +20,6 @@
  *  5. Personal space backfill. For every user without a `kind='personal'`
  *     space, create one (1-person group + space + access row + welcome page).
  *     Idempotent — `ensurePersonalSpace` is a no-op when one already exists.
- *
- *  6. Built-in template seed (Stage 8). Inserts 5 global templates
- *     (空白 / 会议纪要 / RFC / SOP / 周报) idempotently. Admin deletion
- *     of a built-in is permanent — the seed NEVER re-creates deleted rows.
  */
 import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -32,7 +28,6 @@ import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace } from '../lib/ensurePersonalSpace'
 import { hashPassword } from './password'
 import { purgeExpiredSessions } from './session'
-import { seedBuiltInTemplates } from './seedBuiltInTemplates'
 
 export interface BootstrapResult {
   adminCreated: boolean
@@ -40,7 +35,6 @@ export interface BootstrapResult {
   pagesBackfilled: number
   personalSpacesProvisioned: number
   expiredSessionsPurged: number
-  builtInTemplatesSeeded: number
 }
 
 const DEFAULT_SPACE_NAME = '默认空间'
@@ -152,16 +146,12 @@ export async function runBootstrap(): Promise<BootstrapResult> {
     )
   }
 
-  // ─── 6. Built-in template seed ──────────────────────────────────────
-  const { inserted: builtInTemplatesSeeded } = await seedBuiltInTemplates()
-
   return {
     adminCreated,
     defaultSpaceId,
     pagesBackfilled,
     personalSpacesProvisioned,
     expiredSessionsPurged: purged,
-    builtInTemplatesSeeded,
   }
 }
 

@@ -28,7 +28,6 @@ import {
   MentionCandidateSchema,
   NotificationSchema,
   PageNodeSchema,
-  PageTemplateSchema,
   PageVersionSchema,
   PaginatedListSchema,
   PublishPageInputSchema,
@@ -47,14 +46,12 @@ import type {
   CreateGroupInput,
   CreatePageInput,
   CreateSpaceInput,
-  CreateTemplateInput,
   CreateUserInput,
   MarkReadInput,
   MentionCandidate,
   MovePageInput,
   Notification,
   PageNode,
-  PageTemplate,
   PageVersion,
   Paginated,
   PaginatedQuery,
@@ -344,6 +341,16 @@ export const api = {
         body: JSON.stringify(parsed),
       })
     },
+    /**
+     * In-place sibling copy. Empty body is fine — the backend schema is
+     * `z.object({}).optional()`. Response is the freshly-created PageNode;
+     * the store uses that to splice into the local pages[] + siblings.
+     */
+    duplicate: (id: string) =>
+      getOnePage(`/pages/${encodeURIComponent(id)}/duplicate`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
     delete: (id: string) =>
       request<void>(`/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     /**
@@ -805,28 +812,18 @@ export const api = {
   },
 
   /**
-   * Stage 8 — Page templates. `?space=<id>` returns built-ins + scoped.
-   * Omit `space` → globals only.
+   * 边界 / idle boundary checkpoint —— EditView 在「停笔 30s」或「离开页面」
+   * 调一次。后端现在 PATCH 永远不打 version,checkpoint 必须主动触发。
+   * changeNote 可选;前端默认不传(机器化触发用)。
+   * Returns the new PageVersion DTO (用于以后 UI 想展示「刚刚被打」的元数据)。
    */
-  templates: {
-    list: async (spaceId?: string | null): Promise<PageTemplate[]> => {
-      const qs = spaceId ? `?space=${encodeURIComponent(spaceId)}` : ''
-      const raw = await request<PageTemplate[]>(`/templates${qs}`)
-      return raw.map((t) => PageTemplateSchema.parse(t) as PageTemplate)
-    },
-    create: async (input: CreateTemplateInput): Promise<PageTemplate> => {
-      const r = await request<PageTemplate>('/templates', {
-        method: 'POST',
-        body: JSON.stringify(input),
-      })
-      invalidatePrefix('/templates')
-      return PageTemplateSchema.parse(r) as PageTemplate
-    },
-    delete: async (id: string): Promise<void> => {
-      await request<void>(`/templates/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      })
-      invalidatePrefix('/templates')
+  pageSnapshots: {
+    create: (id: string, changeNote?: string) => {
+      const body = changeNote ? JSON.stringify({ changeNote }) : JSON.stringify({})
+      return request<PageVersion>(
+        `/pages/${encodeURIComponent(id)}/snapshots`,
+        { method: 'POST', body },
+      )
     },
   },
 } as const

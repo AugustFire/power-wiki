@@ -49,10 +49,9 @@ export const PageNodeSchema = z.object({
   authorColor: z.string().nullable(),
   starred: z.boolean().optional(),
   /** Material Symbols ligature name (e.g. `menu_book`, `edit_note`,
-   *  `arrow_back_ios_new`). Capped at 40 to match `PageTemplateSchema.icon`
-   *  and `SpaceSchema.icon` — the previous `max(8)` silently broke the
-   *  built-in templates (all icons are 9-11 chars) at create-from-template
-   *  time with a 400 invalid_input. */
+   *  `arrow_back_ios_new`). Capped at 40 to match `SpaceSchema.icon` —
+   *  the previous `max(8)` silently broke Material Symbols names like
+   *  `arrow_back_ios_new` (16 chars). */
   icon: z.string().max(40).optional(),
   /** Stage 8: page labels (Notion-style, global lowercase). Always present
    *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
@@ -297,9 +296,8 @@ export const CreatePageInputSchema = z.object({
   parentId: PageIdSchema.nullable().optional(),
   title: PageTitleSchema.optional(),
   /** Material Symbols ligature (e.g. `menu_book`, `arrow_back_ios_new`).
-   *  Capped at 40 to match `PageTemplateSchema.icon` / `SpaceSchema.icon` —
-   *  the previous `max(8)` blocked all built-in template icons at create
-   *  time with a 400 invalid_input. */
+   *  Capped at 40 to match `SpaceSchema.icon` — the previous `max(8)`
+   *  blocked real Material Symbols names like `arrow_back_ios_new`. */
   icon: z.string().max(40).optional(),
   /** Optional — frontend 创建空白页时不会带,seed script 会带。
    * 留空等同于空文档,等下一次 PATCH 时回填。 */
@@ -350,6 +348,20 @@ export const PublishPageInputSchema = z.object({
   targetSpaceId: PageIdSchema,
 })
 
+/** POST /api/pages/:id/duplicate 入参 — 当前没有需要客户端传的字段,
+ * 保留 schema 是为了和 publish / update 等路由在请求层结构对称(也方便
+ * 未来扩展)。空对象 / 缺失 body 都视为合法。 */
+export const DuplicatePageInputSchema = z.object({}).optional()
+
+/** POST /api/pages/:id/snapshots 入参 — 边界 / idle 自动打 version 时
+ * 携带的可选 changeNote(类似 git commit message),用户不在的边界不打
+ * changeNote,所以默认 null。1-64 字符跟 AddLabelInput 对齐。 */
+export const SnapPageInputSchema = z
+  .object({
+    changeNote: z.string().min(1).max(64).optional(),
+  })
+  .optional()
+
 /* ---------- 列表分页 ---------- */
 
 /**
@@ -386,6 +398,8 @@ export type CreatePageInput = z.infer<typeof CreatePageInputSchema>
 export type UpdatePageInput = z.infer<typeof UpdatePageInputSchema>
 export type MovePageInput = z.infer<typeof MovePageInputSchema>
 export type PublishPageInput = z.infer<typeof PublishPageInputSchema>
+export type DuplicatePageInput = z.infer<typeof DuplicatePageInputSchema>
+export type SnapPageInput = z.infer<typeof SnapPageInputSchema>
 export type SignInInput = z.infer<typeof SignInInputSchema>
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>
@@ -405,7 +419,7 @@ export type UpdateCommentInput = z.infer<typeof UpdateCommentInputSchema>
 export type MentionCandidatesQuery = z.infer<typeof MentionCandidatesQuerySchema>
 export type MarkReadInput = z.infer<typeof MarkReadInputSchema>
 
-/* ---------- Stage 8: history / labels / templates ---------- */
+/* ---------- Stage 8: history / labels ---------- */
 
 /** 单条 page version — Stage 8 response DTO。
  *
@@ -431,38 +445,6 @@ export const AddLabelInputSchema = z.object({
   label: z.string().min(1).max(64),
 })
 
-/** 单条 page template — Stage 8 response DTO。
- *
- *  spaceId 为 null = global template;非空 = space-scoped(仅该 space 成员可见,
- *  admin bypass 可见)。isBuiltIn 标记 bootstrap 安装的内建模板。 */
-export const PageTemplateSchema = z.object({
-  id: z.string().min(1),
-  spaceId: PageIdSchema.nullable(),
-  title: z.string().min(1).max(64),
-  description: z.string().max(500).optional(),
-  contentJSON: TiptapJSONSchema,
-  contentHTML: HtmlSchema,
-  icon: z.string().max(40).optional(),
-  isBuiltIn: z.boolean(),
-  createdBy: z.string().min(1),
-  createdByName: z.string().nullable(),
-  createdByColor: z.string().nullable(),
-  createdAt: z.number().int().positive(),
-})
-
-/** POST /api/templates 入参 */
-export const CreateTemplateInputSchema = z.object({
-  /** null/undefined = global template (admin only). Set = space-scoped. */
-  spaceId: PageIdSchema.nullable().optional(),
-  title: z.string().min(1).max(64),
-  description: z.string().max(500).optional(),
-  contentJSON: TiptapJSONSchema,
-  contentHTML: HtmlSchema,
-  icon: z.string().max(40).optional(),
-})
-
 /* ---------- Stage 8 type exports ---------- */
 export type PageVersion = z.infer<typeof PageVersionSchema>
-export type PageTemplate = z.infer<typeof PageTemplateSchema>
 export type AddLabelInput = z.infer<typeof AddLabelInputSchema>
-export type CreateTemplateInput = z.infer<typeof CreateTemplateInputSchema>

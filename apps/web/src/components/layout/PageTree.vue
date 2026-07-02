@@ -266,6 +266,20 @@ function onRenameKey(e: KeyboardEvent) {
   }
 }
 
+async function duplicatePage() {
+  uiStore.closeMenu()
+  try {
+    // Mirror the post-success navigation pattern from publishPageToSpace:
+    // land on the new copy's read view so the user immediately sees the
+    // 复制自-prefixed title with the duplicated content. Failures
+    // surface via the store's `ui().setError` banner — no inner catch.
+    const created = await pagesStore.duplicatePage(props.node.id)
+    await router.push(`/p/${created.id}`)
+  } catch {
+    // banner shown by store; user can retry from the menu
+  }
+}
+
 function deletePage() {
   uiStore.closeMenu()
   // Stage 5: refuse to delete a page with non-trashed children. The server
@@ -427,6 +441,10 @@ watch(isRenaming, (val) => {
         <button class="menu-item" @click="startRename">
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
+        </button>
+        <button class="menu-item" @click="duplicatePage">
+          <span class="material-symbols-outlined icon-md">content_copy</span>
+          <span>复制页面</span>
         </button>
         <button
           v-if="canPublish"
