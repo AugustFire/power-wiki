@@ -1,0 +1,178 @@
+/**
+ * Print stylesheet — PDF 导出走 window.print() 时加载。
+ *
+ * 设计目标:
+ *   1. 隐藏所有 chrome(topbar / sidebar / TOC / page-actions / page-tags /
+ *      reactions / comments / subpages / breadcrumb)
+ *   2. 单列布局,内容撑满 A4
+ *   3. h1 强制另起一页(第一个除外),h2/h3 不与后续内容分离
+ *   4. 代码块、callout、toggle、表格 — page-break-inside: avoid
+ *   5. 代码块 / callout 背景色保真(`-webkit-print-color-adjust: exact`)
+ *   6. 链接打印 href(`a::after { content: " (" attr(href) ")"; }`)
+ *      page-ref-card 是站内相对链接,不打 href 避免噪音
+ *   7. 排版按 print 阅读节奏:11pt / 行高 1.55 / 黑白友好
+ */
+
+@page {
+  size: A4;
+  margin: 18mm 16mm;
+}
+
+@media print {
+  /* 1. 隐藏所有 UI chrome */
+  .topbar,
+  .sidebar,
+  .toc-panel,
+  .page-actions,
+  .page-tags,
+  .reactions,
+  .comments-section,
+  .empty,
+  .subpages,
+  .breadcrumb {
+    display: none !important;
+  }
+
+  /* 1b. 隐藏编辑器 NodeView 的 UI chrome(contentHTML 里就有的):
+   *   - 代码块:语言切换 / 复制 / 删除按钮(.code-block-header)、行号 gutter
+   *   - 提示框:右上角 X 按钮(.callout-remove),icon ligature(打印时无字体,会显成 "error")
+   *   - 折叠块:.toggle-summary(展开按钮 + title input + 删除按钮)
+   *   - 兜底:任何残留的 .material-symbols-outlined span
+   *  HTML 导出走 exportPage.ts 的 stripEditorChrome 同步剥;
+   *  PDF 走 print.css。两条路径互相独立,任一漏了另一边还能兜。 */
+  .code-block-header,
+  .code-block-gutter,
+  .callout-remove,
+  .toggle-summary,
+  .prose .material-symbols-outlined {
+    display: none !important;
+  }
+
+  /* 2. 单列布局,撑满打印区 */
+  .read-shell,
+  .layout,
+  .content,
+  .content-inner,
+  .read-page {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
+
+  html,
+  body {
+    background: white !important;
+    color: #000 !important;
+  }
+
+  /* 3. 排版 */
+  .prose {
+    font-size: 11pt !important;
+    line-height: 1.55 !important;
+    color: #000 !important;
+    background: white !important;
+  }
+  .prose h1 {
+    font-size: 22pt !important;
+    page-break-before: always;
+    page-break-after: avoid;
+    margin-top: 0 !important;
+  }
+  .prose h1:first-of-type {
+    page-break-before: avoid;
+  }
+  .prose h2 {
+    font-size: 16pt !important;
+    page-break-after: avoid;
+    margin-top: 16pt !important;
+  }
+  .prose h3 {
+    font-size: 13pt !important;
+    page-break-after: avoid;
+    margin-top: 12pt !important;
+  }
+  .prose h4,
+  .prose h5,
+  .prose h6 {
+    font-size: 12pt !important;
+    page-break-after: avoid;
+  }
+  .prose p,
+  .prose ul,
+  .prose ol,
+  .prose blockquote {
+    page-break-inside: avoid;
+  }
+
+  /* 4. 块级元素尽量不跨页 */
+  .prose pre,
+  .prose .callout,
+  .prose .toggle,
+  .prose table {
+    page-break-inside: avoid;
+  }
+
+  /* 5. 背景色保真(代码块 / callout / highlight) */
+  .prose pre,
+  .prose code,
+  .prose .callout,
+  .prose .mention-chip,
+  .prose .page-ref-card,
+  .prose mark,
+  .prose ul[data-type='taskList'] li[data-checked='true'] > div {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 6. 链接打 href;站内 page-ref-card 跳过避免噪音 */
+  .prose a[href]::after {
+    content: ' (' attr(href) ')';
+    font-size: 9pt;
+    color: #555;
+  }
+  .prose a.page-ref-card::after {
+    content: '';
+  }
+  .prose a[href^='#']::after {
+    content: '';
+  }
+
+  /* 7. 页面标题(ReadView 顶部 h1) */
+  .page-title {
+    font-size: 26pt !important;
+    margin: 0 0 12pt !important;
+    color: #000 !important;
+    page-break-after: avoid;
+  }
+  .page-byline {
+    font-size: 10pt;
+    color: #555 !important;
+    margin-bottom: 18pt;
+    page-break-after: avoid;
+  }
+
+  /* 任务清单勾选态可见 */
+  .prose ul[data-type='taskList'] li > label input[type='checkbox'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12pt;
+    height: 12pt;
+    border: 1px solid #555;
+    border-radius: 2px;
+    margin: 0;
+    position: relative;
+  }
+  .prose ul[data-type='taskList'] li[data-checked='true'] > label input[type='checkbox']::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10pt;
+    line-height: 1;
+    color: #000;
+  }
+}

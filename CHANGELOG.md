@@ -73,6 +73,24 @@
   - `components.css` 改 `align-items: flex-start` + 固定 `1.6em` 居中为 `align-items: baseline`(checkbox 底部 = 文字基线);`<p>` 顶 margin 清零;`vertical-align: middle` 兜底。实测 edit / read 两视图 checkbox 中心 ↔ 文字 glyph 中心 delta = 0px(Range API 测)
 - **HomeView 修正文案**:"本地存储 / 浏览器 localStorage" → "云端存储 / 存储备份",跟 0.4 切到 API 后的现状对齐
 
+### 单页导出 + 评论单行布局
+
+**单页导出(HTML / Markdown / PDF)** — ReadView 操作区新增"导出"按钮:
+- 新组件 `apps/web/src/components/editor/ExportMenu.vue`:`.btn` 浅灰底 + `ios_share` 16px 图标,沿用 `UserMenu.vue` 的容器锚定 popover pattern(容器内 `position:absolute` + document mousedown outside-click + Esc 关闭);导出 in-flight `disabled` + `progress_activity` spinner 防连点;失败时 inline error 标红;文件名走 `sanitizeFilename`(剔除 `/\\:*?"<>|` + 控制字符,80 字符截断)
+- 新 lib `apps/web/src/lib/exportPage.ts`:三格式 orchestrator + `triggerDownload` + `buildStandaloneHtmlDoc` + `MINIMAL_PROSE_CSS`(独立 HTML 文档,不泄漏内部变量,内联 highlight.js 高亮后的代码块)
+- 新 lib `apps/web/src/lib/markdownSerializer.ts`:单例隐藏 Tiptap editor(`document.createElement('div')` detached,SSR safe)+ 5 个自定义 serializer(`callout` → GitHub 标准 `> [!NOTE/TIP/WARNING/CAUTION]`;`toggle` → 原生 `<details>`;`pageRef` → `[Title](#/p/{id})`;`dateInline` → ISO `YYYY-MM-DD`;`mention` → `@{label}`);`Markdown` 扩展的 `setContent` 会把 Tiptap JSON `.toString()` 化,绕过方法是 dispatch 原始 ProseMirror `tr.replaceWith`
+- 新增依赖 `tiptap-markdown@0.8.10`(Tiptap 2.x 最后一版兼容;0.9+ 要 Tiptap 3) ;`@tiptap/extension-markdown` alias 由该包提供
+- 新样式 `apps/web/src/styles/print.css`:`@page A4` + `@media print` 隐藏 topbar/sidebar/TOC/page-actions/comments 等 chrome;h1 自动 `page-break-before`(首例外);`pre/callout/toggle/table` 避免内部跨页;`a[href]::after` 打印 href,代码块 / callout `print-color-adjust: exact` 背景保真
+- `ReadView.vue` 把 `<ExportMenu>` 接到 `.page-actions` 编辑按钮前;`main.ts` 增 `import './styles/print.css'`;`package.json` + `pnpm-lock.yaml` 同步
+- 非范围:`HomeView.vue:113-121` 的 disabled "导入/导出" 按钮保持原样(单页范围下 HomeView 无"导哪页"语义);批量导出 / 导入不在这期
+
+**评论列表单行布局**(`apps/web/src/components/comments/CommentItem.vue`):
+- 行内全部塞一行(`author · time · (edited) · text · (展开/收起) · actions`),`align-items: flex-start`,`padding` 10→6,单条评论从 ~70px 降到 ~38px
+- 长文本(`/ 60 字符或含 \n`)用 `-webkit-line-clamp: 1` 截断 + 省略号 + "展开" 按钮;展开后 `-webkit-line-clamp: unset` + `display: block` 显示全文,按钮文案切到 "收起"
+- `watch(contentMd)` 在内容变更时重置 `expanded`,避免编辑后残留旧展开态
+- 不再用 `ref + scrollHeight` 测量(每条评论挂载多一次强制 reflow,评论密度高的页面不值)— 启发式误判最坏只是多一个点了无用的"展开"按钮,无副作用
+- 取消前头像列 + icon 直出(`reply` / `delete`,`material-symbols-outlined`);`@mention` 沿用 `mention.css` 的 `.mention-chip` 全局规则,跟 editor live view / saved HTML read view 样式一致
+
 ### Stage 7 (continued): tree per-space + 评论分页 + composer @mention + 收尾
 - **tree 展开态 per-space**(`stores/ui.ts` + `components/layout/PageTree.vue`):
   - `expanded` 由 `string[]` 改成 `Record<spaceId, string[]>`:切 space 不再互相覆盖

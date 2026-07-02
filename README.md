@@ -332,7 +332,7 @@ playwright install chromium
 | 审计日志 | ☐ 未做 | admin 操作不留痕 |
 | 页面版本历史 | ☐ 未做 | PATCH 直接覆盖,无 `page_revisions` 表 |
 | 全文搜索 | ☐ 未做 | `TopSearch.vue` 只匹配 title,无后端 |
-| 导入 / 导出 | ☐ 未做 | 无 Markdown / JSON / PDF 导出 |
+| 导入 / 导出 | ✓ 部分完成 | ReadView 操作区 HTML / Markdown / PDF 单页导出;文件名 `sanitizeFilename`,GitHub 标准 admonition 序列化;批量 / 导入 defer |
 | 评论 / @mention / 通知 | ☐ 未做 | — |
 | 协作(Yjs) | ☐ 未做 | 依赖已装,留待未来 |
 | 暗色主题 | ✗ 故意不做 | 单一亮色,见 § "不做的事" |

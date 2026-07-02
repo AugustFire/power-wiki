@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
+import ExportMenu from '@/components/editor/ExportMenu.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -197,6 +198,7 @@ watch(
         </template>
       </div>
       <div class="page-actions">
+        <ExportMenu v-if="page" :page-id="page.id" />
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑

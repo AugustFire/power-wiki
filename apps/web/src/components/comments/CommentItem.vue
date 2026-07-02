@@ -2,8 +2,11 @@
 /**
  * CommentItem — single rendered comment with optional replies.
  *
- *   - Header: author · relative time · always-visible icon buttons
- *     (reply for top-level; delete for author / admin)
+ *   - Row: author · time · content · (展开/收起) · actions
+ *     全部塞同一行,长 content 用 -webkit-line-clamp: 1 截断 + "展开"按钮展开。
+ *     旧布局是 header 一行 + content 一行(中间有 4px margin-top + 1.5 line-height
+ *     浪费空白),改成单行后单条评论占的高度从 ~70px 降到 ~38px,密集评论滚动
+ *     顺很多。
  *   - Body: renders `contentMd` with @-mention promotion: only names
  *     listed in the row's `mentionedUserIds` are wrapped in
  *     `<span class="mention-chip">` (so a casual `email@example.com`
@@ -21,7 +24,7 @@
  * admin (which gates the delete affordance). Mutation events bubble up to
  * the parent so it can update the local tree without refetching.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
@@ -46,7 +49,33 @@ const canModify = computed(
 )
 
 const showReply = ref(false)
+const expanded = ref(false)
 const error = ref<string | null>(null)
+
+/**
+ * 是否需要"展开"按钮的启发式:
+ *   - 内容超过 60 字符(中英文在中等宽度容器里大概率单行装不下)
+ *   - 或含显式换行(用户按了 Enter,自然多行,截了反而不全)
+ *
+ * 没用 ref + scrollHeight 测量 — 那条路需要临时取消 line-clamp 强制 reflow,
+ * 每条评论挂载多一次;对评论密度高的页面不值。启发式误判最坏只是多一个
+ * 点了没用的"展开"按钮,无副作用。
+ */
+const needsExpand = computed(() => {
+  const text = props.comment.contentMd
+  return text.length > 60 || text.includes('\n')
+})
+
+watch(
+  () => props.comment.contentMd,
+  () => {
+    expanded.value = false
+  },
+)
+
+function toggleExpand() {
+  expanded.value = !expanded.value
+}
 
 function relativeTime(ts: number): string {
   const diff = Math.max(0, Date.now() - ts)
@@ -127,10 +156,21 @@ function onReplyAdded(c: Comment): void {
 <template>
   <div class="comment-item" :data-author="comment.authorName ?? comment.authorId">
     <div class="ci-body">
-      <div class="ci-head">
+      <div class="ci-line">
         <span class="ci-author">{{ comment.authorName ?? comment.authorId }}</span>
         <span class="ci-time">{{ relativeTime(comment.createdAt) }}</span>
         <span v-if="comment.isEdited" class="ci-edited">(已编辑)</span>
+        <div
+          class="ci-text"
+          :class="{ expanded }"
+          v-html="renderBody()"
+        />
+        <button
+          v-if="needsExpand"
+          class="ci-expand-btn"
+          type="button"
+          @click="toggleExpand"
+        >{{ expanded ? '收起' : '展开' }}</button>
         <div class="ci-head-actions">
           <button
             v-if="!comment.parentId"
@@ -155,7 +195,6 @@ function onReplyAdded(c: Comment): void {
           </button>
         </div>
       </div>
-      <div class="ci-text" v-html="renderBody()" />
       <CommentsComposer
         v-if="showReply"
         :page-id="pageId"
@@ -181,7 +220,8 @@ function onReplyAdded(c: Comment): void {
 
 <style scoped>
 .comment-item {
-  padding: 10px 0;
+  /* 紧凑单行布局:padding 10→6,每条评论总高度从 ~70px 降到 ~38px */
+  padding: 6px 0;
   border-bottom: 1px solid var(--border, #ebeef0);
 }
 .comment-item:last-child {
@@ -190,9 +230,11 @@ function onReplyAdded(c: Comment): void {
 .ci-body {
   min-width: 0;
 }
-.ci-head {
+
+/* 单行容器:author + time + (edited) + content(占主) + (展开/收起) + actions */
+.ci-line {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   font-size: 12px;
   color: var(--text-3, #5e6c84);
@@ -200,23 +242,65 @@ function onReplyAdded(c: Comment): void {
 .ci-author {
   color: var(--text-1, #172b4d);
   font-weight: 600;
+  flex-shrink: 0;
 }
 .ci-time {
   /* 时间戳跟用户名拉开一点距离,避免粘在一起 */
-  margin-left: 2px;
+  flex-shrink: 0;
 }
 .ci-edited {
   font-size: 11px;
   color: var(--text-3, #5e6c84);
+  flex-shrink: 0;
 }
+
+.ci-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-1, #172b4d);
+  font-size: 14px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  /* 长 URL 串行折行(中文/英文/数字) */
+  overflow-wrap: anywhere;
+  /* 单行截断 + 省略号;展开后改回 block 显示全文 */
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ci-text.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.ci-expand-btn {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #0052cc);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.ci-expand-btn:hover {
+  text-decoration: underline;
+}
+
 .ci-head-actions {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 2px;
   /* 默认 actions 淡一些,hover 评论时再明显,减少视觉噪音 */
   opacity: 0.55;
   transition: opacity 80ms ease;
+  flex-shrink: 0;
 }
 .comment-item:hover .ci-head-actions,
 .comment-item:focus-within .ci-head-actions {
@@ -249,15 +333,6 @@ function onReplyAdded(c: Comment): void {
 }
 .ci-icon-btn .material-symbols-outlined {
   font-size: 18px;
-}
-.ci-text {
-  margin-top: 4px;
-  color: var(--text-1, #172b4d);
-  font-size: 14px;
-  line-height: 1.5;
-  word-wrap: break-word;
-  /* 长 URL 串行折行(中文/英文/数字) */
-  overflow-wrap: anywhere;
 }
 /* .mention-chip inherits from the global rule in mention.css so editor
  * live view, saved HTML read view, and comment text all match. */
