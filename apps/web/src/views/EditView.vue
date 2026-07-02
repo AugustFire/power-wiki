@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
+import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
@@ -25,6 +26,19 @@ const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
 const localJSON = ref<Record<string, unknown>>(emptyDoc())
 const localHTML = ref<string>(EMPTY_HTML)
+/** Stage 8: dedup baseline. Whatever these refs hold is what the server
+ *  most recently acknowledged for this page. `persistNow()` skips PATCH
+ *  when the live editor state matches these — the 500ms debounce would
+ *  otherwise fire on every edit-then-undo back to original, on editor
+ *  mount (B.3 clientId pages), and on opens-without-edits, each creating
+ *  a history row. Backend has its own dedup too (apps/api/src/routes/pages.ts),
+ *  but the frontend dedup also saves the round-trip + UI flicker.
+ *
+ *  `lastSavedTitle` holds the *normalized* title (post-normalizeTitle)
+ *  because that's what the server actually stores. */
+const lastSavedTitle = ref<string>('')
+const lastSavedJSON = ref<Record<string, unknown>>(emptyDoc())
+const lastSavedHTML = ref<string>(EMPTY_HTML)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const editorRef = ref<any>(null)
 // Stage 7: 右侧 TOC 锚定的 ProseMirror DOM 节点。TocPanel 用
@@ -48,6 +62,27 @@ const parentPage = computed(() => {
 
 const isDirty = ref(false)
 const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
+
+/**
+ * Stage 8: precise dirty check. The optimistic `isDirty` flag stays true once
+ * the user types anything, even if they then undo back to the original —
+ * that flag is just a fast "user touched the editor" marker. For save
+ * decisions (autosave, close, route-leave) we use `isContentDirty()`, which
+ * compares the live local refs against `lastSaved*`. Cheap O(n) where n is
+ * doc length; no `editor.getJSON()` round-trip.
+ */
+function isContentDirty(): boolean {
+  const title = normalizeTitle(localTitle.value)
+  if (title !== lastSavedTitle.value) return true
+  if (localHTML.value !== lastSavedHTML.value) return true
+  // JSON is the structural source of truth; HTML is canonical-rendered.
+  // Compare JSON defensively — protects against the rare editor emit where
+  // HTML was unchanged but JSON differed (e.g. mark normalization).
+  return (
+    JSON.stringify(localJSON.value ?? {}) !==
+    JSON.stringify(lastSavedJSON.value ?? {})
+  )
+}
 let savedHideTimer: number | null = null
 const wordCount = ref<{ words: number }>({ words: 0 })
 const titleInputRef = ref<HTMLInputElement | null>(null)
@@ -70,6 +105,12 @@ onMounted(async () => {
       localTitle.value = p.title
       localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
       localHTML.value = p.contentHTML ?? EMPTY_HTML
+      // Stage 8: prime dedup baseline from the loaded page so the very
+      // first autosave (if it fires before any edit) is recognized as a
+      // no-op and skipped.
+      lastSavedTitle.value = p.title
+      lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+      lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
       isDirty.value = false
       // Stage 6: make this page id available to the Mention extension's
       // Suggestion plugin so @-mentions resolve against THIS page's space,
@@ -90,6 +131,12 @@ onMounted(async () => {
   const clientId = newId()
   localId.value = clientId
   localTitle.value = DEFAULT_TITLE
+  // 新页面服务端初始 title 是 ''(DB default),用 '' 起 baseline 比
+  // DEFAULT_TITLE 更准 —— normalize 在 PATCH 时才跑,dedup 不该假装
+  // 已经存了 DEFAULT_TITLE。
+  lastSavedTitle.value = ''
+  lastSavedJSON.value = emptyDoc()
+  lastSavedHTML.value = EMPTY_HTML
   setActivePageId(clientId)
   router.replace(`/p/${clientId}/edit`)
   // 编辑器立刻可用
@@ -105,7 +152,10 @@ onMounted(async () => {
 function onTitleInput(e: Event) {
   const v = (e.target as HTMLInputElement).value
   localTitle.value = v
-  isDirty.value = true
+  // Precise dirty check — the user may have typed then deleted back to the
+  // original, in which case `isDirty` should already be false again so the
+  // "有未保存的修改" dialog at close-time doesn't pop for nothing.
+  isDirty.value = isContentDirty()
   // 进入"待保存"态:有改动但 500ms 防抖还没 fire
   // 真正的 saving 态由 scheduleAutoSave 的 timer 回调里设置
   if (saveState.value !== 'saving' && saveState.value !== 'saved') {
@@ -115,12 +165,16 @@ function onTitleInput(e: Event) {
 
 function onEditorJSON(v: Record<string, unknown>) {
   localJSON.value = v
-  isDirty.value = true
+  isDirty.value = isContentDirty()
   if (saveState.value !== 'saving' && saveState.value !== 'saved') {
     saveState.value = 'pending'
   }
 }
 function onEditorHTML(html: string) {
+  // Sync localHTML. We don't set isDirty here — that's `onEditorJSON`'s
+  // job, and JSON is the source of truth for diff detection. Setting it
+  // twice would race; JSON handler runs first in practice (Tiptap emits
+  // JSON before HTML).
   localHTML.value = html
 }
 
@@ -139,12 +193,31 @@ async function persistNow(): Promise<boolean> {
   const ed = editorRef.value
   const json = ed ? ed.getJSON() : localJSON.value
   const html = ed ? ed.getHTML() : localHTML.value
+  const title = normalizeTitle(localTitle.value)
+
+  // Stage 8: dedup against `lastSaved*`. The 500ms autosave debounce fires
+  // even on mounts/closes-without-changes and undo cycles; without this the
+  // backend would see a flood of no-op PATCHes. (Backend has its own dedup
+  // as a safety net — apps/api/src/routes/pages.ts — but skipping the round
+  // trip also avoids the visible "正在保存… → 已自动保存" flicker.)
+  if (
+    title === lastSavedTitle.value &&
+    html === lastSavedHTML.value &&
+    JSON.stringify(json ?? {}) === JSON.stringify(lastSavedJSON.value ?? {})
+  ) {
+    isDirty.value = false
+    return true
+  }
+
   try {
     await pagesStore.updatePage(localId.value, {
-      title: normalizeTitle(localTitle.value),
+      title,
       contentJSON: json as Record<string, unknown>,
       contentHTML: html,
     })
+    lastSavedTitle.value = title
+    lastSavedJSON.value = json
+    lastSavedHTML.value = html
     isDirty.value = false
     return true
   } catch {
@@ -223,6 +296,12 @@ watch(
         localTitle.value = p.title
         localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
         localHTML.value = p.contentHTML ?? EMPTY_HTML
+        // Stage 8: re-prime dedup baseline when navigating between pages
+        // so the new page's first autosave isn't compared against the
+        // previous page's lastSaved.
+        lastSavedTitle.value = p.title
+        lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+        lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
         isDirty.value = false
         saveState.value = 'idle'
       }
@@ -350,16 +429,7 @@ onBeforeUnmount(() => {
         <div class="content-inner edit-page">
           <EditorToolbar :editor="editorRef" @close="closeEditor" @publish="publish" />
 
-          <div class="edit-labels">
-            <span class="label-chip">
-              <span class="material-symbols-outlined icon-xs">draft</span>
-              草稿
-            </span>
-            <span class="label-chip">
-              <span class="material-symbols-outlined icon-xs">person</span>
-              仅我可见
-            </span>
-          </div>
+          <LabelPills v-if="page" :page="page" compact />
 
           <input
             ref="titleInputRef"

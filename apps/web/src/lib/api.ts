@@ -20,6 +20,7 @@
  */
 
 import {
+  AddLabelInputSchema,
   CommentSchema,
   CreateCommentInputSchema,
   CreatePageInputSchema,
@@ -27,6 +28,8 @@ import {
   MentionCandidateSchema,
   NotificationSchema,
   PageNodeSchema,
+  PageTemplateSchema,
+  PageVersionSchema,
   PaginatedListSchema,
   PublishPageInputSchema,
   ResetPasswordInputSchema,
@@ -38,17 +41,21 @@ import {
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import type {
+  AddLabelInput,
   Comment,
   CreateCommentInput,
   CreateGroupInput,
   CreatePageInput,
   CreateSpaceInput,
+  CreateTemplateInput,
   CreateUserInput,
   MarkReadInput,
   MentionCandidate,
   MovePageInput,
   Notification,
   PageNode,
+  PageTemplate,
+  PageVersion,
   Paginated,
   PaginatedQuery,
   PublishPageInput,
@@ -726,6 +733,100 @@ export const api = {
       })
       invalidatePath('GET', '/notifications')
       return r
+    },
+  },
+
+  /**
+   * Stage 8 — Page version history (per-page). 30-version retention on the
+   * server; the list endpoint caps `limit` at 50 to bound the LEFT JOIN.
+   */
+  pageVersions: {
+    list: (pageId: string, q?: PaginatedQuery): Promise<Paginated<PageVersion>> => {
+      const params = new URLSearchParams()
+      if (q?.limit !== undefined) params.set('limit', String(q.limit))
+      if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      return getManyPaginated(
+        `/pages/${encodeURIComponent(pageId)}/versions${qs}`,
+        PageVersionSchema,
+      )
+    },
+    /**
+     * Restore a specific version. Backend snapshots the restored content
+     * as a NEW version row (with auto-note "restored from v{N}") and
+     * returns the updated PageNode. Caller updates the local store.
+     */
+    restore: async (pageId: string, versionId: string): Promise<PageNode> => {
+      const r = await request<PageNode>(
+        `/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(versionId)}/restore`,
+        { method: 'POST' },
+      )
+      invalidatePrefix(`/pages/${encodeURIComponent(pageId)}/versions`)
+      return PageNodeSchema.parse(r) as PageNode
+    },
+  },
+
+  /**
+   * Stage 8 — Page labels (Notion-style, global lowercase). Labels live
+   * on the page node (the response carries them via LEFT JOIN), so the
+   * add/remove endpoints only need to invalidate the page list + the
+   * label search cache.
+   */
+  pageLabels: {
+    add: async (pageId: string, label: string): Promise<void> => {
+      const parsed = AddLabelInputSchema.parse({ label })
+      await request<void>(`/pages/${encodeURIComponent(pageId)}/labels`, {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+      })
+      invalidatePrefix('/pages')
+      invalidatePrefix('/labels')
+    },
+    remove: async (pageId: string, label: string): Promise<void> => {
+      await request<void>(
+        `/pages/${encodeURIComponent(pageId)}/labels/${encodeURIComponent(label)}`,
+        { method: 'DELETE' },
+      )
+      invalidatePrefix('/pages')
+      invalidatePrefix('/labels')
+    },
+  },
+
+  /**
+   * Stage 8 — Label autocomplete search. Distinct labels containing `q`
+   * (substring match on the stored lowercase values) on pages the user
+   * can access. Backs the add-popover autocomplete.
+   */
+  labels: {
+    search: async (q: string, limit = 20): Promise<string[]> => {
+      const params = new URLSearchParams({ q, limit: String(limit) })
+      return request<string[]>(`/labels/search?${params.toString()}`)
+    },
+  },
+
+  /**
+   * Stage 8 — Page templates. `?space=<id>` returns built-ins + scoped.
+   * Omit `space` → globals only.
+   */
+  templates: {
+    list: async (spaceId?: string | null): Promise<PageTemplate[]> => {
+      const qs = spaceId ? `?space=${encodeURIComponent(spaceId)}` : ''
+      const raw = await request<PageTemplate[]>(`/templates${qs}`)
+      return raw.map((t) => PageTemplateSchema.parse(t) as PageTemplate)
+    },
+    create: async (input: CreateTemplateInput): Promise<PageTemplate> => {
+      const r = await request<PageTemplate>('/templates', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      })
+      invalidatePrefix('/templates')
+      return PageTemplateSchema.parse(r) as PageTemplate
+    },
+    delete: async (id: string): Promise<void> => {
+      await request<void>(`/templates/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      invalidatePrefix('/templates')
     },
   },
 } as const

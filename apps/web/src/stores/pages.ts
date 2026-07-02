@@ -11,7 +11,7 @@ import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/const
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
-import type { PageNode, TreeNode } from '@power-wiki/shared'
+import type { CreatePageInput, PageNode, TreeNode } from '@power-wiki/shared'
 
 /** Single source of truth — apps/api (Postgres) via the typed client. */
 export const usePagesStore = defineStore('pages', () => {
@@ -146,9 +146,7 @@ export const usePagesStore = defineStore('pages', () => {
   //  snapshot 模式:先快照本地状态 → 立即变更 UI → 调 API → 失败就还原 + banner
   // ─────────────────────────────────────────────────────────────────
 
-  async function createPage(
-    opts: { id?: string; parentId?: string | null; title?: string } = {},
-  ): Promise<PageNode> {
+  async function createPage(opts: Partial<CreatePageInput> = {}): Promise<PageNode> {
     const parentId = opts.parentId ?? null
     // Stage B.3: caller may pass a client-generated id (for instant URL
     // jump in EditView). Otherwise we mint one here as before.
@@ -157,14 +155,21 @@ export const usePagesStore = defineStore('pages', () => {
     const siblings = pages.value.filter((p) => p.parentId === parentId)
     // Stage 4: every page belongs to a space. New pages go into the active space.
     // Guard: if user is in the manager UI without an active space, refuse cleanly.
-    const spaceId = useSpacesStore().activeSpaceId.value
+    const spaceId = opts.spaceId ?? useSpacesStore().activeSpaceId.value
     if (!spaceId) throw new Error('no active space — cannot create page')
+    // Stage 8: forward template fields. The previous signature only
+    // accepted {id, parentId, title}, so Sidebar's `createFromTemplate`
+    // silently dropped contentJSON/contentHTML/icon — the new page came
+    // out with the right title but an empty body, exactly the user-reported
+    // bug. Reuse the incoming content for the optimistic insert so the
+    // editor sees the template body immediately on mount.
     const optimistic: PageNode = {
       id,
       parentId,
       title: opts.title ?? DEFAULT_TITLE,
-      contentJSON: emptyDoc(),
-      contentHTML: EMPTY_HTML,
+      contentJSON: opts.contentJSON ?? emptyDoc(),
+      contentHTML: opts.contentHTML ?? EMPTY_HTML,
+      icon: opts.icon ?? undefined,
       order: siblings.length,
       createdAt: now,
       updatedAt: now,
@@ -178,12 +183,24 @@ export const usePagesStore = defineStore('pages', () => {
     pages.value.push(optimistic)
 
     try {
-      const real = await api.pages.create({
+      // Forward every field the caller passed — including template body +
+      // icon + optional explicit `order` (seed scripts use this) — so the
+      // server-side row matches what the optimistic entry already shows.
+      const apiPayload: CreatePageInput = {
         id,
         parentId,
         spaceId,
-        title: opts.title ?? DEFAULT_TITLE,
-      })
+        ...(opts.title !== undefined ? { title: opts.title } : {}),
+        ...(opts.icon !== undefined ? { icon: opts.icon } : {}),
+        ...(opts.contentJSON !== undefined
+          ? { contentJSON: opts.contentJSON as CreatePageInput['contentJSON'] }
+          : {}),
+        ...(opts.contentHTML !== undefined
+          ? { contentHTML: opts.contentHTML }
+          : {}),
+        ...(opts.order !== undefined ? { order: opts.order } : {}),
+      }
+      const real = await api.pages.create(apiPayload)
       // 用服务器响应替换本地乐观副本(timestamps / order 由 server 决定)
       const idx = pages.value.findIndex((p) => p.id === id)
       if (idx >= 0) pages.value[idx] = real

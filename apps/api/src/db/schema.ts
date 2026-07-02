@@ -38,6 +38,7 @@ import {
   pgTable,
   primaryKey,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 /* ─────────────────────────────────────────────────────────────────
@@ -314,6 +315,123 @@ export const notifications = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Page versions — Stage 8 (history / version compare)
+ *
+ *  One row per PATCH that mutates content (title / contentJSON /
+ *  contentHTML / icon). starred-only PATCHes do NOT create a version
+ *  (metadata, not content). v0 retention = keep the latest 30 per page;
+ *  older rows are pruned in the same transaction that inserts the new
+ *  version (see apps/api/src/routes/pageVersions.ts + pages.ts PATCH).
+ *
+ *  No FK — page hard-delete wipes this table by page_subtree, same
+ *  pattern as comments / notifications.
+ * ───────────────────────────────────────────────────────────────── */
+export const pageVersions = pgTable(
+  'page_versions',
+  {
+    id: text('id').primaryKey(),
+    /** No FK — page hard-delete cleans up explicitly. */
+    pageId: text('page_id').notNull(),
+    /** Monotonic per-page version number (1, 2, 3 …). Computed in the
+     *  route as MAX(versionNumber) + 1 inside a transaction; the unique
+     *  index below is the concurrency guard. */
+    versionNumber: integer('version_number').notNull(),
+    /** Snapshot of editable fields at the time of this PATCH. */
+    title: text('title').notNull().default(''),
+    contentJson: jsonb('content_json').$type<TiptapJSON>().notNull().default({}),
+    contentHtml: text('content_html').notNull().default(''),
+    icon: text('icon'),
+    /** Free-form author id (matches pages.author_id). */
+    editedBy: text('edited_by').notNull(),
+    /** Date.now() ms — when the PATCH landed. */
+    editedAt: bigint('edited_at', { mode: 'number' }).notNull(),
+    /** Optional user-supplied changelog (e.g. "fixed typo in section 2").
+     *  Auto-set on restore ("restored from v{N}") but v0 has no UI to
+     *  type one for normal edits. */
+    changeNote: text('change_note'),
+  },
+  (t) => [
+    /** Hot path: list versions of one page, newest first. */
+    index('page_versions_page_idx').on(t.pageId, t.versionNumber),
+    /** Concurrency guard: PATCH handler relies on a unique (page, version)
+     *  pair to prevent two parallel PATCHes from minting the same number. */
+    uniqueIndex('page_versions_page_version_uq').on(t.pageId, t.versionNumber),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
+ *  Page labels — Stage 8
+ *
+ *  Global, free-form labels (Notion-style, not Confluence-style
+ *  namespaces). One row per (page, label) pair — composite PK = idempotent
+ *  add. Same label can be on N pages, same page can have N labels.
+ *
+ *  Scope is global by design: labels/search joins against the user's
+ *  accessible pages so a label like "工程" can surface pages from any
+ *  team space the user has access to.
+ *
+ *  Storage: lowercase + trimmed + ≤32 chars (server normalizes; reject
+ *  otherwise). Case display follows storage (Notion-style).
+ *
+ *  No FK — page hard-delete wipes this table by page_subtree, same
+ *  pattern as comments / notifications.
+ * ───────────────────────────────────────────────────────────────── */
+export const pageLabels = pgTable(
+  'page_labels',
+  {
+    /** No FK — page hard-delete cleans up explicitly. */
+    pageId: text('page_id').notNull(),
+    /** Lowercased + trimmed, ≤32 chars. Free-form string. */
+    label: text('label').notNull(),
+    /** No FK — authorId may be a free-form legacy id like 'me'; UI handles it. */
+    authorId: text('author_id').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    /** Composite PK = one label per (page, label) — idempotent add. */
+    primaryKey({ columns: [t.pageId, t.label] }),
+    /** Hot path: search by label, scoped to accessible pages. */
+    index('page_labels_label_idx').on(t.label),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
+ *  Page templates — Stage 8
+ *
+ *  Reusable page skeletons. spaceId null = global template (visible
+ *  to everyone); set = space-scoped (visible to space members + admin
+ *  bypass). Seeding: bootstrap.ts installs 5 built-ins on first run
+ *  (idempotent — checks for existence by title before insert).
+ *  Built-ins: 空白 / 会议纪要 / RFC / SOP / 周报.
+ *
+ *  No FK — space hard-delete wipes this table by spaceId in the
+ *  adminSpaces DELETE transaction.
+ * ───────────────────────────────────────────────────────────────── */
+export const pageTemplates = pgTable(
+  'page_templates',
+  {
+    id: text('id').primaryKey(),
+    /** Null = global template (visible to everyone).
+     *  Set = space-scoped (visible to space members + admin). */
+    spaceId: text('space_id'),
+    title: text('title').notNull(),
+    description: text('description'),
+    /** Tiptap doc + HTML snapshot (contentHTML is pre-sanitized for v-html). */
+    contentJson: jsonb('content_json').$type<TiptapJSON>().notNull().default({}),
+    contentHtml: text('content_html').notNull().default(''),
+    icon: text('icon'),
+    /** Built-in flag: bootstrap-installed templates can't be deleted by
+     *  users; admin can override (but bootstrap never re-inserts). */
+    isBuiltIn: boolean('is_built_in').notNull().default(false),
+    /** No FK — disabled users get their templates left as-is (orphan authorId
+     *  is handled in the UI like other free-form id references). */
+    createdBy: text('created_by').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('page_templates_space_idx').on(t.spaceId)],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -331,3 +449,9 @@ export type CommentRow = typeof comments.$inferSelect
 export type NewCommentRow = typeof comments.$inferInsert
 export type NotificationRow = typeof notifications.$inferSelect
 export type NewNotificationRow = typeof notifications.$inferInsert
+export type PageVersionRow = typeof pageVersions.$inferSelect
+export type NewPageVersionRow = typeof pageVersions.$inferInsert
+export type PageLabelRow = typeof pageLabels.$inferSelect
+export type NewPageLabelRow = typeof pageLabels.$inferInsert
+export type PageTemplateRow = typeof pageTemplates.$inferSelect
+export type NewPageTemplateRow = typeof pageTemplates.$inferInsert

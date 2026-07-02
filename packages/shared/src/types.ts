@@ -45,6 +45,12 @@ export interface PageNode {
   /** 用户手动收藏的页面,Sidebar 会高亮显示 */
   starred?: boolean
   /**
+   * Stage 8: page labels (Notion-style, global lowercase). Always present
+   *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
+   *  Default [] when the page has no labels.
+   */
+  labels?: string[]
+  /**
    * Stage 5 软删除:非 null = 已被移到回收站。
    * 默认 SELECT 不返回此字段,只有 trash.list 端点会包含。
    * 恢复后回到 null。
@@ -178,4 +184,9 @@ export type {
   UpdateCommentInput,
   MarkReadInput,
   MentionCandidatesQuery,
+  // Stage 8
+  PageVersion,
+  PageTemplate,
+  AddLabelInput,
+  CreateTemplateInput,
 } from './schemas'

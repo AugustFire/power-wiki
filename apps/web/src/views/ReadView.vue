@@ -5,6 +5,9 @@ import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
+import VersionPanel from '@/components/page/VersionPanel.vue'
+import VersionPanelToggle from '@/components/page/VersionPanelToggle.vue'
+import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
@@ -25,6 +28,11 @@ const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
 const safeHtml = computed(() => sanitizeAndHardenLinks(page.value?.contentHTML ?? ''))
 const contentEl = ref<HTMLElement | null>(null)
+/** Stage 8: version history panel visibility. Local state — mirrors the
+ *  TocPanel pattern (the panel is always present in the layout; the toggle
+ *  flips a ref instead of changing routes, so the URL stays stable and the
+ *  chrome doesn't flicker). */
+const historyOpen = ref(false)
 
 /**
  * 作者展示名。
@@ -231,6 +239,7 @@ watch(
           </span>
         </button>
         <ExportMenu v-if="page" :page-id="page.id" />
+        <VersionPanelToggle v-if="page" :open="historyOpen" @toggle="historyOpen = !historyOpen" />
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
@@ -259,6 +268,8 @@ watch(
                 {{ relativeTime(page.updatedAt) }} 编辑
               </span>
             </div>
+
+            <LabelPills v-if="page" :page="page" />
 
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
@@ -326,6 +337,11 @@ watch(
       </div>
 
       <TocPanel :content-ref="contentEl" :page-key="page?.id" />
+      <VersionPanel
+        v-if="historyOpen && page"
+        :page-id="page.id"
+        @close="historyOpen = false"
+      />
     </div>
   </div>
 </template>
@@ -333,6 +349,14 @@ watch(
 <style scoped>
 .read-shell { min-height: calc(100vh - var(--topbar-h)); }
 .read-page { padding-top: 24px; }
+
+/* When the version panel is open, add a 4th grid column (320px).
+   The panel itself is `position: sticky` so the content column scrolls
+   independently while the panel stays pinned. */
+.layout:has(> .version-panel) {
+  grid-template-columns: var(--sidebar-w) 1fr var(--toc-w) 320px;
+  column-gap: 0;
+}
 
 .page-tags {
   display: flex;

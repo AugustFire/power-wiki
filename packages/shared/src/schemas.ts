@@ -39,7 +39,6 @@ export const PageNodeSchema = z.object({
   title: PageTitleSchema,
   contentJSON: TiptapJSONSchema,
   contentHTML: HtmlSchema,
-  icon: z.string().max(8).optional(),
   order: z.number().int().nonnegative(),
   createdAt: z.number().int().positive(),
   updatedAt: z.number().int().positive(),
@@ -49,6 +48,16 @@ export const PageNodeSchema = z.object({
   authorName: z.string().nullable(),
   authorColor: z.string().nullable(),
   starred: z.boolean().optional(),
+  /** Material Symbols ligature name (e.g. `menu_book`, `edit_note`,
+   *  `arrow_back_ios_new`). Capped at 40 to match `PageTemplateSchema.icon`
+   *  and `SpaceSchema.icon` — the previous `max(8)` silently broke the
+   *  built-in templates (all icons are 9-11 chars) at create-from-template
+   *  time with a 400 invalid_input. */
+  icon: z.string().max(40).optional(),
+  /** Stage 8: page labels (Notion-style, global lowercase). Always present
+   *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
+   *  Default [] when the page has no labels. */
+  labels: z.array(z.string().min(1).max(32)).default([]),
   /** Stage 5 软删除字段:默认 SELECT 不会返回(trash.list 才会)。
    *  Optional + nullable,因为常规响应不带这两个字段。 */
   deletedAt: z.number().int().positive().nullable().optional(),
@@ -287,7 +296,11 @@ export const CreatePageInputSchema = z.object({
   spaceId: PageIdSchema,
   parentId: PageIdSchema.nullable().optional(),
   title: PageTitleSchema.optional(),
-  icon: z.string().max(8).optional(),
+  /** Material Symbols ligature (e.g. `menu_book`, `arrow_back_ios_new`).
+   *  Capped at 40 to match `PageTemplateSchema.icon` / `SpaceSchema.icon` —
+   *  the previous `max(8)` blocked all built-in template icons at create
+   *  time with a 400 invalid_input. */
+  icon: z.string().max(40).optional(),
   /** Optional — frontend 创建空白页时不会带,seed script 会带。
    * 留空等同于空文档,等下一次 PATCH 时回填。 */
   contentJSON: TiptapJSONSchema.optional(),
@@ -302,7 +315,8 @@ export const UpdatePageInputSchema = z
     title: PageTitleSchema.optional(),
     contentJSON: TiptapJSONSchema.optional(),
     contentHTML: HtmlSchema.optional(),
-    icon: z.string().max(8).optional(),
+    /** Same 40-char cap as CreatePageInput — see PageNodeSchema for rationale. */
+    icon: z.string().max(40).optional(),
     starred: z.boolean().optional(),
   })
   .refine(
@@ -390,3 +404,65 @@ export type CreateCommentInput = z.infer<typeof CreateCommentInputSchema>
 export type UpdateCommentInput = z.infer<typeof UpdateCommentInputSchema>
 export type MentionCandidatesQuery = z.infer<typeof MentionCandidatesQuerySchema>
 export type MarkReadInput = z.infer<typeof MarkReadInputSchema>
+
+/* ---------- Stage 8: history / labels / templates ---------- */
+
+/** 单条 page version — Stage 8 response DTO。
+ *
+ *  `editedByName` / `editedByColor` 是 LEFT JOIN users 填充;
+ *  editedBy 是 legacy 'me' 或 user 已 disabled 时为 null。 */
+export const PageVersionSchema = z.object({
+  id: z.string().min(1),
+  pageId: PageIdSchema,
+  versionNumber: z.number().int().positive(),
+  title: PageTitleSchema,
+  contentJSON: TiptapJSONSchema,
+  contentHTML: HtmlSchema,
+  icon: z.string().max(40).optional(),
+  editedBy: z.string().min(1),
+  editedByName: z.string().nullable(),
+  editedByColor: z.string().nullable(),
+  editedAt: z.number().int().positive(),
+  changeNote: z.string().nullable().optional(),
+})
+
+/** POST /api/pages/:id/labels 入参。Server normalizes (trim + lowercase + length check). */
+export const AddLabelInputSchema = z.object({
+  label: z.string().min(1).max(64),
+})
+
+/** 单条 page template — Stage 8 response DTO。
+ *
+ *  spaceId 为 null = global template;非空 = space-scoped(仅该 space 成员可见,
+ *  admin bypass 可见)。isBuiltIn 标记 bootstrap 安装的内建模板。 */
+export const PageTemplateSchema = z.object({
+  id: z.string().min(1),
+  spaceId: PageIdSchema.nullable(),
+  title: z.string().min(1).max(64),
+  description: z.string().max(500).optional(),
+  contentJSON: TiptapJSONSchema,
+  contentHTML: HtmlSchema,
+  icon: z.string().max(40).optional(),
+  isBuiltIn: z.boolean(),
+  createdBy: z.string().min(1),
+  createdByName: z.string().nullable(),
+  createdByColor: z.string().nullable(),
+  createdAt: z.number().int().positive(),
+})
+
+/** POST /api/templates 入参 */
+export const CreateTemplateInputSchema = z.object({
+  /** null/undefined = global template (admin only). Set = space-scoped. */
+  spaceId: PageIdSchema.nullable().optional(),
+  title: z.string().min(1).max(64),
+  description: z.string().max(500).optional(),
+  contentJSON: TiptapJSONSchema,
+  contentHTML: HtmlSchema,
+  icon: z.string().max(40).optional(),
+})
+
+/* ---------- Stage 8 type exports ---------- */
+export type PageVersion = z.infer<typeof PageVersionSchema>
+export type PageTemplate = z.infer<typeof PageTemplateSchema>
+export type AddLabelInput = z.infer<typeof AddLabelInputSchema>
+export type CreateTemplateInput = z.infer<typeof CreateTemplateInputSchema>

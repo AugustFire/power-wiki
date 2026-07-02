@@ -49,7 +49,15 @@ import {
   PublishPageInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { pages, spaces, users, comments as commentsTable, notifications as notificationsTable } from '../db/schema'
+import {
+  pages,
+  spaces,
+  users,
+  comments as commentsTable,
+  notifications as notificationsTable,
+  pageVersions,
+  pageLabels,
+} from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
@@ -62,9 +70,10 @@ const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/s
 export const pagesRouter = new Hono<{ Variables: Variables }>()
 
 /**
- * `pages` + LEFT JOIN `users` for the author's name/color. Used by every
- * handler that returns a page to the client so ReadView can render the
- * creator without a separate user lookup.
+ * `pages` + LEFT JOIN `users` for the author's name/color + LEFT JOIN
+ * `page_labels` aggregated to a distinct label array. Used by every handler
+ * that returns a page to the client so ReadView can render the creator
+ * without a separate user lookup and the label pills without a second fetch.
  *
  * By default this ALSO filters out trashed rows (`deleted_at IS NULL`) so
  * every existing read path is automatically safe. Pass `includeDeleted: true`
@@ -72,19 +81,36 @@ export const pagesRouter = new Hono<{ Variables: Variables }>()
  *
  * Pass an optional WHERE clause; undefined = no extra filter beyond the
  * default deletedAt guard.
+ *
+ * The `labels` aggregation: COALESCE(json_agg(DISTINCT label) FILTER (...))
+ * returns '[]' when the page has no labels, otherwise the distinct label
+ * strings. The FILTER clause is needed because LEFT JOIN produces NULLs in
+ * the join column for rows with no labels — those would otherwise land in
+ * the agg as a NULL element. Drizzle's `.mapWith(...)` keeps the result
+ * typed as `string[]` (parse the JSON if non-null, [] otherwise).
  */
 function selectPagesWithAuthor(
   where?: SQL,
   opts: { includeDeleted?: boolean } = {},
 ) {
+  const labelsAgg = sql<string[]>`
+    COALESCE(
+      json_agg(DISTINCT ${pageLabels.label})
+        FILTER (WHERE ${pageLabels.label} IS NOT NULL),
+      '[]'::json
+    )
+  `.as('labels')
   const q = db
     .select({
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      labels: labelsAgg,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))
+    .leftJoin(pageLabels, eq(pageLabels.pageId, pages.id))
+    .groupBy(pages.id, users.name, users.color)
   const filters: SQL[] = []
   if (!opts.includeDeleted) filters.push(isNull(pages.deletedAt))
   if (where) filters.push(where)
@@ -291,7 +317,62 @@ pagesRouter.patch('/:id', async (c) => {
   if (input.icon !== undefined) patch.icon = input.icon
   if (input.starred !== undefined) patch.starred = input.starred
 
-  await db.update(pages).set(patch).where(eq(pages.id, id))
+  // Stage 8: content mutations create a history snapshot. BUT only when
+  // the value actually differs from what's already on disk — debounced
+  // auto-save or EditView mount-then-unmount may PATCH with no real edit,
+  // which would otherwise flood history with duplicate snapshots.
+  //
+  // Comparing each *effective* field (incoming or existing) against the
+  // existing row is the right primitive: if you sent title and it matches,
+  // but also bumped contentHTML which also matches, neither is a change.
+  // We compare rendered HTML (canonical from the editor pipeline) and JSON
+  // (defense-in-depth for edits that touched JSON only).
+  const effTitle = input.title ?? existing.title
+  const effHtml = input.contentHTML ?? existing.contentHtml
+  const effIcon = input.icon !== undefined ? input.icon : existing.icon
+  const effJson = input.contentJSON ?? existing.contentJson
+  const stableJson = (j: unknown) => JSON.stringify(j ?? {})
+  const isContentChange =
+    (input.title !== undefined && effTitle !== existing.title) ||
+    (input.contentHTML !== undefined && effHtml !== existing.contentHtml) ||
+    (input.icon !== undefined && effIcon !== existing.icon) ||
+    (input.contentJSON !== undefined && stableJson(effJson) !== stableJson(existing.contentJson))
+
+  if (isContentChange) {
+    await db.transaction(async (tx) => {
+      // Compute next version number for this page inside the tx.
+      const versionResult = await tx.execute<{ nextVersion: number }>(sql`
+        SELECT COALESCE(MAX(version_number), 0) + 1 AS "nextVersion"
+        FROM page_versions
+        WHERE page_id = ${id}
+      `)
+      const nextVersion = Number(versionResult.rows[0]?.nextVersion ?? 1)
+      await tx.insert(pageVersions).values({
+        id: generatePageId(),
+        pageId: id,
+        versionNumber: nextVersion,
+        title: patch.title ?? existing.title,
+        contentJson: patch.contentJson ?? existing.contentJson,
+        contentHtml: patch.contentHtml ?? existing.contentHtml,
+        icon: patch.icon !== undefined ? patch.icon : existing.icon,
+        editedBy: me.id,
+        editedAt: patch.updatedAt!,
+        changeNote: null,
+      })
+      await tx.update(pages).set(patch).where(eq(pages.id, id))
+      // Trim retention: keep latest 30 per page. Idempotent when < 30.
+      await tx.execute(sql`
+        DELETE FROM page_versions
+        WHERE page_id = ${id}
+          AND version_number <= (
+            SELECT MAX(version_number) FROM page_versions WHERE page_id = ${id}
+          ) - 30
+      `)
+    })
+  } else {
+    // starred-only (or empty-but-zod-validated) PATCH — no history entry.
+    await db.update(pages).set(patch).where(eq(pages.id, id))
+  }
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, id))
   if (!row) return c.json({ error: 'not_found' }, 404)
@@ -710,6 +791,14 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(commentsTable)
         .where(inArray(commentsTable.pageId, subtreeIds))
+      // Stage 8: history + labels ride along with page purge. No FK so
+      // they're wiped explicitly in the same transaction as pages.
+      await tx
+        .delete(pageVersions)
+        .where(inArray(pageVersions.pageId, subtreeIds))
+      await tx
+        .delete(pageLabels)
+        .where(inArray(pageLabels.pageId, subtreeIds))
       await tx.delete(pages).where(inArray(pages.id, subtreeIds))
     })
     return c.body(null, 204)

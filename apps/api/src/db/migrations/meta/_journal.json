@@ -43,6 +43,13 @@
       "when": 1782830265274,
       "tag": "0005_cheerful_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782975378059,
+      "tag": "0006_oval_diamondback",
+      "breakpoints": true
     }
   ]
 }

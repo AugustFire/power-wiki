@@ -14,6 +14,10 @@
  * that already carries `authorName` / `authorColor` columns (see
  * `pagesWithAuthorSelect()` in pages.ts) — both nullable when the page's
  * authorId doesn't match a real user (legacy 'me' seed or a deleted user).
+ *
+ * Stage 8: `labels` is also denormalized via a LEFT JOIN + json_agg in
+ * `pages.ts`. The mapper accepts the joined array (always present; [] when
+ * the page has no labels or when the caller didn't bother to join).
  */
 
 import type { PageNode } from '@power-wiki/shared'
@@ -22,6 +26,9 @@ import type { PageRow } from '../db/schema'
 export type PageRowWithAuthor = PageRow & {
   authorName: string | null
   authorColor: string | null
+  /** Stage 8: labels aggregator from pages.ts LEFT JOIN.
+   *  Always present on the row after the join; default [] otherwise. */
+  labels: string[]
 }
 
 export function rowToPageNode(row: PageRowWithAuthor): PageNode {
@@ -44,6 +51,7 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     authorName: row.authorName,
     authorColor: row.authorColor,
     starred: row.starred,
+    labels: row.labels ?? [],
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,
   }

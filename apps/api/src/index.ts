@@ -25,6 +25,9 @@ import { cors } from 'hono/cors'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { db, pool } from './db/client'
 import { pagesRouter } from './routes/pages'
+import { pageVersionsRouter } from './routes/pageVersions'
+import { pageLabelsRouter } from './routes/pageLabels'
+import { pageTemplatesRouter } from './routes/pageTemplates'
 import { authRouter } from './routes/auth'
 import { spacesRouter } from './routes/spaces'
 import { commentsRouter } from './routes/comments'
@@ -58,6 +61,15 @@ app.route('/api/auth', authRouter)
 app.use('/api/*', requireAuth)
 
 app.route('/api/pages', pagesRouter)
+// Stage 8 sub-routers — also mounted under /api/pages so the URLs stay
+// grouped with the pages domain (versions + labels are page-scoped). The
+// templates router lives on its own /api/templates prefix.
+app.route('/api/pages', pageVersionsRouter)
+app.route('/api/pages', pageLabelsRouter)
+// /api/labels is mounted from the same router instance — Hono supports
+// mounting the same router at multiple prefixes.
+app.route('/api/labels', pageLabelsRouter)
+app.route('/api/templates', pageTemplatesRouter)
 app.route('/api/spaces', spacesRouter)
 app.route('/api/comments', commentsRouter)
 app.route('/api/notifications', notificationsRouter)

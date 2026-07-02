@@ -565,7 +565,15 @@
     font-weight: 600;
     color: var(--text-1);
 }
-.prose ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+/* taskList 在 read 视图下与正文 heading 共左缘(normal ul/ol 的 24px
+   margin-left 来自上面 .prose ul,ol 规则,这里 override 掉,否则
+   checkbox 列表整体向右偏一格)。 */
+.prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+.prose ul[data-type="taskList"] li { display: flex; align-items: baseline; gap: 8px; }
 .prose ul[data-type="taskList"] li { display: flex; align-items: baseline; gap: 8px; }
 /* Tiptap taskList 把 checkbox 包在 <label> 里,文字在 <div><p> 里。
    - li 用 align-items: baseline —— checkbox 底部(基线)和文字基线重合
