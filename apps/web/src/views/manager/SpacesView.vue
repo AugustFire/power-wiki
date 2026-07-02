@@ -20,6 +20,7 @@ import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatRelativeTime } from '@/lib/relativeTime'
 import { useManagerActions } from '@/composables/useManagerActions'
 import { useManagerStats } from '@/composables/useManagerStats'
 import { usePaginatedList } from '@/composables/usePaginatedList'
@@ -119,13 +120,7 @@ const COLOR_PALETTE = [
 const groupById = ref<Record<string, UserGroup>>({})
 
 function relativeTime(ts: number): string {
-  const diff = Date.now() - ts
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
-  const day = Math.floor(diff / 86_400_000)
-  if (day < 7) return `${day} 天前`
-  return new Date(ts).toLocaleDateString('zh-CN')
+  return formatRelativeTime(ts)
 }
 
 async function load() {

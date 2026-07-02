@@ -25,6 +25,7 @@ import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useNotifications } from '@/composables/useNotifications'
+import { formatRelativeTime } from '@/lib/relativeTime'
 
 type TabKey = 'all' | 'unread'
 
@@ -119,14 +120,7 @@ const HUMAN_KIND: Record<string, string> = {
 }
 
 function relTime(ts: number): string {
-  const diff = Math.max(0, Date.now() - ts)
-  const s = Math.round(diff / 1000)
-  if (s < 60) return '刚刚'
-  const m = Math.round(s / 60)
-  if (m < 60) return `${m} 分钟前`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h} 小时前`
-  return `${Math.round(h / 24)} 天前`
+  return formatRelativeTime(ts)
 }
 </script>
 

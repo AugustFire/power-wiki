@@ -3,15 +3,20 @@ import { computed } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
+import { useRecentPages } from '@/composables/useRecentPages'
 import { useRouter } from 'vue-router'
 import { newId } from '@/lib/id'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
+import { formatRelativeTime } from '@/lib/relativeTime'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const uiStore = useUiStore()
+const authStore = useAuthStore()
+const { list: recentList } = useRecentPages()
 const router = useRouter()
 
 // Stage 4c: Home is scoped to the active space. Stats / root list / recents
@@ -35,6 +40,21 @@ const recentPages = computed(() =>
     .slice(0, 6)
 )
 
+/**
+ * 「我最近访问」基于 localStorage 的 useRecentPages,过滤掉:
+ *   - 当前 active space 之外的页面(切到 team space 时,personal space
+ *     的最近访问就不该出现在这里 — 避免视觉混乱)
+ *   - 已被软删的页面(pages.value 里找不到对应 id)
+ *
+ * 这样跟「最近编辑」(全空间按 updatedAt 排)形成清晰分工:Recents 是
+ * per-user per-device 的"我刚才在干嘛",最近编辑是空间的"最近活动流"。
+ */
+const myRecentPages = computed(() =>
+  recentList.value
+    .filter((r) => pagesStore.getPage(r.id)?.spaceId === activeSpaceId.value)
+    .slice(0, 6),
+)
+
 const stats = computed(() => {
   const all = inSpace.value
   const today = new Date()
@@ -43,25 +63,19 @@ const stats = computed(() => {
   const editedToday = all.filter((p) => p.updatedAt >= todayMs).length
   const childCount = all.filter((p) => p.parentId !== null).length
   const thisWeek = all.filter((p) => p.updatedAt >= todayMs - 7 * 86400000).length
-  // 估算 localStorage 占用(JSON 序列化字节数 / 1024 取一位小数 KB)
-  let bytes = 0
-  try {
-    bytes = new Blob([JSON.stringify(all)]).size
-  } catch {
-    bytes = 0
-  }
-  const kb = bytes / 1024
-  const storageValue =
-    kb < 1024 ? kb.toFixed(1) : (kb / 1024).toFixed(2)
-  const storageUnit = kb < 1024 ? 'KB' : 'MB'
+  // 「我的页面」按 authorId 数 — 真实数据,不像之前的「云端存储」
+  // 是拿 JSON.stringify 假装服务器字节数,看一眼就露馅。
+  // 个人空间里基本所有页都是我的,所以 active space 是 team space 时
+  // 这个数字才有信号意义;个人空间下退化为"全部页面",用户也能理解。
+  const meId = authStore.user?.id
+  const myPages = meId ? all.filter((p) => p.authorId === meId).length : 0
   return {
     total: all.length,
     roots: rootPages.value.length,
     children: childCount,
     editedToday,
     thisWeek,
-    storageValue,
-    storageUnit,
+    myPages,
   }
 })
 
@@ -87,15 +101,7 @@ function openTopSearch() {
 }
 
 function relativeTime(ts: number): string {
-  const diff = Date.now() - ts
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.floor(hr / 24)
-  if (day < 7) return `${day} 天前`
-  return new Date(ts).toLocaleDateString('zh-CN')
+  return formatRelativeTime(ts)
 }
 
 // 取内容纯文本作为摘要(去掉 HTML 标签 + 图标文字,截取前 80 字)
@@ -111,14 +117,6 @@ function excerpt(html: string): string {
         <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
       </div>
       <div class="page-actions">
-        <button class="btn ghost" disabled title="导入 / 导出暂未支持(请手动复制到本地存档)">
-          <span class="material-symbols-outlined icon-lg">upload_file</span>
-          导入
-        </button>
-        <button class="btn ghost" disabled title="导入 / 导出暂未支持(请手动复制到本地存档)">
-          <span class="material-symbols-outlined icon-lg">file_export</span>
-          导出
-        </button>
         <button class="btn primary" @click="createRoot">
           <span class="material-symbols-outlined icon-lg">add</span>
           新建页面
@@ -196,11 +194,11 @@ function excerpt(html: string): string {
               </div>
               <div class="stat-card warning">
                 <div class="stat-label">
-                  <span class="material-symbols-outlined">storage</span>
-                  云端存储
+                  <span class="material-symbols-outlined">person</span>
+                  我的页面
                 </div>
-                <div class="stat-value">{{ stats.storageValue }}<span class="stat-unit">{{ stats.storageUnit }}</span></div>
-                <div class="stat-trend">存储备份 · {{ stats.total }} 页</div>
+                <div class="stat-value">{{ stats.myPages }}</div>
+                <div class="stat-trend">我创建的 · 本空间内</div>
               </div>
             </div>
 
@@ -228,6 +226,18 @@ function excerpt(html: string): string {
                 </div>
               </button>
             </div>
+
+            <!-- 我最近访问(per-user,localStorage) -->
+            <div v-if="myRecentPages.length > 0" class="section-title">
+              <span>我最近访问</span>
+            </div>
+            <ul v-if="myRecentPages.length > 0" class="recent-list recent-list--mine">
+              <li v-for="r in myRecentPages" :key="r.id" @click="goPage(r.id)">
+                <span class="material-symbols-outlined doc-icon" style="font-size:18px">history</span>
+                <span class="rl-title">{{ r.title }}</span>
+                <span class="rl-meta">{{ relativeTime(r.visitedAt) }}</span>
+              </li>
+            </ul>
 
             <!-- 最近编辑 -->
             <div class="section-title">

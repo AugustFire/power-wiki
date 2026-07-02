@@ -62,6 +62,7 @@ export const TreeNodeSchema: z.ZodType<TreeNode> = z.lazy(() =>
     title: PageTitleSchema,
     parentId: PageIdSchema.nullable(),
     order: z.number().int().nonnegative(),
+    liveDescendantCount: z.number().int().nonnegative(),
     children: z.array(TreeNodeSchema),
   }),
 )

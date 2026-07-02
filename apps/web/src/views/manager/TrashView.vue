@@ -18,6 +18,7 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
+import { formatRelativeTime } from '@/lib/relativeTime'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import type { PageNode, User } from '@power-wiki/shared'
 
@@ -143,15 +144,7 @@ function parentIsTrashed(node: { parentId: string | null }): boolean {
 }
 
 function relativeTime(ts: number): string {
-  const diff = Date.now() - ts
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.floor(hr / 24)
-  if (day < 7) return `${day} 天前`
-  return new Date(ts).toLocaleDateString('zh-CN')
+  return formatRelativeTime(ts)
 }
 
 function deletedByLabel(id: string | null | undefined): string {

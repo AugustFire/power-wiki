@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import type { PageNode } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -38,6 +39,15 @@ function pathOf(id: string | null): string {
   return titles.join(' / ')
 }
 
+/**
+ * B.3: dialog 打开时如果 pages 还没加载(用户从 deep link 直接到 /manager/* 再开搜索,
+ * 首次就不会有数据),弹 Skeleton 占位 + 触发 `pagesStore.init()`(自带 promise cache,
+ * 并发安全)。数据回来后 computed 自动渲染结果,无需手动刷新。
+ */
+const showSkeleton = computed(
+  () => pagesStore.loading || (!pagesStore.loaded && pagesStore.pages.length === 0),
+)
+
 const results = computed<Result[]>(() => {
   const q = query.value.trim().toLowerCase()
   const all = pagesStore.pages
@@ -57,6 +67,10 @@ watch(
     if (val) {
       query.value = ''
       activeIndex.value = 0
+      // 打开时如未加载,触发一次 init。后续再开会因为 loaded=true 直接走结果。
+      if (!pagesStore.loaded && !pagesStore.loading) {
+        void pagesStore.init()
+      }
       await nextTick()
       inputEl.value?.focus()
     }
@@ -129,7 +143,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
           <kbd class="ts-esc">Esc</kbd>
         </div>
 
-        <div v-if="results.length === 0" class="ts-empty">
+        <div v-if="showSkeleton" class="ts-skeleton">
+          <Skeleton :count="6" height="36px" radius="var(--radius-md)" />
+        </div>
+        <div v-else-if="results.length === 0" class="ts-empty">
           <span class="material-symbols-outlined">search_off</span>
           <div>没有匹配 "{{ query }}" 的页面</div>
         </div>
@@ -274,6 +291,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   font-size: 32px;
   margin-bottom: 8px;
   display: block;
+}
+.ts-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
 }
 
 .ts-footer {

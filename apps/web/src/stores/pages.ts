@@ -561,6 +561,7 @@ export const usePagesStore = defineStore('pages', () => {
         title: p.title,
         parentId: p.parentId,
         order: p.order,
+        liveDescendantCount: 0,
         children: [],
       })
     }
@@ -578,6 +579,17 @@ export const usePagesStore = defineStore('pages', () => {
       arr.forEach((n) => sortRec(n.children))
     }
     sortRec(roots)
+    // Post-order walk: every child's count rolls up to its parent so a
+    // single O(N) pass fills the field used by PageTree's `:disabled`
+    // and the delete-confirmation pre-check. Replaces the previous
+    // per-render O(depth) BFS that ran N times on every reactive update.
+    const fillCounts = (n: TreeNode): number => {
+      let total = 0
+      for (const c of n.children) total += 1 + fillCounts(c)
+      n.liveDescendantCount = total
+      return total
+    }
+    roots.forEach(fillCounts)
     return roots
   }
 
@@ -602,6 +614,7 @@ export const usePagesStore = defineStore('pages', () => {
         title: p.title,
         parentId: p.parentId,
         order: p.order,
+        liveDescendantCount: 0,
         children: [],
       })
     }
@@ -623,6 +636,15 @@ export const usePagesStore = defineStore('pages', () => {
       arr.forEach((n) => sortRec(n.children))
     }
     sortRec(roots)
+    // Same post-order count-fill as getTree() — keeps the field consistent
+    // so the scoped tree's `:disabled` bindings don't regress.
+    const fillCounts = (n: TreeNode): number => {
+      let total = 0
+      for (const c of n.children) total += 1 + fillCounts(c)
+      n.liveDescendantCount = total
+      return total
+    }
+    roots.forEach(fillCounts)
     return roots
   }
 

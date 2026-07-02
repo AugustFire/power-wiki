@@ -272,8 +272,9 @@ function deletePage() {
   // also enforces this (409 has_children) but UX is much better if the
   // menu item itself is disabled (see template below) — this branch only
   // fires if the menu was reached some other way (keyboard, automation).
-  const descendantCount = countLiveDescendants(props.node.id)
-  if (descendantCount > 0) {
+  // `liveDescendantCount` is pre-computed in pagesStore.getTree() during
+  // the post-order walk, so we read it directly instead of doing a BFS.
+  if (props.node.liveDescendantCount > 0) {
     uiStore.setError('请先删除子页面')
     return
   }
@@ -303,26 +304,12 @@ function promoteToRoot() {
 }
 
 /**
- * Count non-trashed descendants of `id`. Stage 5: a page can only be
- * soft-deleted when it has zero live children, mirroring the backend's
- * 409 `has_children` guard. `getChildren` already filters out trashed
- * rows, so this count is "live children" by construction.
+ * Live-descendant count for `id`. Read off the precomputed
+ * `liveDescendantCount` field on the current TreeNode (populated by
+ * pagesStore.getTree's post-order walk). Used to gate the delete action
+ * and disable the menu item when a page still has live children.
  */
-function countLiveDescendants(id: string): number {
-  let count = 0
-  const stack: string[] = [id]
-  while (stack.length) {
-    const cur = stack.pop()!
-    const children = pagesStore.getChildren(cur)
-    for (const c of children) {
-      count++
-      stack.push(c.id)
-    }
-  }
-  return count
-}
-
-const hasLiveChildren = computed(() => countLiveDescendants(props.node.id) > 0)
+const hasLiveChildren = computed(() => props.node.liveDescendantCount > 0)
 
 /**
  * Cross-space "发布到" UI: clicking "发布到..." in the ⋯ menu opens a

@@ -15,7 +15,7 @@
  * `?offset` paginate the top-level list; replies of each top-level row
  * are returned in full with the row.
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import CommentItem from './CommentItem.vue'
 import CommentsComposer from './CommentsComposer.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -29,14 +29,35 @@ const props = defineProps<{
   pageId: string
 }>()
 
-/** 一次拿 20 条;评论密集的页面(产品文档)也只需两次拉取。 */
-const PAGE_SIZE = 20
+/** 一次拿 10 条;评论密集的页面(产品文档)也只需两次拉取。 */
+const PAGE_SIZE = 10
 
 const { items, hasMore, loading, refreshing, error: paginatedError, reset, loadMore } =
   usePaginatedList<CommentWithReplies>(
     (q) => api.comments.list(props.pageId, q),
     { pageSize: PAGE_SIZE },
   )
+
+/**
+ * 显示窗口 — 折叠语义(expanded 状态机):
+ *   - expanded=false (默认): 永远只显示前 PAGE_SIZE 条,不论 items.value 多大
+ *   - expanded=true:          显示 items.value 全部
+ *   - "加载更多": 调 loadMore() 拉下一页(items 增多);expanded 不变,新加载的不可见
+ *                       直到用户点"展开剩余 N 条"
+ *   - "展开剩余":   expanded = true
+ *   - "收起":       expanded = false,固定回到前 PAGE_SIZE 条(不逐步 -PAGE_SIZE)
+ * 切换 pageId 时重置 expanded=false,跟 `reset()` 同步语义。
+ */
+const expanded = ref(false)
+const visibleItems = computed(() =>
+  expanded.value ? items.value : items.value.slice(0, PAGE_SIZE),
+)
+const hiddenLoaded = computed(() => Math.max(0, items.value.length - PAGE_SIZE))
+const canLoadMore = computed(() => hasMore.value)
+const canExpand = computed(
+  () => !hasMore.value && hiddenLoaded.value > 0 && !expanded.value,
+)
+const canCollapse = computed(() => expanded.value)
 
 const localError = ref<string | null>(null)
 
@@ -56,6 +77,7 @@ watch(
   () => props.pageId,
   () => {
     localError.value = null
+    expanded.value = false
     void reset()
   },
 )
@@ -64,24 +86,49 @@ watch(paginatedError, (e) => {
   localError.value = e instanceof Error ? e.message : '加载评论失败'
 })
 
+/**
+ * 加载更多:pageSize 固定 10,调一次 usePaginatedList.loadMore() 就 +10。
+ * 关键:加载完后 expanded=true,这样新拉到的 10 条立即可见(否则 expanded=false
+ * 时 visibleItems = items.slice(0, PAGE_SIZE) 永远只显示前 10,用户点按钮看不到
+ * 任何变化 — 那是 bug)。
+ *
+ * "展开剩余"按钮也是同样的最终态(expanded=true),所以两者合并逻辑:只要用户
+ * 想看到更多,expanded 就开起来。
+ */
+async function onLoadMore(): Promise<void> {
+  if (hasMore.value) {
+    await loadMore()
+  }
+  expanded.value = true
+}
+
+function onExpand(): void {
+  expanded.value = true
+}
+
+function onCollapse(): void {
+  expanded.value = false
+}
+
 function onSubmitted(c: Comment): void {
   // `parentId` is null for top-level (composer we render right below the
   // list) or the parent id for replies (composer inside the item). Mirror
   // the API response shape so ReplyItem can re-attach it.
+  // Server returns rows newest-first (desc by createdAt), so the new row
+  // goes to the FRONT of the list (unshift), not the back.
   const withReplies: CommentWithReplies = { ...c, replies: [] }
   if (c.parentId) {
     const parent = items.value.find((p) => p.id === c.parentId)
     if (parent) {
-      parent.replies = [...parent.replies, withReplies]
+      parent.replies = [withReplies, ...parent.replies]
       return
     }
   }
-  // Top-level (parentId null) → append to root list. The new row sits
-  // beyond the current `hasMore` window if the user has already
-  // scrolled past the first page; that is fine — server still has it
-  // and the next `loadMore` will fetch it (and de-dupe by id when
-  // we get there).
-  items.value = [...items.value, withReplies]
+  // Top-level (parentId null) → prepend to root list. If the user has
+  // already scrolled past the first page and the new row would land
+  // beyond the `hasMore` window, that's fine — server still has it and
+  // the next `loadMore` will fetch (and de-dupe by id when we get there).
+  items.value = [withReplies, ...items.value]
 }
 
 /**
@@ -98,13 +145,13 @@ function onReplyAdded(parent: Comment, child: Comment): void {
   const target = items.value.find((p) => p.id === parent.id)
     ?? findReplyInTree(parent.id)
   if (target) {
-    target.replies = [...target.replies, withReplies]
+    target.replies = [withReplies, ...target.replies]
     return
   }
   // Parent row vanished between submit and response (rare — e.g. soft-delete
   // by another user). Fall through to top-level so the user sees their
   // reply rather than losing it to a router refresh.
-  items.value = [...items.value, withReplies]
+  items.value = [withReplies, ...items.value]
 }
 
 function findReplyInTree(parentId: string): CommentWithReplies | null {
@@ -149,7 +196,7 @@ function onDeleted(id: string): void {
 
     <div v-else class="cs-list">
       <CommentItem
-        v-for="c in items"
+        v-for="c in visibleItems"
         :key="c.id"
         :comment="c"
         :page-id="pageId"
@@ -158,53 +205,74 @@ function onDeleted(id: string): void {
       />
     </div>
 
-    <div v-if="hasMore" class="cs-load-more">
+    <div v-if="canLoadMore || canExpand || canCollapse" class="cs-load-more">
       <button
+        v-if="canLoadMore"
         type="button"
         class="cs-load-more-btn"
         :disabled="loading"
-        @click="loadMore"
+        @click="onLoadMore"
       >
         <span v-if="loading" class="cs-load-more-spinner" aria-hidden="true"></span>
         {{ loading ? '加载中…' : '加载更多评论' }}
       </button>
+      <button
+        v-else-if="canExpand"
+        type="button"
+        class="cs-load-more-btn"
+        @click="onExpand"
+      >展开剩余 {{ hiddenLoaded }} 条</button>
+      <!-- "收起"独立 v-if,可以跟"加载更多"并排显示 —
+           展开状态下用户既能继续加载,也能折叠回 10 条 -->
+      <button
+        v-if="canCollapse"
+        type="button"
+        class="cs-load-more-btn"
+        @click="onCollapse"
+      >收起</button>
     </div>
-    <div v-else-if="items.length > 0" class="cs-load-end">— 已加载全部 —</div>
+    <div v-else-if="items.length > 0 && !canCollapse" class="cs-load-end">— 已加载全部 —</div>
 
     <CommentsComposer :page-id="pageId" @submitted="onSubmitted" />
   </section>
 </template>
 
 <style scoped>
+/* 跟主区靠一条文字色横线 + 大间距区分:
+   - 不用背景色块(避免视觉补丁感)
+   - 不用 box-shadow / border / radius(去掉卡片感,跟文章主区融为一体)
+   - 标题字号 16 让"评论区"作为独立区域仍然可识别
+   - hover bg --bg-subtle 仍是行级高亮的关键 */
 .comments-section {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border, #dfe1e6);
+  margin-top: 56px;
+  border-top: 1px solid var(--text-3, #6b778c);
+  background: transparent;
 }
 .cs-title {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-1, #172b4d);
-  margin: 0 0 12px;
+  margin: 0;
+  padding: 28px 0 16px;
 }
 .cs-loading,
-.cs-empty,
-.cs-load-end {
+.cs-empty {
   font-size: 13px;
-  color: var(--text-3, #5e6c84);
-  padding: 8px 0;
+  color: var(--text-3, #6b778c);
+  padding: 12px 0 20px;
   text-align: center;
 }
 .cs-skeleton {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 8px 0 12px;
+  padding: 4px 0 12px;
 }
 .cs-load-end {
   color: var(--text-3, #6b778c);
   font-size: 12px;
-  padding: 4px 0 0;
+  padding: 4px 0 8px;
+  text-align: center;
 }
 .cs-error {
   font-size: 13px;
@@ -212,13 +280,15 @@ function onDeleted(id: string): void {
   padding: 8px 0;
 }
 .cs-list {
-  margin-bottom: 8px;
+  margin: 0;
+  padding: 0 0 4px;
 }
 
 /* ─── load more ─────────────────────────────────────────────────── */
 .cs-load-more {
   display: flex;
   justify-content: center;
+  gap: 8px;
   padding: 4px 0 12px;
 }
 .cs-load-more-btn {

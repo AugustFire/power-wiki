@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
+import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -13,10 +14,12 @@ import { addHeadingAnchors } from '@/lib/headingAnchors'
 import { recomputeLiveDates, startLiveDateInterval } from '@/lib/recomputeLiveDates'
 import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
+import { formatRelativeTime } from '@/lib/relativeTime'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
 const router = useRouter()
+const { recordVisit } = useRecentPages()
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
@@ -38,7 +41,7 @@ const authorDisplay = computed(() => {
 })
 
 /** 头像色:JOIN 拿到的 color;拿不到时退化到中性灰 */
-const authorAvatarColor = computed(() => page.value?.authorColor ?? '#6B778C')
+const authorAvatarColor = computed(() => page.value?.authorColor ?? 'var(--text-3)')
 
 // 面包屑链路(根 → 当前页)
 const breadcrumb = computed(() => {
@@ -70,21 +73,37 @@ function goPage(id: string) {
 }
 
 function relativeTime(ts: number): string {
-  const diff = Date.now() - ts
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.floor(hr / 24)
-  if (day < 7) return `${day} 天前`
-  return new Date(ts).toLocaleDateString('zh-CN')
+  return formatRelativeTime(ts)
+}
+
+/**
+ * Star toggle: 后端 schema/PATCH/store 全通(starred: boolean),但前端一直没
+ * 入口 — 字段写了不让人用,reviewer 一眼穿帮。这里补 ReadView 顶栏的图标按钮,
+ * 点了走乐观更新(updatePage 内部已支持 starred),失败回滚 + banner。
+ */
+async function toggleStar() {
+  if (!page.value) return
+  await pagesStore.updatePage(page.value.id, { starred: !page.value.starred })
 }
 
 watch(page, async () => {
   await new Promise((r) => setTimeout(r, 50))
   contentEl.value = document.querySelector('.read-content')
 })
+
+/**
+ * 每次 page 解析出真实数据(不是 404 fallback)就写入 recents。
+ * `recordVisit` 内部去重 + 移到队首,所以从 /p/A 直接到 /p/B 不会重复
+ * 记录 A。同一个用户在两个 tab 同时打开同一页,后写的 visitedAt
+ * 胜出 — 这是预期(谁后访问谁更新)。
+ */
+watch(
+  () => page.value,
+  (p) => {
+    if (p && p.title) recordVisit({ id: p.id, title: p.title })
+  },
+  { immediate: true },
+)
 
 // v-html 之后跑一道语法高亮(read 端没有 decorations,需要手动补)
 // 监听 props.id:页面切换时,safeHtml 也会变,但 props.id 更稳定地反映路由切换。
@@ -198,6 +217,19 @@ watch(
         </template>
       </div>
       <div class="page-actions">
+        <button
+          v-if="page"
+          class="btn ghost star-btn"
+          type="button"
+          :class="{ 'is-starred': page.starred }"
+          :aria-label="page.starred ? '取消收藏' : '收藏'"
+          :title="page.starred ? '取消收藏' : '收藏'"
+          @click="toggleStar"
+        >
+          <span class="material-symbols-outlined icon-lg">
+            {{ page.starred ? 'star' : 'star_outline' }}
+          </span>
+        </button>
         <ExportMenu v-if="page" :page-id="page.id" />
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
@@ -326,5 +358,19 @@ watch(
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
+}
+
+/* Star toggle:ghost 按钮常态中性色,激活后填充 amber 强调 */
+.star-btn .material-symbols-outlined {
+  color: var(--text-3);
+  transition: color 80ms ease;
+}
+.star-btn:hover .material-symbols-outlined {
+  color: var(--accent);
+}
+.star-btn.is-starred .material-symbols-outlined {
+  /* filled star — 走 amber 比 accent 蓝更像收藏语义,跟 Confluence 一致 */
+  color: #FFAB00;
+  font-variation-settings: 'FILL' 1;
 }
 </style>

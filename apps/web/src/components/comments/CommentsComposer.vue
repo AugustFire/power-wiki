@@ -130,14 +130,16 @@ function onCancel(): void {
 </template>
 
 <style scoped>
+/* border-top 把 list 和 composer 视觉分组,跟 section 的外部分割线区分开
+   (list→composer 弱分割, section→上方文章强分割)。底部 padding 16 撑开。 */
 .comment-composer {
   display: grid;
   grid-template-columns: 28px 1fr;
   grid-template-rows: auto auto auto;
   column-gap: 10px;
   row-gap: 8px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border, #dfe1e6);
+  padding: 16px 0 20px;
+  border-top: 1px solid var(--border, #ebeef0);
 }
 .cc-avatar {
   grid-row: 1;

@@ -29,6 +29,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import CommentsComposer from './CommentsComposer.vue'
+import { formatRelativeTime } from '@/lib/relativeTime'
 import type { Comment } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -62,8 +63,10 @@ const error = ref<string | null>(null)
  * 点了没用的"展开"按钮,无副作用。
  */
 const needsExpand = computed(() => {
+  // line-clamp 4 时一行约 70-80 字符,四行约 280-320 字符;
+  // 阈值 200 让"超过 4 行才需要展开"成为合理启发式,绝大多数短评论不被截断。
   const text = props.comment.contentMd
-  return text.length > 60 || text.includes('\n')
+  return text.length > 200 || text.includes('\n')
 })
 
 watch(
@@ -78,16 +81,7 @@ function toggleExpand() {
 }
 
 function relativeTime(ts: number): string {
-  const diff = Math.max(0, Date.now() - ts)
-  const sec = Math.round(diff / 1000)
-  if (sec < 60) return '刚刚'
-  const min = Math.round(sec / 60)
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.round(hr / 24)
-  if (day < 30) return `${day} 天前`
-  return new Date(ts).toLocaleDateString('zh-CN')
+  return formatRelativeTime(ts)
 }
 
 /**
@@ -156,22 +150,15 @@ function onReplyAdded(c: Comment): void {
 <template>
   <div class="comment-item" :data-author="comment.authorName ?? comment.authorId">
     <div class="ci-body">
-      <div class="ci-line">
+      <div class="ci-head">
         <span class="ci-author">{{ comment.authorName ?? comment.authorId }}</span>
+        <span class="ci-dot" aria-hidden="true">·</span>
         <span class="ci-time">{{ relativeTime(comment.createdAt) }}</span>
-        <span v-if="comment.isEdited" class="ci-edited">(已编辑)</span>
-        <div
-          class="ci-text"
-          :class="{ expanded }"
-          v-html="renderBody()"
-        />
-        <button
-          v-if="needsExpand"
-          class="ci-expand-btn"
-          type="button"
-          @click="toggleExpand"
-        >{{ expanded ? '收起' : '展开' }}</button>
-        <div class="ci-head-actions">
+        <template v-if="comment.isEdited">
+          <span class="ci-dot" aria-hidden="true">·</span>
+          <span class="ci-edited">已编辑</span>
+        </template>
+        <div class="ci-actions">
           <button
             v-if="!comment.parentId"
             class="ci-icon-btn"
@@ -195,6 +182,17 @@ function onReplyAdded(c: Comment): void {
           </button>
         </div>
       </div>
+      <div
+        class="ci-text"
+        :class="{ expanded }"
+        v-html="renderBody()"
+      />
+      <button
+        v-if="needsExpand"
+        class="ci-expand-btn"
+        type="button"
+        @click="toggleExpand"
+      >{{ expanded ? '收起' : '展开' }}</button>
       <CommentsComposer
         v-if="showReply"
         :page-id="pageId"
@@ -219,53 +217,65 @@ function onReplyAdded(c: Comment): void {
 </template>
 
 <style scoped>
+/* 双行布局:
+   - 头一行(ci-head): author · time · edited,actions 浮在右上角(absolute)
+   - 主体(ci-text): 14px 多行(line-clamp 4),可独立阅读不跟头部挤
+   - 展开按钮 + reply composer + 嵌套回复 紧随其后
+   整行 hover 时 bg --bg-subtle 高亮,actions 在 hover 区域更明显 */
 .comment-item {
-  /* 紧凑单行布局:padding 10→6,每条评论总高度从 ~70px 降到 ~38px */
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border, #ebeef0);
+  position: relative;
+  padding: 10px 8px;
+  border-radius: 4px;
+  transition: background 80ms ease;
 }
-.comment-item:last-child {
-  border-bottom: 0;
+.comment-item:hover {
+  background: var(--bg-subtle, #ebecf0);
 }
 .ci-body {
   min-width: 0;
 }
 
-/* 单行容器:author + time + (edited) + content(占主) + (展开/收起) + actions */
-.ci-line {
+.ci-head {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3, #6b778c);
+  line-height: 1.5;
+  margin-bottom: 6px;
 }
 .ci-author {
   color: var(--text-1, #172b4d);
   font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.ci-dot {
+  color: var(--text-3, #6b778c);
+  opacity: 0.5;
   flex-shrink: 0;
 }
 .ci-time {
-  /* 时间戳跟用户名拉开一点距离,避免粘在一起 */
+  color: var(--text-3, #6b778c);
   flex-shrink: 0;
 }
 .ci-edited {
   font-size: 11px;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3, #6b778c);
+  opacity: 0.85;
   flex-shrink: 0;
 }
 
 .ci-text {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-1, #172b4d);
+  color: var(--text-2, #44546f);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   word-wrap: break-word;
   /* 长 URL 串行折行(中文/英文/数字) */
   overflow-wrap: anywhere;
-  /* 单行截断 + 省略号;展开后改回 block 显示全文 */
+  /* 默认 4 行截断(更宽松,大多数评论不被截),展开后显示全文 */
   display: -webkit-box;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -277,8 +287,8 @@ function onReplyAdded(c: Comment): void {
 }
 
 .ci-expand-btn {
-  flex-shrink: 0;
-  align-self: center;
+  display: inline-block;
+  margin-top: 4px;
   font-size: 12px;
   font-weight: 500;
   color: var(--accent, #0052cc);
@@ -293,20 +303,17 @@ function onReplyAdded(c: Comment): void {
   text-decoration: underline;
 }
 
-.ci-head-actions {
+/* actions 浮在 ci-head 右上角 — 一直可见(opacity 1.0)但用 --text-3 弱化,
+   hover 时改 --accent 蓝强调 + 浮起阴影,这样用户能"扫"到有按钮,
+   但不抢主体内容视线。 */
+.ci-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   display: flex;
   align-items: center;
   gap: 2px;
-  /* 默认 actions 淡一些,hover 评论时再明显,减少视觉噪音 */
-  opacity: 0.55;
-  transition: opacity 80ms ease;
-  flex-shrink: 0;
 }
-.comment-item:hover .ci-head-actions,
-.comment-item:focus-within .ci-head-actions {
-  opacity: 1;
-}
-/* 始终可见的图标按钮 — 替代之前的 kebab menu(那个太难点掉) */
 .ci-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -316,17 +323,23 @@ function onReplyAdded(c: Comment): void {
   background: transparent;
   border: 0;
   border-radius: 4px;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3, #6b778c);
   cursor: pointer;
-  transition: background 80ms ease, color 80ms ease;
+  transition: background 80ms ease, color 80ms ease, box-shadow 80ms ease;
+}
+/* 整行 hover 时 actions 浮起(白底+阴影) — 让用户清楚这条评论"被激活"了,
+   不需要精确 hover 到按钮上才看到。按钮自身 hover 进一步加蓝色。 */
+.comment-item:hover .ci-icon-btn {
+  background: var(--bg, #fff);
+  box-shadow: var(--shadow-sm);
 }
 .ci-icon-btn:hover {
-  background: var(--hover-bg, #f4f5f7);
   color: var(--accent, #0052cc);
 }
 .ci-icon-btn.is-active {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg, #fff);
   color: var(--accent, #0052cc);
+  box-shadow: var(--shadow-sm);
 }
 .ci-icon-btn-danger:hover {
   color: var(--danger, #de350b);
@@ -337,10 +350,10 @@ function onReplyAdded(c: Comment): void {
 /* .mention-chip inherits from the global rule in mention.css so editor
  * live view, saved HTML read view, and comment text all match. */
 .ci-reply-composer {
-  margin-top: 8px;
+  margin-top: 10px;
 }
 .ci-replies {
-  margin-top: 6px;
+  margin-top: 4px;
   margin-left: 4px;
   padding-left: 14px;
   border-left: 2px solid var(--border, #ebeef0);

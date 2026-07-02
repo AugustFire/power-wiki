@@ -37,7 +37,7 @@
  */
 
 import { Hono } from 'hono'
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import {
   CommentSchema,
@@ -118,7 +118,7 @@ commentsRouter.get('/', async (c) => {
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
     .where(and(eq(comments.pageId, pageId), isNull(comments.parentId), isNull(comments.deletedAt)))
-    .orderBy(asc(comments.createdAt))
+    .orderBy(desc(comments.createdAt))
     .limit(limit ?? 1000000)
     .offset(offset)
 
@@ -153,7 +153,7 @@ commentsRouter.get('/', async (c) => {
         isNull(comments.deletedAt),
       ),
     )
-    .orderBy(asc(comments.createdAt))
+    .orderBy(desc(comments.createdAt))
 
   const repliesByParent = new Map<string, ReturnType<typeof rowToComment>[]>()
   for (const r of replyRows) {

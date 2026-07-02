@@ -371,8 +371,8 @@ onBeforeUnmount(() => {
           />
 
           <div class="edit-byline">
-            <UserAvatar :size="24" />
-            <span><strong>我</strong> · 创建于 {{ bylineCreatedAt }}</span>
+            <UserAvatar :size="24" :label="page?.authorName ?? page?.authorId ?? '我'" />
+            <span><strong>{{ page?.authorName ?? '我' }}</strong> · 创建于 {{ bylineCreatedAt }}</span>
             <span class="byline-hint">·</span>
             <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>
           </div>

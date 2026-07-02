@@ -60,6 +60,13 @@ export interface TreeNode {
   title: string
   parentId: string | null
   order: number
+  /**
+   * Pre-computed count of **non-trashed** descendants. Populated once when
+   * the tree is built in `pagesStore.getTree()` via a post-order walk —
+   * lets `PageTree` skip an O(N) BFS per row on every render and the
+   * delete-confirmation flow skip a second BFS right before the request.
+   */
+  liveDescendantCount: number
   children: TreeNode[]
 }
 
