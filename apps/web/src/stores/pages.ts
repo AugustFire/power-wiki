@@ -254,6 +254,23 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
+   * Sync a single page in the local store from a server-known truth
+   * (returned by an API call that already mutated the row). Used after
+   * `POST /api/pages/:id/versions/:vid/restore` — the response IS the
+   * post-restore PageNode, no need to re-PATCH.
+   *
+   * Replaces (not merges) the row: server is authoritative. If the page
+   * is not in the local cache, append it (defensive — shouldn't happen
+   * since restore is only called from a context that already has the
+   * page in the store, but the append keeps the invariant).
+   */
+  function syncPageFromServer(updated: PageNode): void {
+    const idx = pages.value.findIndex((p) => p.id === updated.id)
+    if (idx >= 0) pages.value[idx] = updated
+    else pages.value = [...pages.value, updated]
+  }
+
+  /**
    * Stage 5: 软删(回收站)。后端在有未删子节点时会返 409 has_children;
    * UI 应该在调用前就禁用删除按钮,但保留这条路径以防前端过滤与服务端不一致。
    *
@@ -785,6 +802,7 @@ export const usePagesStore = defineStore('pages', () => {
     updatePage,
     softDeletePage,
     renamePage,
+    syncPageFromServer,
     movePage,
     movePageToSpace,
     publishPageToSpace,

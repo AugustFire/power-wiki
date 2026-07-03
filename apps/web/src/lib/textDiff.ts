@@ -156,3 +156,138 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
 }
+
+// ─────────────────────────────────────────────────────────────────
+//  Inline 字符级 diff(Confluence / Notion / 飞书的「行内红删绿加」)
+//
+//  之前的行级 LCS(`textDiff` + `collapseUnchanged`)在 prose 场景下
+//  有结构性问题:用户改一段里的一句话,LCS 看不到行内变化,只能
+//  把整段标记成「删 + 加」。读起来像"这次提交动了大段",实际只是
+//  改了几个字 —— 用户对版本历史量的判断会被误导。
+//
+//  字符级 Myers diff + 连续同类合并,输出渲染就绪的 inline span 序列,
+//  让 UI 直接套 `<span class="diff-char added|removed">{{ text }}</span>`
+//  就能拿到 Confluence 那种"段子里几个字符红删几个字符绿加"的体验。
+//
+//  字符级而非词级:CJK 没有空格分词,词级边界不清晰;字符级统一、简单,
+//  跟 Notion 的实际渲染策略一致(Notion 中文段落也是字符级高亮)。
+//
+//  算法:经典 Myers O((N+M)·D),D = edit distance。前向走 V 数组 +
+//  trace 快照,后向回溯 edit script。同类连续 edit 合并成一个 span。
+// ─────────────────────────────────────────────────────────────────
+
+export interface InlineSpan {
+  kind: 'unchanged' | 'added' | 'removed'
+  text: string
+}
+
+export function inlineCharDiff(a: string, b: string): InlineSpan[] {
+  const N = a.length
+  const M = b.length
+  // V indexed by (k + max) where k = x - y.
+  // k 的范围 [-N..+M],所以 size = N+M+1,偏移 max=N+M 让所有索引非负。
+  const max = N + M
+  const size = max * 2 + 1
+  const v: number[] = new Array<number>(size).fill(0)
+  const trace: number[][] = []
+
+  // 前向:找最短编辑路径。D 上限 N+M(全部删 + 全部加)。
+  let found = false
+  for (let d = 0; d <= max; d++) {
+    // 拍快照 —— 回溯时要查 d-1 步之前的 V。
+    trace.push(v.slice())
+    for (let k = -d; k <= d; k += 2) {
+      const kIdx = k + max
+      let x: number
+      // Myers 转移规则:
+      //   k === -d 时只能 down(插入,坐标 (k+1) 走下来)
+      //   k === +d 时只能 right(删除,坐标 (k-1) 走过去 +1)
+      //   中间情况:V[k-1] < V[k+1] 选 down(取更大 x),否则 right
+      if (k === -d || (k !== d && (v[kIdx - 1] ?? 0) < (v[kIdx + 1] ?? 0))) {
+        x = v[kIdx + 1] ?? 0
+      } else {
+        x = (v[kIdx - 1] ?? 0) + 1
+      }
+      let y = x - k
+      // 沿对角线一直走,直到字符不等或撞到边界 —— 这段是 unchanged snake。
+      while (x < N && y < M && a[x] === b[y]) {
+        x++
+        y++
+      }
+      v[kIdx] = x
+      if (x >= N && y >= M) {
+        found = true
+        break
+      }
+    }
+    if (found) break
+  }
+
+  // 反向:从 (N, M) 走到 (0, 0),每一步产生一个 edit。
+  // trace[d] 是 d 迭代开始时 V 的快照,所以回溯 d 这一步时用它作为
+  // "d 修改之前的 V" —— 决定从哪条对角线走过来。
+  const edits: Array<'unchanged' | 'added' | 'removed'> = []
+  let x = N
+  let y = M
+  for (let d = trace.length - 1; d >= 1; d--) {
+    const vPrev = trace[d]!
+    const k = x - y
+    const kIdx = k + max
+    // 复算 prev_k —— 必须跟正向用同一规则,否则回溯走错对角线。
+    const prevK =
+      k === -d || (k !== d && (vPrev[kIdx - 1] ?? 0) < (vPrev[kIdx + 1] ?? 0))
+        ? k + 1
+        : k - 1
+    const prevX = vPrev[prevK + max] ?? 0
+    const prevY = prevX - prevK
+    // 先把 snake 上的 unchanged 全部吐出来。
+    while (x > prevX && y > prevY) {
+      edits.push('unchanged')
+      x--
+      y--
+    }
+    // 最后一格是 edit step:x 没变 = down = added;y 没变 = right = removed。
+    if (x === prevX) {
+      edits.push('added')
+      y--
+    } else {
+      edits.push('removed')
+      x--
+    }
+  }
+  // d=0 没有任何 edit step,剩下的全是 unchanged snake(从 (x,y) 回到 (0,0))。
+  while (x > 0 && y > 0) {
+    edits.push('unchanged')
+    x--
+    y--
+  }
+  edits.reverse()
+
+  // 走 edit script,把对应字符塞进 spans,连续同类合并。
+  const spans: InlineSpan[] = []
+  let xi = 0
+  let yi = 0
+  for (const edit of edits) {
+    if (edit === 'unchanged') {
+      pushChar(spans, 'unchanged', a[xi]!)
+      xi++
+      yi++
+    } else if (edit === 'added') {
+      pushChar(spans, 'added', b[yi]!)
+      yi++
+    } else {
+      pushChar(spans, 'removed', a[xi]!)
+      xi++
+    }
+  }
+  return spans
+}
+
+function pushChar(spans: InlineSpan[], kind: InlineSpan['kind'], ch: string): void {
+  const last = spans[spans.length - 1]
+  if (last && last.kind === kind) {
+    last.text += ch
+  } else {
+    spans.push({ kind, text: ch })
+  }
+}

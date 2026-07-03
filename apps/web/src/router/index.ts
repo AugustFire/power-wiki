@@ -61,6 +61,16 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    // Confluence-style dedicated page history: full-viewport surface
+    // (timeline list left + diff viewer right). Same `:id` param so
+    // PageTree's active-highlight logic keeps working without changes.
+    path: '/p/:id/history',
+    name: 'history',
+    component: () => import('@/views/HistoryView.vue'),
+    props: true,
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/new',
     name: 'new',
     component: () => import('@/views/EditView.vue'),

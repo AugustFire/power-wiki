@@ -5,8 +5,6 @@ import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
-import VersionPanel from '@/components/page/VersionPanel.vue'
-import VersionPanelToggle from '@/components/page/VersionPanelToggle.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
@@ -28,11 +26,6 @@ const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
 const safeHtml = computed(() => sanitizeAndHardenLinks(page.value?.contentHTML ?? ''))
 const contentEl = ref<HTMLElement | null>(null)
-/** Stage 8: version history panel visibility. Local state — mirrors the
- *  TocPanel pattern (the panel is always present in the layout; the toggle
- *  flips a ref instead of changing routes, so the URL stays stable and the
- *  chrome doesn't flicker). */
-const historyOpen = ref(false)
 
 /**
  * 作者展示名。
@@ -262,7 +255,15 @@ watch(
           <span class="material-symbols-outlined icon-lg">content_copy</span>
         </button>
         <ExportMenu v-if="page" :page-id="page.id" />
-        <VersionPanelToggle v-if="page" :open="historyOpen" @toggle="historyOpen = !historyOpen" />
+        <RouterLink
+          v-if="page"
+          :to="`/p/${page.id}/history`"
+          class="btn version-link"
+          :title="`查看 ${page.title} 的版本历史`"
+        >
+          <span class="material-symbols-outlined icon-md">history</span>
+          页面历史
+        </RouterLink>
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
@@ -360,14 +361,10 @@ watch(
       </div>
 
       <TocPanel
+        v-if="page"
         :content-ref="contentEl"
-        :page-key="page?.id"
-        :labels="page?.labels ?? []"
-      />
-      <VersionPanel
-        v-if="historyOpen && page"
-        :page-id="page.id"
-        @close="historyOpen = false"
+        :page-key="page.id"
+        :labels="page.labels ?? []"
       />
     </div>
   </div>
@@ -376,14 +373,6 @@ watch(
 <style scoped>
 .read-shell { min-height: calc(100vh - var(--topbar-h)); }
 .read-page { padding-top: 24px; }
-
-/* When the version panel is open, add a 4th grid column (320px).
-   The panel itself is `position: sticky` so the content column scrolls
-   independently while the panel stays pinned. */
-.layout:has(> .version-panel) {
-  grid-template-columns: var(--sidebar-w) 1fr var(--toc-w) 320px;
-  column-gap: 0;
-}
 
 .page-tags {
   display: flex;
@@ -423,5 +412,16 @@ watch(
   /* filled star — 走 amber 比 accent 蓝更像收藏语义,跟 Confluence 一致 */
   color: #FFAB00;
   font-variation-settings: 'FILL' 1;
+}
+
+/* `页面历史` RouterLink:跟 ExportMenu 的 `.btn` 同款(不用 ghost)—
+ 跟原 VersionPanelToggle 视觉一致。Vue Router 会自动加
+ `.router-link-active` / `.router-link-exact-active`,不过当前路由下
+ 不会走到这里,这两个状态都用不到。 */
+.version-link {
+  gap: 4px;
+}
+.version-link .material-symbols-outlined {
+  font-size: 16px;
 }
 </style>

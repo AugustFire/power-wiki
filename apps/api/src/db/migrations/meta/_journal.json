@@ -50,6 +50,13 @@
       "when": 1782975378059,
       "tag": "0006_oval_diamondback",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783039546735,
+      "tag": "0007_drop_page_templates",
+      "breakpoints": true
     }
   ]
 }
