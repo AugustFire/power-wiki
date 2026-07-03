@@ -3,17 +3,22 @@
  * SpaceEditView — edit a single space (name, description, color, access groups).
  *
  *   - Edit form: name, description, color
- *   - Access groups: searchable list of all groups with toggles. The full set
- *     is sent on save (PUT /api/admin/spaces/:id/access replaces the entire set).
+ *   - Access groups (team spaces only): searchable list of all groups with
+ *     toggles. Single-toggle writes via POST/DELETE; the full set replace
+ *     is also exposed as PUT /api/admin/spaces/:id/access (used by tests).
  *   - Delete space (with confirm; backend refuses if pages exist)
  *
  * Optimistic add/remove for group toggles — rollback on failure.
  *
- * Personal-space detail (kind='personal'): shows the owner's name in the
- * header. The name-edit form is still allowed for admins (so they can fix
- * a typo'd personal-space name), but on the page itself admin write ops
- * (PATCH /api/pages/:id etc.) are blocked server-side. This view doesn't
- * write to pages, so we leave it enabled.
+ * Personal-space detail (kind='personal'):
+ *   - Shows the owner's name in the header.
+ *   - The "Access groups" section is intentionally hidden — personal spaces
+ *     are auto-bound to a single `pg-<userId>` group on first login
+ *     (ensurePersonalSpace.ts), and adminSpaces.ts filters that row out of
+ *     the DTO. Surfacing an empty toggle list in admin would be noise; the
+ *     right column shows a static "owner-only" info card instead.
+ *   - The name-edit form is still allowed for admins (fix typo'd names),
+ *     but the page itself rejects admin writes server-side (personalSpaceGuard).
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -357,8 +362,8 @@ function formatDate(ts: number): string {
         </div>
       </section>
 
-      <!-- Access groups -->
-      <section class="se-card se-card-groups">
+      <!-- Access groups (team spaces only) -->
+      <section v-if="space.kind !== 'personal'" class="se-card se-card-groups">
         <h2 class="se-card-title">访问组</h2>
         <p class="se-card-hint">
           勾选的用户组可访问此空间下的所有页面。未勾选任何组 = 仅有管理员可访问。点击即生效,无需保存。
@@ -409,6 +414,29 @@ function formatDate(ts: number): string {
             </button>
           </li>
         </ul>
+      </section>
+
+      <!-- Personal space: access is owner-only by definition, so the
+           toggles list is replaced by a static info card. The lock badge
+           in SpacesView already says "个人空间不可由管理员删除"; this
+           card mirrors that intent on the access side. -->
+      <section v-else class="se-card se-card-personal-access">
+        <h2 class="se-card-title">访问控制</h2>
+        <p class="se-card-hint">
+          个人空间仅限所有者本人访问,系统会在用户首次登录时自动绑定访问组,无需也无法由管理员管理。
+        </p>
+        <div class="se-personal-access">
+          <span class="material-symbols-outlined se-personal-icon">lock</span>
+          <div class="se-personal-text">
+            <div class="se-personal-label">仅所有者</div>
+            <div class="se-personal-hint">
+              <template v-if="space.ownerName">{{ space.ownerName }}</template>
+              <template v-else-if="space.ownerId">所有者 ID:<code>{{ space.ownerId }}</code></template>
+              <template v-else>该用户</template>
+              可以读写此空间,管理员只读查看
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -646,4 +674,41 @@ function formatDate(ts: number): string {
 .group-toggle.in-group { color: var(--success); }
 .group-toggle.in-group:hover:not(:disabled) { color: var(--danger); }
 .group-toggle .material-symbols-outlined { font-size: 22px; }
+
+/* ─── Personal-space access info card (replaces the group list) ─── */
+.se-personal-access {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-top: 4px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+}
+.se-personal-icon {
+  font-size: 22px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.se-personal-text { min-width: 0; flex: 1; }
+.se-personal-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 2px;
+}
+.se-personal-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.se-personal-hint code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
 </style>

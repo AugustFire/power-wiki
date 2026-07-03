@@ -231,29 +231,29 @@ watch(
         </template>
       </div>
       <div class="page-actions">
-        <button
-          v-if="page"
-          class="btn ghost star-btn"
-          type="button"
-          :class="{ 'is-starred': page.starred }"
-          :aria-label="page.starred ? '取消收藏' : '收藏'"
-          :title="page.starred ? '取消收藏' : '收藏'"
-          @click="toggleStar"
-        >
-          <span class="material-symbols-outlined icon-lg">
-            {{ page.starred ? 'star' : 'star_outline' }}
-          </span>
-        </button>
-        <button
-          v-if="page"
-          class="btn ghost"
-          type="button"
-          aria-label="复制页面"
-          title="复制页面"
-          @click="onDuplicate"
-        >
-          <span class="material-symbols-outlined icon-lg">content_copy</span>
-        </button>
+<!--        <button-->
+<!--          v-if="page"-->
+<!--          class="btn ghost star-btn"-->
+<!--          type="button"-->
+<!--          :class="{ 'is-starred': page.starred }"-->
+<!--          :aria-label="page.starred ? '取消收藏' : '收藏'"-->
+<!--          :title="page.starred ? '取消收藏' : '收藏'"-->
+<!--          @click="toggleStar"-->
+<!--        >-->
+<!--          <span class="material-symbols-outlined icon-lg">-->
+<!--            {{ page.starred ? 'star' : 'star_outline' }}-->
+<!--          </span>-->
+<!--        </button>-->
+<!--        <button-->
+<!--          v-if="page"-->
+<!--          class="btn ghost"-->
+<!--          type="button"-->
+<!--          aria-label="复制页面"-->
+<!--          title="复制页面"-->
+<!--          @click="onDuplicate"-->
+<!--        >-->
+<!--          <span class="material-symbols-outlined icon-lg">content_copy</span>-->
+<!--        </button>-->
         <ExportMenu v-if="page" :page-id="page.id" />
         <RouterLink
           v-if="page"

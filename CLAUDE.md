@@ -19,6 +19,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **不做页面模板功能。** 不建 `page_templates` 表、不挂 `/api/templates` 路由、不做模板选择器 / 模板按钮 / 内置模板 seed。复制需求一律走页面复制(`POST /api/pages/:id/duplicate`,标题前缀 `复制自`,新页落在源页正下方同 sibling 组)。
 - **Labels 双视图同步** — ReadView / EditView 内容底部都有可编辑 `<LabelPills>`,不用 `compact` prop;右 TOC 另有只读 chip 镜像。两边共享 `page.labels` reactive,主体编辑 → 右 TOC 同步更新。
 - **Auto-save 永远静默,version 只在 idle / route-leave 边界自动打;不做手动「保存为版本」按钮。** `PATCH /api/pages/:id` 只更新 `pages` 行,**不**写 `page_versions`(防 auto-save 噪声)。`POST /api/pages/:id/snapshots` 是打 checkpoint 的唯一入口。Restore 端点自管 version insert。Retention 30 行。不要新增「手动保存版本」UI。
+- **DB 表 / 字段必须有 SQL `COMMENT`,中文字面量。** 新建表 / 加列 / 加索引必须同时写 `apps/api/src/db/schema.ts` 同名字段上的 JSDoc **和** 对应 migration 里的 `COMMENT ON TABLE` / `COMMENT ON COLUMN` / `COMMENT ON INDEX`。Schema 上的 JSDoc 是事实来源,改一处必须同步另一处,drift 视为 bug。`pg_description` 看不到的字段 = 没写完。`drizzle-kit` 不自动生成 `COMMENT`,这是 API 协作者的责任。现有 11 张表的注释已由 `0008_add_column_comments.sql` 补齐,新列默认带注释。
 
 ## 关键约定
 
@@ -28,6 +29,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - 焦点环:仅键盘聚焦时显示(`#4C9AFF`),鼠标点击不出现。
 - 图标:`material-symbols-outlined`。字体:Plus Jakarta Sans + PingFang SC 后备 + JetBrains Mono。
 - 品牌:`apps/web/src/components/ui/BrandLogo.vue` 是几何 P + 书页线,**所有**品牌出现位置通过 `<BrandLogo>` 引用,**不要写 `<span>P</span>` 这种 HTML 字母**。改 logo 同步 `public/favicon.svg` 后跑 `node scripts/render-favicons.mjs` 重生成 PNG。
+- DB 字段注释:`apps/api/src/db/schema.ts` 同名字段上的 JSDoc 是事实来源,改 schema 必须同步迁移里的 `COMMENT ON COLUMN`(见硬约束第 10 条)。
 
 ## 常用命令
 

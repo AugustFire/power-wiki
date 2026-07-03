@@ -826,4 +826,27 @@ export const api = {
       )
     },
   },
+
+  /**
+   * 过滤型搜索(q + space + label 三维,全部 optional)。后端 `GET /api/search`
+   * 在 `apps/api/src/routes/search.ts`。响应是 `Paginated<PageNode>`,沿用
+   * pages.list 的 schema 边界校验。Cache 是 GET 30s,搜索结果变更后无需主动
+   * invalidate —— search 返回的是 page 的当前快照,30s 内旧结果也够用。
+   */
+  search: {
+    query: async (params: {
+      q?: string
+      spaceId?: string
+      label?: string
+      limit?: number
+    }): Promise<Paginated<PageNode>> => {
+      const search = new URLSearchParams()
+      if (params.q) search.set('q', params.q)
+      if (params.spaceId) search.set('space', params.spaceId)
+      if (params.label) search.set('label', params.label)
+      if (params.limit !== undefined) search.set('limit', String(params.limit))
+      const qs = search.toString()
+      return getManyPages(`/search${qs ? `?${qs}` : ''}`)
+    },
+  },
 } as const

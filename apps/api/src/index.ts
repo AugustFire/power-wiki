@@ -27,6 +27,7 @@ import { db, pool } from './db/client'
 import { pagesRouter } from './routes/pages'
 import { pageVersionsRouter } from './routes/pageVersions'
 import { pageLabelsRouter } from './routes/pageLabels'
+import { searchRouter } from './routes/search'
 import { authRouter } from './routes/auth'
 import { spacesRouter } from './routes/spaces'
 import { commentsRouter } from './routes/comments'
@@ -73,6 +74,7 @@ app.route('/api/notifications', notificationsRouter)
 app.route('/api/admin/users', adminUsersRouter)
 app.route('/api/admin/groups', adminGroupsRouter)
 app.route('/api/admin/spaces', adminSpacesRouter)
+app.route('/api/search', searchRouter)
 
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404))
 
