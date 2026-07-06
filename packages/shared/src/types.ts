@@ -58,6 +58,14 @@ export interface PageNode {
   deletedAt?: number | null
   /** Stage 5:谁把页移到回收站。purge 时记录审计。 */
   deletedBy?: string | null
+  /**
+   * 服务端 EXISTS 子查询计算的结果:`(SELECT 1 FROM pages c WHERE c.parent_id = p.id
+   * AND c.deleted_at IS NULL) IS NOT NULL`。Sidebar 用这个判断是否显示 caret —
+   * **不**用 children 数组(懒加载模式下 children 数组在用户展开前是空的,会
+   * 让无子节点显示 caret 误导用户)。乐观插入的页(还没拿到 server 响应)
+   * 此字段可能为 undefined,PageTree 一律当 leaf 处理。
+   */
+  hasChildren?: boolean
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */

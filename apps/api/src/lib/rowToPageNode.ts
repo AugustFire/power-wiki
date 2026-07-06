@@ -29,6 +29,12 @@ export type PageRowWithAuthor = PageRow & {
   /** Stage 8: labels aggregator from pages.ts LEFT JOIN.
    *  Always present on the row after the join; default [] otherwise. */
   labels: string[]
+  /**
+   * 服务端 EXISTS 子查询结果 —— 是否有未删除的子页面。Sidebar 用它判断是否
+   * 显示 caret:懒加载模式下 children 数组为空不代表无子,不能用那个判断。
+   * 任何走 selectPagesWithAuthor 的路径(GET / 和 GET /:id)都会自动计算。
+   */
+  hasChildren: boolean
 }
 
 export function rowToPageNode(row: PageRowWithAuthor): PageNode {
@@ -54,6 +60,7 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     labels: row.labels ?? [],
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,
+    hasChildren: row.hasChildren,
   }
   if (row.icon !== null) node.icon = row.icon
   return node

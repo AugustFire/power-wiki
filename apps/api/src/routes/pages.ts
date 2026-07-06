@@ -113,12 +113,24 @@ function selectPagesWithAuthor(
       '[]'::json
     )
   `.as('labels')
+  // EXISTS 子查询:对每行计算"是否有未删除的子页面"。Sidebar 用它判断 caret
+  // 显示 —— 懒加载模式下 children 数组在用户展开前为空,不能拿那个判断 leaf。
+  // 走 `pages_parent_idx`,百页级 sub-ms 成本。带 deleted_at IS NULL 过滤避免
+  // 回收站里的子页面误把父节点标记为 hasChildren。
+  const hasChildrenExpr = sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM pages c
+      WHERE c.parent_id = ${pages.id}
+        AND c.deleted_at IS NULL
+    )
+  `.as('has_children')
   const q = db
     .select({
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
       labels: labelsAgg,
+      hasChildren: hasChildrenExpr,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))
@@ -135,15 +147,39 @@ function selectPagesWithAuthor(
  *  visible to the current user, otherwise we 404 (not 403) to avoid leaking
  *  the existence of spaces the user shouldn't see.
  *
+ *  Optional ?parentId=<id|null> filters by parent. Three states:
+ *    - absent / empty       → no parent filter (back-compat for existing callers)
+ *    - "null" (literal)     → only roots (parent_id IS NULL). Sidebar uses this
+ *                            on first load to fetch every root of the active space.
+ *    - "<id>"               → only direct children of that page. PageTree uses
+ *                            this on caret expand to lazy-load a parent's kids.
+ *
  *  Pagination: `?limit=` (1-200) + `?offset=`. 不传 limit = 全量(保持
  *  stores/Sidebar 的向后兼容 — page 树需要看到所有页才能渲染)。
  */
 pagesRouter.get('/', async (c) => {
   const me = c.get('user')
   const querySpace = c.req.query('space')
+  const parentRaw = c.req.query('parentId')
+  // undefined = no filter, null literal = roots only, otherwise eq by id.
+  const parentFilter: SQL | undefined =
+    parentRaw === undefined || parentRaw === ''
+      ? undefined
+      : parentRaw === 'null'
+        ? isNull(pages.parentId)
+        : eq(pages.parentId, parentRaw)
   const parsed = safeParsePagination(c)
   if (!parsed.ok) return parsed.response
   const { limit, offset } = parsed.args
+
+  // Compose the WHERE: parent filter + space/access filter. We always pass a
+  // single combined `where` SQL to selectPagesWithAuthor so admin vs non-admin
+  // share the same parentId semantics (parent filter doesn't care about role).
+  function buildSpaceFilter(space: SQL | undefined): SQL | undefined {
+    return parentFilter && space
+      ? and(parentFilter, space)
+      : (parentFilter ?? space)
+  }
 
   // Build the WHERE clause. For admin, skip the filter entirely.
   if (me.role !== 'admin') {
@@ -158,14 +194,16 @@ pagesRouter.get('/', async (c) => {
       if (!visible.includes(querySpace)) {
         return c.json({ error: 'not_found' }, 404)
       }
-      let q = selectPagesWithAuthor(eq(pages.spaceId, querySpace)).$dynamic()
+      const where = buildSpaceFilter(eq(pages.spaceId, querySpace))
+      let q = selectPagesWithAuthor(where).$dynamic()
       if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
       const rows = await q
       const result = applyPagination(rows.map(rowToPageNode), limit, offset)
       return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
     }
 
-    let q = selectPagesWithAuthor(inArray(pages.spaceId, visible)).$dynamic()
+    const where = buildSpaceFilter(inArray(pages.spaceId, visible))
+    let q = selectPagesWithAuthor(where).$dynamic()
     if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
     const rows = await q
     const result = applyPagination(rows.map(rowToPageNode), limit, offset)
@@ -173,10 +211,8 @@ pagesRouter.get('/', async (c) => {
   }
 
   // Admin path.
-  let q = (querySpace
-    ? selectPagesWithAuthor(eq(pages.spaceId, querySpace))
-    : selectPagesWithAuthor()
-  ).$dynamic()
+  const where = buildSpaceFilter(querySpace ? eq(pages.spaceId, querySpace) : undefined)
+  let q = selectPagesWithAuthor(where).$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
   const result = applyPagination(rows.map(rowToPageNode), limit, offset)

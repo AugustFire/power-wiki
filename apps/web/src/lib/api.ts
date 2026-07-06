@@ -305,12 +305,21 @@ async function getManyPaginated<T>(
 export const api = {
   pages: {
     /**
-     * List pages. `space` scopes to one space; `limit`/`offset` paginate.
-     * Omitting both returns ALL pages (back-compat for stores/Sidebar tree).
+     * List pages. `space` scopes to one space; `parentId` filters by parent
+     * (string = children of that id, null literal = roots only, undefined =
+     * no parent filter — back-compat for callers that still want a flat list).
+     * `limit` / `offset` paginate; omitting both returns ALL matching rows.
      */
-    list: (query?: PaginatedQuery & { space?: string }): Promise<Paginated<PageNode>> => {
+    list: (
+      query?: PaginatedQuery & { space?: string; parentId?: string | null },
+    ): Promise<Paginated<PageNode>> => {
       const params = new URLSearchParams()
       if (query?.space) params.set('space', query.space)
+      if (query?.parentId !== undefined) {
+        // null = "roots only", sent as the literal string "null" — the
+        // backend's `GET /api/pages` distinguishes undefined / "null" / "<id>".
+        params.set('parentId', query.parentId === null ? 'null' : query.parentId)
+      }
       if (query?.limit !== undefined) params.set('limit', String(query.limit))
       if (query?.offset !== undefined) params.set('offset', String(query.offset))
       const qs = params.toString() ? `?${params.toString()}` : ''

@@ -91,6 +91,16 @@ searchRouter.get('/', async (c) => {
       '[]'::json
     )
   `.as('labels')
+  // 与 pages.ts 的 selectPagesWithAuthor 同样的 EXISTS 子查询 — 搜索结果
+  // 也返回 PageNode,前端 PageTree 渲染依赖 hasChildren 判断 caret,缺这个字段
+  // 会让搜索结果的页面在 sidebar 里被加进树时显示错误 caret。
+  const hasChildrenExpr = sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM pages c
+      WHERE c.parent_id = ${pages.id}
+        AND c.deleted_at IS NULL
+    )
+  `.as('has_children')
 
   const rows = await db
     .select({
@@ -98,6 +108,7 @@ searchRouter.get('/', async (c) => {
       authorName: users.name,
       authorColor: users.color,
       labels: labelsAgg,
+      hasChildren: hasChildrenExpr,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))

@@ -206,12 +206,22 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
       '[]'::json
     )
   `.as('labels')
+  // Mirror selectPagesWithAuthor's hasChildren EXISTS so the restored PageNode
+  // matches the list/get response shape (Sidebar caret display depends on it).
+  const hasChildrenExpr = sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM pages c
+      WHERE c.parent_id = ${pages.id}
+        AND c.deleted_at IS NULL
+    )
+  `.as('has_children')
   const rows = await db
     .select({
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
       labels: labelsAgg,
+      hasChildren: hasChildrenExpr,
     })
     .from(pages)
     .leftJoin(users, eq(users.id, pages.authorId))

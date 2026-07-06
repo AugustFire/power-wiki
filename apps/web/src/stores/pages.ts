@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { newId } from '@/lib/id'
 import {
   htmlToJson,
@@ -41,6 +41,24 @@ export const usePagesStore = defineStore('pages', () => {
    */
   const trashLoading = ref(false)
 
+  /**
+   * 懒加载缓存状态。`pages.value` 现在是稀疏缓存:`init()` 只拉根节点
+   * (`parentId IS NULL`),子节点按需通过 `ensureChildrenLoaded(parentId)`
+   * 拉取。Cache key 用 `${spaceId}:${parentId}` — 避免跨空间场景(管理员
+   * 在空间 A 展开过某节点,然后切到空间 B 看到同名节点)互相污染。
+   */
+  const childrenLoaded = reactive(new Set<string>())
+  const loadingPromises = new Map<string, Promise<void>>()
+
+  function parentKey(parentId: string | null, spaceId: string | null): string {
+    return `${spaceId ?? '~'}:${parentId ?? 'root'}`
+  }
+
+  /** 是否已尝试加载过某 parent 的 children(无论成功与否)。 */
+  function isChildrenLoaded(parentId: string | null, spaceId: string | null): boolean {
+    return childrenLoaded.has(parentKey(parentId, spaceId))
+  }
+
   function ui() {
     return useUiStore()
   }
@@ -61,6 +79,8 @@ export const usePagesStore = defineStore('pages', () => {
     trashLoaded.value = false
     loading.value = false
     loadError.value = null
+    childrenLoaded.clear()
+    loadingPromises.clear()
   }
 
   async function init(): Promise<void> {
@@ -68,8 +88,15 @@ export const usePagesStore = defineStore('pages', () => {
     loading.value = true
     loadError.value = null
     try {
-      const { items } = await api.pages.list()
+      // 懒加载模式:只拉根节点(parentId IS NULL)。子节点按需通过
+      // ensureChildrenLoaded() 拉。一次性拉全集会让 500+ 页空间在冷启动
+      // 时一次塞 500 条 DOM + 一次大往返,改成根级 10-50 条后,展开才
+      // 触发对应 parent 的子节点请求。
+      const { items } = await api.pages.list({ parentId: null })
       pages.value = items
+      // 重置懒加载缓存(切换用户时 reset() 会清,这里再保一次幂等)
+      childrenLoaded.clear()
+      loadingPromises.clear()
       // 一次性回填存量页面的 contentJSON(种子页只有 HTML 没有 JSON,Editor 需要 JSON)
       migrateEmptyJson()
       loaded.value = true
@@ -93,8 +120,18 @@ export const usePagesStore = defineStore('pages', () => {
    */
   async function refresh(): Promise<void> {
     try {
-      const { items } = await api.pages.list()
-      pages.value = items
+      // 懒加载模式下,刷新根节点即可 — 已加载的子节点不重新拉(管理员的
+      // 空间访问变更不会改子树,改了根用户重进会 init 走全量)。
+      // 已加载的子树不会因为这次刷新丢失;任何被外部修改的子树会在用户
+      // 重新进入该 parent 时通过 staleness 检查被重新拉。
+      const { items } = await api.pages.list({ parentId: null })
+      // 合并:用新的根覆盖现有根;保留 pages.value 中所有非根节点(它们
+      // 是已加载的子树,这里不清)。
+      const rootIds = new Set(items.map((p) => p.id))
+      pages.value = [
+        ...items,
+        ...pages.value.filter((p) => !rootIds.has(p.id)),
+      ]
       // Re-run migration in case any fetched pages are still missing JSON —
       // this is a no-op for already-migrated pages.
       migrateEmptyJson()
@@ -103,6 +140,121 @@ export const usePagesStore = defineStore('pages', () => {
         `刷新失败: ${e instanceof ApiError ? e.message : '未知错误'}`,
       )
     }
+  }
+
+  /**
+   * 确保某 parentId 的子节点已加载。未加载则发请求,加载中则复用 inflight
+   * promise(去重并发),已加载则直接返回。PageTree 在展开折叠节点时调用。
+   *
+   * 失败策略:不静默吞错 — 让 PageTree 的 spinner 状态结束并向用户报错。
+   * 缓存状态保留(失败不算"已加载"),下次展开会重试。
+   */
+  async function ensureChildrenLoaded(parentId: string | null): Promise<void> {
+    const parent = parentId ? pages.value.find((p) => p.id === parentId) : null
+    if (parentId && !parent) {
+      // 父节点本身不在缓存里(理论上不会 — 调用方应该已经渲染过它),安全失败
+      return
+    }
+    const spaceId = parent?.spaceId ?? useSpacesStore().activeSpaceId.value
+    const key = parentKey(parentId, spaceId)
+    if (childrenLoaded.has(key)) return
+    const inflight = loadingPromises.get(key)
+    if (inflight) return inflight
+
+    const promise = (async () => {
+      try {
+        const { items } = await api.pages.list({ space: spaceId ?? undefined, parentId })
+        // 把拉到的子节点 merge 进 pages.value:已有 id 替换,新 id 追加。
+        // 不清掉 pages.value 中其它节点 — 它们可能是其它 parent 已加载的子树。
+        const fetchedIds = new Set(items.map((p) => p.id))
+        pages.value = [
+          ...pages.value.filter((p) => !fetchedIds.has(p.id)),
+          ...items,
+        ]
+        migrateEmptyJson()
+        // 同步 parent.hasChildren 与本次拉到的真实数据(items.length 决定):
+        //   - 拿到 ≥1 条 → 父节点有子(hasChildren=true)
+        //   - 拿到 0 条  → 父节点就是 leaf(hasChildren=false,caret 应消失)
+        // 之前 hasChildren 可能因为乐观插入或过时的服务端快照而失准,
+        // 这里以本次拉取为准,纠正它,避免用户被"显示 caret 但展开是空的"
+        // 误导。
+        if (parentId) {
+          const pIdx = pages.value.findIndex((p) => p.id === parentId)
+          if (pIdx >= 0) {
+            const expected = items.length > 0
+            const actual = pages.value[pIdx]!.hasChildren === true
+            if (expected !== actual) {
+              pages.value[pIdx] = { ...pages.value[pIdx]!, hasChildren: expected }
+            }
+          }
+        }
+        childrenLoaded.add(key)
+      } finally {
+        loadingPromises.delete(key)
+      }
+    })()
+    loadingPromises.set(key, promise)
+    return promise
+  }
+
+  /**
+   * 标记某 parent 的 children 缓存为失效。下次 ensureChildrenLoaded() 会重新
+   * 拉。用于所有会影响某 parent 子列表的写入操作(create / delete / move /
+   * duplicate 等),保证 UI 不会显示幽灵。
+   *
+   * `parentId === null` 表示根级(此时用 activeSpaceId 作 cache key 的一部分,
+   * 避免把"团队空间 X 的根"失效到"团队空间 Y 的根")。
+   */
+  function invalidateChildren(parentId: string | null, spaceId?: string | null): void {
+    const sid = spaceId ?? (parentId
+      ? pages.value.find((p) => p.id === parentId)?.spaceId ?? null
+      : useSpacesStore().activeSpaceId.value)
+    const key = parentKey(parentId, sid)
+    childrenLoaded.delete(key)
+  }
+
+  /**
+   * 确保 `pageId` 及其整条祖先链都在 `pages.value` 里,返回 root→page 顺序
+   * 的链(含 page 自身)。
+   *
+   * 懒加载模式下 `pages.value` 是稀疏缓存 —— `init()` 只拉根节点,子节点按需
+   * 拉。用户从正文点一个子页面链接(或直接深链进一个深层页)时,目标页和它
+   * 的祖先都可能不在缓存里。这里从目标向上 walk,缺失的节点逐个用
+   * `api.pages.get` 补齐并 merge 进缓存。
+   *
+   * 用途:侧栏「打开子页 → 自动展开祖先并定位到当前页」。
+   *
+   * 失败策略:某个祖先拿不到(404 / 无权限)时提前收尾,返回已拿到的部分链,
+   * 不抛错 —— 侧栏尽力展开到能到达的层级,绝不因补链失败打断用户导航。
+   */
+  async function ensureAncestorsLoaded(pageId: string): Promise<PageNode[]> {
+    const chain: PageNode[] = []
+    let cur = getPage(pageId)
+    if (!cur) {
+      try {
+        cur = await api.pages.get(pageId)
+        syncPageFromServer(cur)
+      } catch {
+        return []
+      }
+    }
+    let guard = 0
+    while (cur && guard++ < 64) {
+      chain.unshift(cur)
+      const pid = cur.parentId
+      if (!pid) break
+      let parent = getPage(pid)
+      if (!parent) {
+        try {
+          parent = await api.pages.get(pid)
+          syncPageFromServer(parent)
+        } catch {
+          break
+        }
+      }
+      cur = parent
+    }
+    return chain
   }
 
   /**
@@ -176,8 +328,27 @@ export const usePagesStore = defineStore('pages', () => {
       authorName: null,
       authorColor: null,
       spaceId,
+      // 新建的页肯定没子。undefined 让 PageTree 走 leaf fallback,后续
+      // ensureChildrenLoaded 拿到真实结果会纠正 (实际新建的页也确实没子,
+      // 所以永远是 false)。
+      hasChildren: false,
     }
     pages.value.push(optimistic)
+    // 新建的页出现在 parentId 的 children 里 — 让该 parent 的缓存失效,
+    // 下次展开时会重新拉(此时不会重复拉,因为 ensureChildrenLoaded 是
+    // 用户主动展开才触发,新建后用户多半已经在操作菜单里,不会立刻再展开)。
+    invalidateChildren(parentId, spaceId)
+    // 若 parent 之前是 leaf (hasChildren=false),现在塞了一个新子 — 立刻
+    // 翻转成 true,否则用户看 caret 不见就不知道有子。乐观更新假定服务端
+    // 也会得到 hasChildren=true(server 自己会重算),conflict 时会被后续
+    // refresh 自动纠正。parentId === null (根级新增) 不影响 — 根的 hasChildren
+    // 不是树渲染需要的信号。
+    if (parentId) {
+      const pIdx = pages.value.findIndex((p) => p.id === parentId)
+      if (pIdx >= 0 && pages.value[pIdx]!.hasChildren === false) {
+        pages.value[pIdx] = { ...pages.value[pIdx]!, hasChildren: true }
+      }
+    }
 
     try {
       // Forward every field the caller passed — including content +
@@ -281,6 +452,8 @@ export const usePagesStore = defineStore('pages', () => {
     const snapshot = pages.value.find((p) => p.id === id)
     if (!snapshot) throw new Error(`page not found: ${id}`)
     pages.value = pages.value.filter((p) => p.id !== id)
+    // 让 parent 的 children 缓存失效(子节点列表变了)
+    invalidateChildren(snapshot.parentId, snapshot.spaceId)
 
     try {
       await api.pages.delete(id)
@@ -306,11 +479,18 @@ export const usePagesStore = defineStore('pages', () => {
     trashed.value = trashed.value.filter((p) => p.id !== id)
     try {
       await api.pages.restore(id)
-      // Restore may also restore other rows if the backend lifted a
-      // subtree, but our spec is single-row restore. Refresh everything
-      // to be safe — pages.list is cheap and not cached.
-      const { items } = await api.pages.list()
-      pages.value = items
+      // Restore 可能恢复一整棵子树(后端在某种条件下会级联恢复),但我们
+      // 只知道根 id;最安全的做法是让所有已加载的 parent 缓存失效,
+      // 下次展开时统一重新拉。同时刷一下根节点列表(被恢复的页可能
+      // 直接是根)。
+      childrenLoaded.clear()
+      const { items } = await api.pages.list({ parentId: null })
+      // 合并:保留 pages.value 中所有非根节点(已加载的子树),根用新的。
+      const rootIds = new Set(items.map((p) => p.id))
+      pages.value = [
+        ...items,
+        ...pages.value.filter((p) => !rootIds.has(p.id)),
+      ]
       migrateEmptyJson()
     } catch (e) {
       // Re-fetch trash to resync the optimistic drop with truth.
@@ -406,10 +586,6 @@ export const usePagesStore = defineStore('pages', () => {
     newOrder?: number,
   ): Promise<PageNode> {
     if (id === newParentId) throw new Error('cannot move into self')
-    if (newParentId) {
-      const descendants = collectDescendantIds(id)
-      if (descendants.has(newParentId)) throw new Error('cannot move into own descendant')
-    }
 
     const idx = pages.value.findIndex((p) => p.id === id)
     if (idx < 0) throw new Error(`page not found: ${id}`)
@@ -452,6 +628,18 @@ export const usePagesStore = defineStore('pages', () => {
       const real = await api.pages.move(id, { newParentId, newOrder })
       const i = pages.value.findIndex((p) => p.id === id)
       if (i >= 0) pages.value[i] = real
+      // 移动后旧 parent 和新 parent 的 children 列表都变了 — 让两边都失效
+      invalidateChildren(snapshot.parentId, snapshot.spaceId)
+      invalidateChildren(newParentId, real.spaceId)
+      // 新 parent 现在有至少 1 个子(就是 dragged)→ hasChildren 必为 true。
+      // 保守置 true 避免 caret 漏显示。old parent 不知道是否还有其他子,
+      // 不动它 — 下次用户展开时 lazy-load 拿真实数据,hasChildren 自纠正。
+      if (newParentId) {
+        const npIdx = pages.value.findIndex((p) => p.id === newParentId)
+        if (npIdx >= 0 && pages.value[npIdx]!.hasChildren !== true) {
+          pages.value[npIdx] = { ...pages.value[npIdx]!, hasChildren: true }
+        }
+      }
       return real
     } catch (e) {
       pages.value = pagesSnapshot
@@ -505,6 +693,8 @@ export const usePagesStore = defineStore('pages', () => {
       } else {
         pages.value = [...pages.value, real]
       }
+      // 发布到 → 目标空间的根节点列表多了 1 条
+      invalidateChildren(null, targetSpaceId)
       return real
     } catch (e) {
       pages.value = pages.value.filter((p) => p.id !== tempId)
@@ -579,6 +769,8 @@ export const usePagesStore = defineStore('pages', () => {
       const reorderedMap = new Map(reordered.map((p) => [p.id, p]))
 
       pages.value = withReal.map((p) => reorderedMap.get(p.id) ?? p)
+      // 复制后 source.parentId 的 children 列表变了(多了一个)
+      invalidateChildren(source.parentId, source.spaceId)
       return real
     } catch (e) {
       pages.value = pages.value.filter((p) => p.id !== tempId)
@@ -650,27 +842,18 @@ export const usePagesStore = defineStore('pages', () => {
       })
       const i = pages.value.findIndex((p) => p.id === id)
       if (i >= 0) pages.value[i] = real
+      // 跨空间移动:旧空间根节点列表少 1 条,新空间根节点列表多 1 条
+      invalidateChildren(null, snapshot.spaceId)
+      invalidateChildren(null, newSpaceId)
+      // 目标空间根列表被加入 — 拉根列表时会拿到真实 hasChildren=true(因为
+      // 现在有至少这 1 个根)。但根本身的 hasChildren 状态其实不重要(根节点
+      // 不在 PageTree 的 hasChildren 检查里);保险起见也置一下。
       return real
     } catch (e) {
       pages.value = pagesSnapshot
       ui().setError(`移动到团队空间失败: ${errorMessage(e)}`)
       throw e
     }
-  }
-
-  function collectDescendantIds(id: string): Set<string> {
-    const result = new Set<string>([id])
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const p of pages.value) {
-        if (p.parentId && result.has(p.parentId) && !result.has(p.id)) {
-          result.add(p.id)
-          changed = true
-        }
-      }
-    }
-    return result
   }
 
   function getTree(): TreeNode[] {
@@ -796,6 +979,10 @@ export const usePagesStore = defineStore('pages', () => {
     init,
     refresh,
     reset,
+    ensureChildrenLoaded,
+    ensureAncestorsLoaded,
+    invalidateChildren,
+    isChildrenLoaded,
     createPage,
     getPage,
     getChildren,

@@ -24,22 +24,44 @@ const depth = computed(() => props.depth ?? 0)
 // tree-expanded state is keyed by activeSpaceId (Stage 7); each space keeps
 // its own expansion set so collapsing team-space tree doesn't affect personal.
 const spaceId = computed(() => spacesStore.activeSpaceId.value ?? '')
+// 当前页所在 space(从 pages.value 反查)。用于 isChildrenLoaded 的 cache key。
+const currentSpaceId = computed(() => {
+  const page = pagesStore.getPage(props.node.id)
+  return page?.spaceId ?? spacesStore.activeSpaceId.value ?? null
+})
 const isExpanded = computed(() => uiStore.isExpanded(spaceId.value, props.node.id))
-const hasChildren = computed(() => props.node.children.length > 0)
+/**
+ * 是否显示 caret + 展开按钮。完全用服务端的 `hasChildren`(EXISTS 子查询
+ * 计算的真实子节点存在性),不用 children 数组 —— 懒加载模式下 children
+ * 数组在用户展开前都是空的,拿它判断会让 leaf 节点也显示 caret,误导用户
+ * 点开发现是空的。
+ *
+ * 乐观插入的页(server 还没回响应)hasChildren 是 undefined,这里 fallback
+ * 为 false 不显示 caret —— 新建页肯定没子,这个 fallback 是正确的。
+ */
+const hasChildren = computed(() => {
+  const page = pagesStore.getPage(props.node.id)
+  return page?.hasChildren === true
+})
 const isActive = computed(() => route.params.id === props.node.id)
 const isMenuOpen = computed(() => uiStore.openMenuId === props.node.id)
 const isRenaming = computed(() => uiStore.renamingId === props.node.id)
+
+// 懒加载状态:展开一个未加载过的父节点时显示小 spinner
+const loadingChildren = ref(false)
 
 const renameValue = ref(props.node.title)
 const renameInputRef = ref<HTMLInputElement | null>(null)
 
 /* ─── Drag & drop ──────────────────────────────────────────────────────
- *  HTML5 drag API, scoped to row drags inside the tree. Drop semantics:
- *    - top half of row  → insert ABOVE this row (same parent)
- *    - bottom half      → insert BELOW this row (same parent)
- *  No "drop on row to make it a child" — use ⋯ menu → "在此页下添加子页面".
- *  Reorders within the same parent + cross-parent moves go through
- *  pagesStore.movePage which handles cycle protection + sibling reorder.
+ *  HTML5 drag API, scoped to row drags inside the tree. Drop semantics
+ *  (Confluence / Notion 3-zone):
+ *    - top 1/3 of row    → insert BEFORE this row (same parent)
+ *    - middle 1/3 of row → drop AS CHILD of this row (newParentId = target)
+ *    - bottom 1/3 of row → insert AFTER this row (same parent)
+ *
+ *  根节点(parentId === null)禁用中区 — 没有「根的子」这种语义,中 1/3 也
+ *  当 before/after 处理(用 height/2 作分界)。
  *
  *  `dragState` MUST live at module scope (not per-instance): when row A
  *  starts dragging, every other PageTree instance's `onDragOver` checks
@@ -49,11 +71,14 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
  *  return and the drop event would never fire. This is the bug we're
  *  explicitly fixing here.
  */
-type DropHint = 'before' | 'after'
+type DropHint = 'before' | 'after' | 'child'
 const dragState = reactive<{ draggingId: string | null; dropTarget: { id: string; position: DropHint } | null }>({
   draggingId: null,
   dropTarget: null,
 })
+
+// 中区 hover 折叠节点 → 300ms 后自动展开 + 懒加载(让用户预知落点)
+let autoExpandTimer: ReturnType<typeof setTimeout> | null = null
 
 const isDragSource = computed(() => dragState.draggingId === props.node.id)
 const dropHint = computed<DropHint | null>(
@@ -72,6 +97,10 @@ function onDragStart(e: DragEvent) {
 }
 
 function onDragEnd() {
+  if (autoExpandTimer) {
+    clearTimeout(autoExpandTimer)
+    autoExpandTimer = null
+  }
   dragState.draggingId = null
   dragState.dropTarget = null
 }
@@ -83,23 +112,75 @@ function onDragOver(e: DragEvent) {
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   const row = e.currentTarget as HTMLElement
   const rect = row.getBoundingClientRect()
-  const position: DropHint = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after'
-  // Avoid re-triggering reactivity if nothing changed.
+  const third = rect.height / 3
+  const relY = e.clientY - rect.top
+  // 根节点(parentId === null)禁用 child 概念,中 1/3 也按 before/after 处理
+  let position: DropHint
+  if (props.node.parentId === null) {
+    position = relY < rect.height / 2 ? 'before' : 'after'
+  } else {
+    position = relY < third ? 'before' : relY > 2 * third ? 'after' : 'child'
+  }
   if (dragState.dropTarget?.id !== props.node.id || dragState.dropTarget.position !== position) {
     dragState.dropTarget = { id: props.node.id, position }
+    // 中区 hover 折叠节点 → 300ms 后自动展开(用户预知落点)
+    if (position === 'child' && !isExpanded.value) {
+      scheduleAutoExpand()
+    } else if (autoExpandTimer) {
+      // 移到了非中区,取消待执行的展开
+      clearTimeout(autoExpandTimer)
+      autoExpandTimer = null
+    }
   }
 }
 
 function onDragLeave(e: DragEvent) {
   // relatedTarget can be null when leaving the window — treat that as a clean exit.
   if (e.relatedTarget && (e.currentTarget as Node).contains(e.relatedTarget as Node)) return
-  if (dragState.dropTarget?.id === props.node.id) dragState.dropTarget = null
+  if (dragState.dropTarget?.id === props.node.id) {
+    dragState.dropTarget = null
+    if (autoExpandTimer) {
+      clearTimeout(autoExpandTimer)
+      autoExpandTimer = null
+    }
+  }
+}
+
+/**
+ * 中区 hover 折叠节点 300ms 后自动展开(并按需懒加载)。让用户在被 drop 前
+ * 看到目标节点的现有子节点,落点直观。
+ */
+function scheduleAutoExpand() {
+  if (autoExpandTimer) clearTimeout(autoExpandTimer)
+  autoExpandTimer = setTimeout(async () => {
+    autoExpandTimer = null
+    // Re-check:用户在 300ms 内可能移到了 before/after 或离开了
+    if (
+      dragState.dropTarget?.id !== props.node.id ||
+      dragState.dropTarget.position !== 'child'
+    ) return
+    uiStore.toggle(spaceId.value, props.node.id)
+    if (!pagesStore.isChildrenLoaded(props.node.id, currentSpaceId.value)) {
+      loadingChildren.value = true
+      try {
+        await pagesStore.ensureChildrenLoaded(props.node.id)
+      } catch {
+        // banner 由 store 处理
+      } finally {
+        loadingChildren.value = false
+      }
+    }
+  }, 300)
 }
 
 async function onDrop(e: DragEvent) {
   e.preventDefault()
   const target = dragState.dropTarget
   const draggedId = dragState.draggingId
+  if (autoExpandTimer) {
+    clearTimeout(autoExpandTimer)
+    autoExpandTimer = null
+  }
   dragState.draggingId = null
   dragState.dropTarget = null
   if (!target) return
@@ -111,16 +192,20 @@ async function onDrop(e: DragEvent) {
   // Refuse cycles: can't drop a page onto itself or one of its descendants.
   if (isAncestor(draggedId, target.id)) return
 
-  // Compute the new sortOrder for the dragged page in the target parent's
-  // sibling list. The page is being inserted at the same level as `target`,
-  // so the target's parent is the new parent.
-  const newParentId = targetPage.parentId
+  // 'child' 位置 → 作为目标节点的子节点插入到该 parent 子列表末尾
+  // before/after → 作为 target 的兄弟,target 的 parent 即新 parent
+  const newParentId = target.position === 'child' ? target.id : targetPage.parentId
   const siblings = pagesStore.pages
     .filter((p) => p.parentId === newParentId && p.id !== draggedId)
     .sort((a, b) => a.order - b.order)
-  let insertAt = siblings.findIndex((p) => p.id === target.id)
-  if (insertAt < 0) insertAt = siblings.length
-  if (target.position === 'after') insertAt += 1
+  let insertAt: number
+  if (target.position === 'child') {
+    insertAt = siblings.length
+  } else {
+    insertAt = siblings.findIndex((p) => p.id === target.id)
+    if (insertAt < 0) insertAt = siblings.length
+    if (target.position === 'after') insertAt += 1
+  }
 
   try {
     await pagesStore.movePage(draggedId, newParentId, insertAt)
@@ -159,9 +244,21 @@ const menuStyle = computed(() => {
   return { top: `${top}px`, left: `${left}px` }
 })
 
-function toggleCaret(e: MouseEvent) {
+async function toggleCaret(e: MouseEvent) {
   e.stopPropagation()
-  if (hasChildren.value) uiStore.toggle(spaceId.value, props.node.id)
+  if (!hasChildren.value) return
+  uiStore.toggle(spaceId.value, props.node.id)
+  // 第一次展开时如果 children 还没加载过 → 懒加载
+  if (!pagesStore.isChildrenLoaded(props.node.id, currentSpaceId.value)) {
+    loadingChildren.value = true
+    try {
+      await pagesStore.ensureChildrenLoaded(props.node.id)
+    } catch {
+      uiStore.setError('加载子页面失败')
+    } finally {
+      loadingChildren.value = false
+    }
+  }
 }
 
 function navigate() {
@@ -378,11 +475,13 @@ watch(isRenaming, (val) => {
   <div class="tree-branch">
     <div
       class="tree-row"
+      :data-page-id="node.id"
       :class="{
         active: isActive,
         'is-dragging': isDragSource,
         'drop-before': dropHint === 'before',
         'drop-after': dropHint === 'after',
+        'drop-child': dropHint === 'child',
       }"
       :draggable="!isRenaming"
       @click="navigate"
@@ -488,6 +587,9 @@ watch(isRenaming, (val) => {
         :node="child"
         :depth="depth + 1"
       />
+      <div v-if="loadingChildren" class="loading-row">
+        <span class="material-symbols-outlined icon-sm spin">progress_activity</span>
+      </div>
     </div>
   </div>
 </template>
@@ -515,12 +617,59 @@ export default { name: 'PageTree' }
 }
 
 /* ─── Drag & drop ────────────────────────────────────────────────────── */
+.tree-row { position: relative; }
 .tree-row.is-dragging { opacity: 0.4; }
-.tree-row.drop-before {
-  box-shadow: inset 0 2px 0 0 var(--accent);
-}
+/* before / after:细线 + 两端三角箭头(Confluence 风) */
+.tree-row.drop-before,
 .tree-row.drop-after {
-  box-shadow: inset 0 -2px 0 0 var(--accent);
+  position: relative;
+}
+.tree-row.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.tree-row.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
+.tree-row.drop-before::before,
+.tree-row.drop-before::after,
+.tree-row.drop-after::before,
+.tree-row.drop-after::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--accent);
+  pointer-events: none;
+}
+.tree-row.drop-before::before { left: 18px; top: -2px; }
+.tree-row.drop-before::after { right: 4px; top: -2px; }
+.tree-row.drop-after::before { left: 18px; bottom: -2px; }
+.tree-row.drop-after::after { right: 4px; bottom: -2px; }
+/* child:整行高亮 + 左侧 3px accent 条 */
+.tree-row.drop-child {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* ─── Lazy-load spinner ──────────────────────────────────────────────── */
+.loading-row {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  color: var(--text-3);
+}
+.loading-row .spin {
+  animation: spin 0.9s linear infinite;
+  font-size: 14px;
+  margin-left: 4px; /* 对齐 .tree-row 的 doc-icon 位置 */
+}
+.icon-sm {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>
 

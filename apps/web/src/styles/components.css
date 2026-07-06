@@ -311,6 +311,11 @@
     margin: 0 -4px 0 -4px;
 }
 .tree-row .caret:hover { background: var(--bg-subtle); color: var(--text-2); }
+/* Active 行上 hover caret:不再加深底色 —— 行本身已是 accent-soft 蓝,
+ * caret 再叠 accent-bg-active 会跟右侧 doc-icon(也是 accent 深色)
+ * 形成两道"深色竖条"重复堆叠。只换 icon 颜色,不动底色,让视觉聚焦在 doc
+ * icon。 */
+.tree-row.active .caret:hover { background: transparent; color: var(--accent-hover); }
 .tree-row .caret.leaf { visibility: hidden; }
 .tree-row .caret.open { transform: rotate(90deg); }
 .tree-row .doc-icon {

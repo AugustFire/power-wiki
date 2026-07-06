@@ -61,6 +61,13 @@ export const PageNodeSchema = z.object({
    *  Optional + nullable,因为常规响应不带这两个字段。 */
   deletedAt: z.number().int().positive().nullable().optional(),
   deletedBy: z.string().min(1).nullable().optional(),
+  /**
+   * 服务端 EXISTS 子查询(参考 apps/api/src/routes/pages.ts 的 selectPagesWithAuthor)
+   * 计算是否有未删除的子页面。Sidebar 用它判断是否显示 caret — 用 children 数组
+   * 会因为懒加载而对 leaf 节点显示错误 caret。乐观插入的页可能是 undefined,
+   * PageTree 一律当 leaf。Optional 不写回 seed / 旧 cache。
+   */
+  hasChildren: z.boolean().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */

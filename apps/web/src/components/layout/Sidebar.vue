@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
@@ -13,6 +13,7 @@ const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
+const route = useRoute()
 
 // Tree is scoped to the active space. Server already filters by accessibility
 // but the local store holds pages from every accessible space — scoping the
@@ -75,6 +76,58 @@ function goMySpace() {
 // sidebar shortcut is a frequent-use target — easier to reach than the
 // avatar dropdown for users who context-switch often.
 void authStore
+
+/**
+ * 打开一个页面时,让侧栏自动展开到它、并滚动定位到对应行。
+ *
+ * 为什么需要:懒加载后 `pages.value` 是稀疏缓存,从正文点一个子页面链接
+ * (或直接深链进一个深层页)时,目标页所在的那条子树在侧栏里可能整条都是
+ * 折叠的、甚至祖先节点都还没进缓存。用户会「迷路」——正文在看子页,侧栏
+ * 却没有任何高亮。Confluence / Notion 的标准行为是:侧栏跟随当前页,自动
+ * 展开祖先链并把当前行滚进视野。
+ *
+ * 流程:
+ *   1. `ensureAncestorsLoaded` 向上补齐目标页 + 祖先链(缺失的逐个拉回)
+ *   2. 若当前页不在活动空间,把活动空间切过去(侧栏才会渲染对应树)
+ *   3. 逐个展开祖先,并把每个祖先的完整子列表拉全(树能渲染出整条路径)
+ *   4. `nextTick` 后按 `data-page-id` 找到当前行,滚进视野
+ */
+async function autoExpandAndLocate(pageId: string): Promise<void> {
+  const chain = await pagesStore.ensureAncestorsLoaded(pageId)
+  if (chain.length === 0) return
+  const page = chain[chain.length - 1]!
+  // 侧栏跟随当前页所在空间:跨空间点链接时切过去,同空间是 no-op。
+  if (page.spaceId && spacesStore.activeSpaceId.value !== page.spaceId) {
+    spacesStore.setActiveSpace(page.spaceId)
+  }
+  const sid = page.spaceId ?? spacesStore.activeSpaceId.value ?? ''
+  // 展开每个祖先(不含当前页自身)。ensureChildrenLoaded 把该祖先的完整子
+  // 列表拉全并标记缓存,这样展开后看到的是全部兄弟,而不只是路径上的一个。
+  for (const anc of chain.slice(0, -1)) {
+    try {
+      await pagesStore.ensureChildrenLoaded(anc.id)
+    } catch {
+      // 拉子列表失败不阻断:祖先节点已在缓存里,路径仍能渲染
+    }
+    uiStore.expand(sid, anc.id)
+  }
+  await nextTick()
+  document
+    .querySelector<HTMLElement>(`.tree-row[data-page-id="${pageId}"]`)
+    ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
+// 路由页面切换 / 首次加载完成时触发。等 `loaded` 为真才跑 —— 否则 init()
+// 的 `pages.value = items` 全量替换会把我们提前 sync 进来的祖先冲掉。loaded
+// 翻真后 watcher 会再触发一次补跑。
+watch(
+  [() => route.params.id, () => pagesStore.loaded],
+  ([id, loaded]) => {
+    if (!loaded) return
+    if (typeof id === 'string' && id) void autoExpandAndLocate(id)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
