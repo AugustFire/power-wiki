@@ -60,15 +60,24 @@ const stats = computed(() => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const todayMs = today.getTime()
-  const editedToday = all.filter((p) => p.updatedAt >= todayMs).length
-  const childCount = all.filter((p) => p.parentId !== null).length
-  const thisWeek = all.filter((p) => p.updatedAt >= todayMs - 7 * 86400000).length
+  const weekMs = todayMs - 7 * 86400000
   // 「我的页面」按 authorId 数 — 真实数据,不像之前的「云端存储」
   // 是拿 JSON.stringify 假装服务器字节数,看一眼就露馅。
   // 个人空间里基本所有页都是我的,所以 active space 是 team space 时
   // 这个数字才有信号意义;个人空间下退化为"全部页面",用户也能理解。
   const meId = authStore.user?.id
-  const myPages = meId ? all.filter((p) => p.authorId === meId).length : 0
+  // 单次 for-of 把 4 个独立 filter pass 合并 — 每次 reactive tick 从
+  // O(4N) 降到 O(N)。filter 会反复分配新数组,这里只需要计数。
+  let editedToday = 0
+  let thisWeek = 0
+  let childCount = 0
+  let myPages = 0
+  for (const p of all) {
+    if (p.updatedAt >= todayMs) editedToday++
+    if (p.updatedAt >= weekMs) thisWeek++
+    if (p.parentId !== null) childCount++
+    if (meId && p.authorId === meId) myPages++
+  }
   return {
     total: all.length,
     roots: rootPages.value.length,
