@@ -8,6 +8,7 @@
  * - 移除所有 on* 事件、javascript: 协议、target=_blank 等危险属性
  */
 import DOMPurify from 'dompurify'
+import type { Config } from 'dompurify'
 
 const ALLOWED_TAGS = [
   // 块
@@ -55,8 +56,7 @@ const ALLOWED_ATTR = [
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const SANITIZE_CONFIG: any = {
+const SANITIZE_CONFIG: Config = {
   ALLOWED_TAGS,
   ALLOWED_ATTR,
   ALLOW_DATA_ATTR: false,
