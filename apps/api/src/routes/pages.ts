@@ -668,7 +668,7 @@ pagesRouter.patch('/:id/move', async (c) => {
  *    - admin 发布 personal-space 页面:admin 不是任何 personal space 的
  *      owner,所以这条天然挡掉,不需要 personalSpaceGuard。
  *  标题后缀:`(来自 {userName} 的个人分享)`。userName 取自 users 表的
- *  name 字段(失败 fallback 为 id 字符串,绝不抛错)。
+ *  name 字段(失败 fallback 为「我」,绝不抛错)。
  *  子页面:**不**递归复制 — 单页发布,作者可以选择是否要继续逐个发布子页。
  */
 pagesRouter.post('/:id/publish', async (c) => {
@@ -745,13 +745,13 @@ pagesRouter.post('/:id/publish', async (c) => {
     )
   }
 
-  // 作者名 — 用于标题后缀。查不到时回退到 me.id 字符串
+  // 作者名 — 用于标题后缀。查不到 / 名字为空时回退到「我」
   const [author] = await db
     .select({ name: users.name })
     .from(users)
     .where(eq(users.id, me.id))
     .limit(1)
-  const sharerName = author?.name?.trim() || me.id
+  const sharerName = author?.name?.trim() || '我'
 
   const now = Date.now()
   const newId = generatePageId()
