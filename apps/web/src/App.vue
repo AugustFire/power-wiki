@@ -6,6 +6,7 @@ import BrandLogo from '@/components/ui/BrandLogo.vue'
 import TopBar from '@/components/layout/TopBar.vue'
 import TopSearch from '@/components/layout/TopSearch.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import CheatSheetModal from '@/components/ui/CheatSheetModal.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
@@ -87,6 +88,13 @@ function onGlobalKey(e: KeyboardEvent) {
   if (isTypingTarget(e.target)) return
 
   const mod = e.metaKey || e.ctrlKey
+  // ⌘/ (Ctrl+/) 唤起快捷键速查表。放在 ⌘K 之前判断,因为二者都带 mod。
+  if (mod && e.key === '/') {
+    e.preventDefault()
+    if (uiStore.cheatSheetOpen) uiStore.closeCheatSheet()
+    else uiStore.openCheatSheet()
+    return
+  }
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     uiStore.openTopSearch()
@@ -149,6 +157,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 
     <TopSearch :open="topSearchOpen" @close="uiStore.closeTopSearch()" />
     <ConfirmDialog />
+    <CheatSheetModal />
   </div>
 </template>
 

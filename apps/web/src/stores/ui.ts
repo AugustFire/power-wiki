@@ -45,6 +45,8 @@ export const useUiStore = defineStore('ui', () => {
   const renamingId = ref<string | null>(null)
   // 顶栏搜索框开关 — 提到 store 让 HomeView / Sidebar / 任意位置都能唤起
   const topSearchOpen = ref(false)
+  // 快捷键速查表(⌘/ 唤起)开关 — 全局共享,App.vue 挂 CheatSheetModal
+  const cheatSheetOpen = ref(false)
   // 全局错误信息(API 失败 / 乐观更新回滚时被 setError)。App.vue 顶部 banner 用。
   // null = 无错误。多次 setError 取最后一次。
   const error = ref<string | null>(null)
@@ -126,6 +128,13 @@ export const useUiStore = defineStore('ui', () => {
     topSearchOpen.value = false
   }
 
+  function openCheatSheet(): void {
+    cheatSheetOpen.value = true
+  }
+  function closeCheatSheet(): void {
+    cheatSheetOpen.value = false
+  }
+
   function setError(message: string | null): void {
     error.value = message
   }
@@ -147,6 +156,7 @@ export const useUiStore = defineStore('ui', () => {
     menuPos,
     renamingId,
     topSearchOpen,
+    cheatSheetOpen,
     error,
     isExpanded,
     toggle,
@@ -157,6 +167,8 @@ export const useUiStore = defineStore('ui', () => {
     endRename,
     openTopSearch,
     closeTopSearch,
+    openCheatSheet,
+    closeCheatSheet,
     setError,
     clearError,
     commentsPageId,
