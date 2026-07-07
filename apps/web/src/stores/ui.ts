@@ -7,6 +7,22 @@ const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
 const LEGACY_KEY = '__legacy__'
 
 /**
+ * Toast 通知形状(成功 / 错误 / 信息 反馈)。
+ *
+ * - id:用单调递增整数作为 key;只在本会话内去重,不持久化。
+ * - kind:决定图标 + 颜色。success(绿) / error(红) / info(蓝)。
+ * - message:1-2 句话;过长用户在右下角读不全。
+ *
+ * 替代原本可能误用于成功反馈的顶部 banner —— 顶部 banner 仍专用于
+ * 持续展示的全局错误,toast 适用于"刚做完一个动作,短促告诉用户"。
+ */
+export interface Toast {
+  id: number
+  kind: 'success' | 'error' | 'info'
+  message: string
+}
+
+/**
  * Stage 7: tree expansion is now keyed by `spaceId`, so a user who
  * collapses the team space's tree doesn't lose that state when they
  * switch to their personal space. Shape: `{ [spaceId]: pageId[] }`.
@@ -47,6 +63,9 @@ export const useUiStore = defineStore('ui', () => {
   const topSearchOpen = ref(false)
   // 快捷键速查表(⌘/ 唤起)开关 — 全局共享,App.vue 挂 CheatSheetModal
   const cheatSheetOpen = ref(false)
+  // Toast 通知队列 — 成功 / 错误 / 信息 反馈(替代顶部 banner 用于成功反馈;
+  // banner 仍用于持续展示的全局错误)。每个 toast 自动 3 秒后消失,也可手动关闭。
+  const toasts = ref<Toast[]>([])
   // 全局错误信息(API 失败 / 乐观更新回滚时被 setError)。App.vue 顶部 banner 用。
   // null = 无错误。多次 setError 取最后一次。
   const error = ref<string | null>(null)
@@ -150,6 +169,28 @@ export const useUiStore = defineStore('ui', () => {
     commentsOpen.value = false
   }
 
+  // ─── Toast 通知 ────────────────────────────────────────────
+  let nextToastId = 1
+  /**
+   * 弹一个 toast。默认 3 秒后自动消失(durationMs=0 表示常驻,需手动关)。
+   * 返回 id 可用于后续 dismiss(例如展示一条带「撤销」按钮的 toast)。
+   */
+  function notify(
+    message: string,
+    kind: Toast['kind'] = 'success',
+    durationMs = 3000,
+  ): number {
+    const id = nextToastId++
+    toasts.value = [...toasts.value, { id, kind, message }]
+    if (durationMs > 0) {
+      setTimeout(() => dismiss(id), durationMs)
+    }
+    return id
+  }
+  function dismiss(id: number): void {
+    toasts.value = toasts.value.filter((t) => t.id !== id)
+  }
+
   return {
     expanded,
     openMenuId,
@@ -175,5 +216,8 @@ export const useUiStore = defineStore('ui', () => {
     commentsOpen,
     openComments,
     closeComments,
+    toasts,
+    notify,
+    dismiss,
   }
 })

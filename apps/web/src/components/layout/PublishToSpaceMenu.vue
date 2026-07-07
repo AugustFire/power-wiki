@@ -72,6 +72,9 @@ async function pick(targetSpaceId: string) {
     const created = await pagesStore.publishPageToSpace(props.page.id, targetSpaceId)
     const target = spacesStore.spaces.value.find((s) => s.id === targetSpaceId)
     if (target) spacesStore.setActiveSpace(target.id)
+    // 成功后给个 toast —— 跳页后 ReadView 接管,toast 仍挂在 App.vue
+    // 全局容器里,3 秒内能看到「已发布到 X」。失败由 store 弹 banner。
+    uiStore.notify(`已发布到「${target?.name ?? '目标空间'}」`, 'success')
     // 跳到新生成的副本 — 源页保持不动
     await router.push(`/p/${created.id}`)
   } catch {

@@ -7,7 +7,9 @@ import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
+import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
@@ -19,6 +21,7 @@ type AnyEditor = any
 const props = defineProps<{ id?: string; parentId?: string | null }>()
 const pagesStore = usePagesStore()
 const router = useRouter()
+const uiStore = useUiStore()
 const { confirm } = useConfirm()
 const { set: setActivePageId } = useActivePageId()
 
@@ -51,6 +54,47 @@ function captureEditorEl() {
   // ProseMirror 在 mount 后才会挂到 DOM;挂完抓一次,后续 update 也会再抓
   editorContentEl.value = document.querySelector('.ProseMirror')
 }
+
+// ─── 图片附件 lightbox(ReadView 同款,EditView 镜像接入)───────
+// 用 document-level capture 委托:Tiptap 自身管 click,组件 instance
+// 可能因为 diff / 卸载 / 替换 漂移,直接绑到 DOM root 会被陈旧引用吞掉;
+// 在 capture 阶段拦,既能抢在 Tiptap 之前处理,也能 cover ProseMirror 节点
+// 重建。filter `.ProseMirror` 是为了不误吃 ReadView / 其它视图的 img(罕见,
+// 因为 Edit 路由时其它视图都已 unmount,但留一道检查更稳)。
+interface LightboxState {
+  open: boolean
+  src: string
+  alt: string
+  filename?: string
+}
+const lightbox = ref<LightboxState>({ open: false, src: '', alt: '' })
+function openLightbox(state: LightboxState) {
+  lightbox.value = state
+}
+function closeLightbox() {
+  lightbox.value = { open: false, src: '', alt: '' }
+}
+
+function onAttachmentImgClickInEditor(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target) return
+  if (!target.closest('.ProseMirror')) return
+  const img = target.closest('.attachment-image > img') as HTMLImageElement | null
+  if (!img) return
+  // Tiptap 自身可能会消费这个 click(image 节点选中、focus 等),抢在它前面
+  // stopPropagation,只走我们的 lightbox path。
+  e.preventDefault()
+  e.stopPropagation()
+  const fig = img.closest('figure.attachment-image') as HTMLElement | null
+  const filename = fig?.getAttribute('data-attachment-filename') || undefined
+  openLightbox({ open: true, src: img.src, alt: img.alt, filename })
+}
+onMounted(() =>
+  document.addEventListener('click', onAttachmentImgClickInEditor, true),
+)
+onBeforeUnmount(() =>
+  document.removeEventListener('click', onAttachmentImgClickInEditor, true),
+)
 
 const isExisting = computed(() => !!localId.value)
 const page = computed(() => (localId.value ? pagesStore.getPage(localId.value) : undefined))
@@ -241,6 +285,9 @@ async function publish() {
   const ok = await persistNow()
   if (ok) {
     flashSaved()
+    // Toast 在路由跳之后仍然存活 —— ToastContainer 挂在 App.vue shell 里,
+    // 不受 EditView 卸载影响。提前一秒发,用户读 ReadView 头部时 toast 还在飘。
+    uiStore.notify('已发布', 'success')
     router.push(`/p/${localId.value}`)
   }
 }
@@ -525,6 +572,16 @@ onBeforeUnmount(() => {
         :content-ref="editorContentEl"
         :page-key="localId ?? undefined"
         :labels="page?.labels ?? []"
+      />
+
+      <!-- 图片附件全屏预览(ReadView 同款),点击 .ProseMirror 内的
+           figure.attachment-image > img 触发,见 onAttachmentImgClickInEditor。 -->
+      <AttachmentLightbox
+        :open="lightbox.open"
+        :src="lightbox.src"
+        :alt="lightbox.alt"
+        :filename="lightbox.filename"
+        @close="closeLightbox"
       />
     </div>
 
