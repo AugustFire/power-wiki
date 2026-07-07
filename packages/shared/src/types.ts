@@ -196,4 +196,9 @@ export type {
   PageVersion,
   AddLabelInput,
   DuplicatePageInput,
+  // Page attachments (MinIO/S3)
+  Attachment,
+  RequestUploadInput,
+  FinalizeUploadInput,
+  RequestUploadResponse,
 } from './schemas'

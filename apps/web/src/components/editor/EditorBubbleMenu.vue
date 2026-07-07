@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { BubbleMenu } from '@tiptap/vue-3'
+import { TextSelection } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/core'
 import LinkPopover from './LinkPopover.vue'
 
@@ -68,12 +69,16 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
 // 只在非空选区 + 不在不可编辑节点内时显示
 // 但 link popover 打开期间必须保持显示 —— 用户点链接按钮后焦点会跳到输入框,
 // 选区塌缩,shouldShow 默认会返回 false,把整个 BubbleMenu 连同 popover 一起卸载。
+// NodeSelection(atom 节点 / 整块选区)的 from === to 也是 true,但不是文本选区
+// —— 用 selection instanceof TextSelection 区分,挡掉 NodeSelection 避免
+// 点击图片/Callout/附件节点时弹出"加粗/斜体"工具栏(节点本身有自己的工具栏)。
 function shouldShow({ editor }: { editor: Editor | null }) {
   if (!editor) return false
   if (editor.isActive('codeBlock')) return false
   if (linkOpen.value) return true
-  const { from, to } = editor.state.selection
-  if (from === to) return false
+  const sel = editor.state.selection
+  if (!(sel instanceof TextSelection)) return false
+  if (sel.from === sel.to) return false
   return true
 }
 </script>

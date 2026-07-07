@@ -24,6 +24,7 @@ import { Toggle } from './toggleExtension'
 import { PageRef } from './pageRefExtension'
 import { DateInline } from './dateInlineExtension'
 import { Mention } from './mentionExtension'
+import { ImageAttachment } from './imageAttachmentExtension'
 
 /**
  * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
@@ -238,6 +239,10 @@ const extensions = [
   DateInline,
   // @mention:inline atom,@ 触 Suggestion,在当前 page 的 space 访问组里挑人
   Mention,
+  // 页面级附件:image/* 渲染成图片,application/pdf 渲染成文件卡片。
+  // 上传走 presigned PUT(见 editor/uploadAndInsert.ts),src 恒为
+  // /api/attachments/{id}/raw(sanitize.ts img src 白名单只放行这个模式)。
+  ImageAttachment,
 ]
 
 export default extensions

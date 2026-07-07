@@ -9,6 +9,7 @@ import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
+import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -206,6 +207,52 @@ watch(
   },
   { flush: 'post' },
 )
+
+// ─── 图片附件 lightbox(只在 ReadView 挂载)───────────────────
+// 点击 figure.attachment-image > img → 全屏查看;Esc 关闭;点击背景关闭。
+// 不和 task checkbox 的 onContentClick 冲突(task 点击是 INPUT,这里是 IMG,
+// 走的是不同 path)。
+interface LightboxState {
+  open: boolean
+  src: string
+  alt: string
+  filename?: string
+}
+const lightbox = ref<LightboxState>({ open: false, src: '', alt: '' })
+
+function openLightbox(state: LightboxState) {
+  lightbox.value = state
+}
+function closeLightbox() {
+  lightbox.value = { open: false, src: '', alt: '' }
+}
+
+function onAttachmentImgClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target) return
+  // 只拦 figure.attachment-image 里的 img 节点(别的 img 比如 emoji 之类不接管)
+  const img = target.closest('.attachment-image > img') as HTMLImageElement | null
+  if (!img) return
+  // 已被 sanitize 替换为 span.blocked-image 的占位符不会到这里(它是 span)
+  e.preventDefault()
+  const fig = img.closest('figure.attachment-image') as HTMLElement | null
+  const filename = fig?.getAttribute('data-attachment-filename') || undefined
+  openLightbox({ open: true, src: img.src, alt: img.alt, filename })
+}
+
+const boundAttachmentRoots = new WeakSet<HTMLElement>()
+function bindAttachmentLightbox(root: HTMLElement) {
+  if (boundAttachmentRoots.has(root)) return
+  root.addEventListener('click', onAttachmentImgClick)
+  boundAttachmentRoots.add(root)
+}
+watch(
+  contentEl,
+  (root) => {
+    if (root) bindAttachmentLightbox(root)
+  },
+  { flush: 'post' },
+)
 </script>
 
 <template>
@@ -359,6 +406,16 @@ watch(
           </div>
         </div>
       </div>
+
+      <!-- 图片附件全屏预览。Teleport 到 body,锁住背景滚动。
+           放 content div 之外,跟 v-if/v-else 解耦。 -->
+      <AttachmentLightbox
+        :open="lightbox.open"
+        :src="lightbox.src"
+        :alt="lightbox.alt"
+        :filename="lightbox.filename"
+        @close="closeLightbox"
+      />
 
       <TocPanel
         v-if="page"

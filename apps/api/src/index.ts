@@ -27,6 +27,7 @@ import { db, pool } from './db/client'
 import { pagesRouter } from './routes/pages'
 import { pageVersionsRouter } from './routes/pageVersions'
 import { pageLabelsRouter } from './routes/pageLabels'
+import { attachmentsRouter } from './routes/attachments'
 import { searchRouter } from './routes/search'
 import { authRouter } from './routes/auth'
 import { spacesRouter } from './routes/spaces'
@@ -68,6 +69,7 @@ app.route('/api/pages', pageLabelsRouter)
 // /api/labels is mounted from the same router instance — Hono supports
 // mounting the same router at multiple prefixes.
 app.route('/api/labels', pageLabelsRouter)
+app.route('/api/attachments', attachmentsRouter)
 app.route('/api/spaces', spacesRouter)
 app.route('/api/comments', commentsRouter)
 app.route('/api/notifications', notificationsRouter)

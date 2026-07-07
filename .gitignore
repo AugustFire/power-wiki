@@ -63,3 +63,4 @@ apps/api/drizzle
 
 # Local data exports(手动测试时导出的页面快照,不是项目资产)
 pages.json
+page-patch*.json

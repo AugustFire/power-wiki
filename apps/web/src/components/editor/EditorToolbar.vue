@@ -6,6 +6,9 @@ import EmojiPicker from './EmojiPicker.vue'
 import DateTimePicker from './DateTimePicker.vue'
 import { CALLOUT_VARIANTS, CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
 import { BG_COLOR_PALETTE } from '@/lib/colorPalettes'
+import { openAttachmentPicker } from '@/lib/attachmentPicker'
+import { uploadAndInsert } from '@/editor/uploadAndInsert'
+import { useActivePageId } from '@/composables/useActivePageId'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -95,8 +98,28 @@ const insertBtns = computed<Btn[]>(() => {
       isActive: () => e.isActive('callout'),
       run: () => e.chain().focus().toggleCallout('info').run(),
     },
+    {
+      id: 'attachment', icon: 'image', title: '插入图片 / 附件',
+      run: () => openAttachmentUpload(),
+    },
   ]
 })
+
+// ─── 图片 / 附件上传 ───────────────────────────────────────────
+// 点工具栏按钮 → 系统文件选择器 → uploadAndInsert(request → PUT → finalize)。
+// 失败仅 alert + console(项目暂无 toast 系统)。
+const { activePageId } = useActivePageId()
+function openAttachmentUpload() {
+  const e = props.editor
+  const pageId = activePageId.value
+  if (!e || !pageId) return
+  openAttachmentPicker((file) => {
+    uploadAndInsert(file, e, pageId).catch((err) => {
+      console.error('[EditorToolbar] attachment upload failed', err)
+      window.alert('附件上传失败,请重试')
+    })
+  })
+}
 
 // ─── 文字对齐 ────────────────────────────────────────────────
 const alignBtns = computed<Btn[]>(() => {

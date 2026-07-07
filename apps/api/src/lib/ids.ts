@@ -23,6 +23,10 @@ const SESSION_ID_ALPHABET =
   '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 const newSessionId = customAlphabet(SESSION_ID_ALPHABET, 32)
 
+const ATTACHMENT_ID_ALPHABET =
+  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+const newAttachmentId = customAlphabet(ATTACHMENT_ID_ALPHABET, 12)
+
 /** 10-char page id, same alphabet as the frontend's `newId()` */
 export function generatePageId(): string {
   return newPageId()
@@ -31,6 +35,11 @@ export function generatePageId(): string {
 /** 32-char opaque session token */
 export function generateSessionId(): string {
   return newSessionId()
+}
+
+/** 12-char attachment id — also the second segment of the S3 object key. */
+export function generateAttachmentId(): string {
+  return newAttachmentId()
 }
 
 export async function isDescendantOrSelf(targetId: string, candidateAncestorId: string): Promise<boolean> {

@@ -70,11 +70,13 @@ import {
   notifications as notificationsTable,
   pageVersions,
   pageLabels,
+  attachments,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
+import { deleteObject } from '../lib/s3'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
@@ -1011,6 +1013,13 @@ pagesRouter.delete('/:id', async (c) => {
     // belong to this root and get wiped too.
     const subtreeIds = await getPageSubtree(id)
     if (subtreeIds.length === 0) return c.json({ error: 'not_found' }, 404)
+    // Attachments: collect S3 keys BEFORE the transaction wipes the rows, so
+    // we can best-effort delete the objects after COMMIT. DB is source of
+    // truth; orphaned S3 objects are tolerated (a future GC can sweep them).
+    const attachmentRows = await db
+      .select({ storageKey: attachments.storageKey })
+      .from(attachments)
+      .where(inArray(attachments.pageId, subtreeIds))
     await db.transaction(async (tx) => {
       await tx
         .delete(notificationsTable)
@@ -1026,8 +1035,19 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(pageLabels)
         .where(inArray(pageLabels.pageId, subtreeIds))
+      await tx
+        .delete(attachments)
+        .where(inArray(attachments.pageId, subtreeIds))
       await tx.delete(pages).where(inArray(pages.id, subtreeIds))
     })
+    // Best-effort object cleanup — failures leave orphans, only logged.
+    for (const { storageKey } of attachmentRows) {
+      try {
+        await deleteObject(storageKey)
+      } catch (err) {
+        console.warn('[purge] failed to delete object', storageKey, err)
+      }
+    }
     return c.body(null, 204)
   }
 

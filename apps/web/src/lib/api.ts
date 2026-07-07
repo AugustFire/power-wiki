@@ -21,9 +21,11 @@
 
 import {
   AddLabelInputSchema,
+  AttachmentSchema,
   CommentSchema,
   CreateCommentInputSchema,
   CreatePageInputSchema,
+  FinalizeUploadInputSchema,
   MarkReadInputSchema,
   MentionCandidateSchema,
   NotificationSchema,
@@ -31,6 +33,7 @@ import {
   PageVersionSchema,
   PaginatedListSchema,
   PublishPageInputSchema,
+  RequestUploadInputSchema,
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
@@ -41,12 +44,14 @@ import {
 } from '@power-wiki/shared/schemas'
 import type {
   AddLabelInput,
+  Attachment,
   Comment,
   CreateCommentInput,
   CreateGroupInput,
   CreatePageInput,
   CreateSpaceInput,
   CreateUserInput,
+  FinalizeUploadInput,
   MarkReadInput,
   MentionCandidate,
   MovePageInput,
@@ -56,6 +61,8 @@ import type {
   Paginated,
   PaginatedQuery,
   PublishPageInput,
+  RequestUploadInput,
+  RequestUploadResponse,
   ResetPasswordInput,
   SetSpaceAccessInput,
   SignInInput,
@@ -856,6 +863,49 @@ export const api = {
       if (params.limit !== undefined) search.set('limit', String(params.limit))
       const qs = search.toString()
       return getManyPages(`/search${qs ? `?${qs}` : ''}`)
+    },
+  },
+
+  /**
+   * 页面附件(image/* + application/pdf,MinIO/S3)。上传两步走:
+   *   1. requestUpload → 拿 presigned PUT URL + attachmentId + storageKey
+   *   2. 浏览器直接 PUT 到 uploadUrl(不经 API,见 uploadAndInsert.ts)
+   *   3. finalize → 服务端 HeadObject 校验后写行,返回 Attachment DTO
+   * 字节不经过这个 client;requestUpload / finalize 都是 JSON body。
+   */
+  attachments: {
+    requestUpload: async (
+      input: RequestUploadInput,
+    ): Promise<RequestUploadResponse> => {
+      const parsed = RequestUploadInputSchema.parse(input)
+      const r = await request<RequestUploadResponse>('/attachments/upload-url', {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+      })
+      return r
+    },
+    finalize: async (input: FinalizeUploadInput): Promise<Attachment> => {
+      const parsed = FinalizeUploadInputSchema.parse(input)
+      const r = await request<Attachment>('/attachments/finalize', {
+        method: 'POST',
+        body: JSON.stringify(parsed),
+      })
+      invalidatePrefix('/attachments')
+      return AttachmentSchema.parse(r) as Attachment
+    },
+    listForPage: async (pageId: string): Promise<Attachment[]> => {
+      const r = await request<Attachment[]>(
+        `/attachments?pageId=${encodeURIComponent(pageId)}`,
+      )
+      return r.map((a) => AttachmentSchema.parse(a) as Attachment)
+    },
+    getRawUrl: (id: string): string =>
+      `/api/attachments/${encodeURIComponent(id)}/raw`,
+    remove: async (id: string): Promise<void> => {
+      await request<void>(`/attachments/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      invalidatePrefix('/attachments')
     },
   },
 } as const

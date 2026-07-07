@@ -911,6 +911,12 @@
     font-size: 15px;
     line-height: 1.8;
     color: var(--text-1);
+    /* Block Formatting Context — 把 figure 的 float 圈在编辑器内容区内,避免
+       浮图溢出后撑住下面 LabelPills / reactions / CommentsSection 等兄弟元素 */
+    display: flow-root;
+}
+.prose {
+    display: flow-root;
 }
 .tiptap p.is-editor-empty:first-child::before {
     color: var(--text-3);
@@ -1285,10 +1291,21 @@ body:not(.editor-hover) .drag-handle {
     display: none;
 }
 
-/* 展开内容区 */
+/* 展开内容区。
+   display: flow-root 建立 BFC,让内嵌的浮元素(左/右浮图)被本容器收住 —
+   否则浮图 figure 会溢出 toggle 边界,折叠框外的段落会被误判为还能绕排。
+   浮图在 prose 顶层也用同样的全局 clear 规则(line 1404+),但那些只对 h1/ul/table
+   等块级元素生效,对 toggle 嵌套的 p 段无济于事;flow-root 是最干净的解。 */
 .tiptap .toggle-content,
 .prose .toggle > .toggle-content {
     padding: 4px 12px 12px 32px;
+    display: flow-root;
+}
+/* EditView NodeView 容器 .toggle-wrapper 也要收住浮元素,否则 toggle-summary / chevron
+   跟 toggle-content 之间的视觉位置错位(NodeViewContent 自己会被 PM 渲染进 toggle-content,
+   但 wrapper 本身不参与 toggle-content 的 overflow) */
+.tiptap .toggle-wrapper {
+    display: flow-root;
 }
 .tiptap .toggle-content > :first-child,
 .prose .toggle > .toggle-content > :first-child {
@@ -1344,6 +1361,200 @@ body:not(.editor-hover) .drag-handle {
     white-space: nowrap;
     color: var(--accent);
     font-weight: 500;
+}
+
+/* ============================================================
+   Attachment — 页面级附件(image/* + application/pdf)
+   figure.attachment-image  → 内嵌图片
+   figure.attachment-file   → 文件卡片(图标 + 文件名 + 大小 + 下载)
+   外部 URL 图片被 sanitize 替换为 span.blocked-image
+   ============================================================ */
+.tiptap figure.attachment-image,
+.prose figure.attachment-image,
+.tiptap figure.attachment-file,
+.prose figure.attachment-file {
+    margin: 12px 0;
+    max-width: 100%;
+}
+/* 三档对齐(图片):figure 走 width: fit-content 缩到内容宽,这样 caption 紧贴
+   img 下方居中,而不是跟着 prose 容器宽居中跑到行右端。
+   left/right 浮排 + fit-content → 图窄列靠边、后续段落自然绕排;不靠 max-width 限
+   浮排宽度(原 50% 让 figure 横跨半个容器,caption 跟着错位)。
+   超宽图仍受 .ia-img{max-width:100%} 限制,figure 不会突破 prose 容器。
+   注意:不是所有选择器都加 .tiptap — 在 EditView,ProseMirror 节点由 NodeView 渲染,
+   NodeView 的根 <figure> 是 .ia-figure 类(非 .attachment-image/figure 的 child),
+   但同时携带 .attachment-image.align-{align} class。这里双上下文选择器同时覆盖
+   EditView(.tiptap 下) 和 ReadView(.prose 下)。 */
+.tiptap figure.attachment-image.align-left,
+.prose figure.attachment-image.align-left {
+    float: left;
+    width: fit-content;
+    margin: 4px 16px 8px 0;
+}
+.tiptap figure.attachment-image.align-right,
+.prose figure.attachment-image.align-right {
+    float: right;
+    width: fit-content;
+    margin: 4px 0 8px 16px;
+}
+.tiptap figure.attachment-image.align-center,
+.prose figure.attachment-image.align-center {
+    display: block;
+    width: fit-content;
+    margin: 12px auto;
+    float: none;
+}
+/* 浮图(align-left/right)后面紧邻的第一个段落自动 clear:both,让光标自然落到
+   图下方。后续 p + p 仍正常绕排(不连续 clear)。CSS-only 方案,不污染 doc 结构,
+   markdown 序列化无需感知。
+   行为契约:插入浮图 → 下一个空段落出现在图下方 → 用户在图下键入或按 Enter →
+   之后再开新段落恢复绕排。 */
+.tiptap figure.attachment-image.align-left + p,
+.tiptap figure.attachment-image.align-right + p,
+.prose figure.attachment-image.align-left + p,
+.prose figure.attachment-image.align-right + p {
+    clear: both;
+}
+/* 浮排的图/卡:块级元素(标题 / 引用 / 表格 / 另一个附件 / hr / 列表)作为相邻兄弟
+   时,清掉 float,避免连续多张浮图挤压文字。后一段落 p 仍正常绕排,不影响 */
+.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6,
+.tiptap blockquote, .tiptap table, .tiptap pre, .tiptap hr,
+.tiptap ul, .tiptap ol, .tiptap figure,
+.tiptap .callout, .tiptap .toggle,
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6,
+.prose blockquote, .prose table, .prose pre, .prose hr,
+.prose ul, .prose ol, .prose figure,
+.prose .callout, .prose .toggle {
+    clear: both;
+}
+.tiptap figure.attachment-image.ProseMirror-selectednode,
+.prose figure.attachment-image.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
+}
+.tiptap figure.attachment-image img,
+.prose figure.attachment-image img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+}
+.tiptap figure.attachment-image figcaption,
+.prose figure.attachment-image figcaption {
+    margin-top: 6px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-3);
+    font-style: italic;
+}
+.tiptap figure.attachment-file.ProseMirror-selectednode,
+.prose figure.attachment-file.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+}
+/* 文件卡片(非图片):整卡是 <div>,不再让 <a download> wrap 整张卡 —— 否则
+   用户点文件名/icon/空白都会触发下载,误触率高。改成 hover 才在右侧浮出下载按钮。
+   EditView 走 Vue 模板 (.attachment-file-card),ReadView 走 renderHTML
+   (div.attachment-file-card),两边样式共用。 */
+.tiptap .attachment-file-card,
+.prose .attachment-file-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    font-size: 14px;
+    text-decoration: none;
+    transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+.tiptap .attachment-file-card:hover,
+.prose .attachment-file-card:hover {
+    background: var(--bg);
+    border-color: var(--accent);
+}
+/* 默认隐藏下载按钮,卡片 hover 时浮出 ——
+   在 EditView,卡片 hover → 按钮显现;在 ReadView 同理。
+   用 opacity 过渡避免抖动。 */
+.tiptap .attachment-file-download,
+.prose .attachment-file-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    text-decoration: none;
+    background: transparent;
+    opacity: 0;
+    transition: opacity var(--duration-fast) ease, background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+.tiptap .attachment-file-card:hover .attachment-file-download,
+.prose .attachment-file-card:hover .attachment-file-download,
+.tiptap .attachment-file-download:focus-visible,
+.prose .attachment-file-download:focus-visible {
+    opacity: 1;
+}
+.tiptap .attachment-file-download:hover,
+.prose .attachment-file-download:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+.tiptap .attachment-file-download .material-symbols-outlined,
+.prose .attachment-file-download .material-symbols-outlined {
+    font-size: 18px;
+}
+.tiptap .attachment-file-icon,
+.prose .attachment-file-icon {
+    font-size: 22px;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+.tiptap .attachment-file-name,
+.prose .attachment-file-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--accent);
+    font-weight: 500;
+}
+.tiptap .attachment-file-size,
+.prose .attachment-file-size {
+    font-size: 12px;
+    color: var(--text-3);
+    flex-shrink: 0;
+}
+.tiptap figure.attachment-file figcaption,
+.prose figure.attachment-file figcaption {
+    margin-top: 6px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-3);
+    font-style: italic;
+}
+
+/* 外部图片被 sanitize 替换的占位符(避免纯文本丢失语义) */
+.tiptap .blocked-image,
+.prose .blocked-image {
+    display: inline-block;
+    padding: 4px 8px;
+    background: var(--bg-subtle);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-3);
+    font-size: 12px;
+    font-style: italic;
 }
 
 /* ============================================================

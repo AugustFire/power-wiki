@@ -10,6 +10,7 @@
 
 import { z } from 'zod'
 import type { TreeNode } from './types'
+import { MAX_UPLOAD_BYTES_DEFAULT } from './constants'
 
 /* ---------- 基础原子类型 ---------- */
 
@@ -451,6 +452,64 @@ export const PageVersionSchema = z.object({
 export const AddLabelInputSchema = z.object({
   label: z.string().min(1).max(64),
 })
+
+/* ---------- Page attachments (MinIO/S3, page-scoped) ----------
+ *
+ * 整个上传流程走「presigned PUT + finalize」两步:
+ *   1. POST /upload-url  → 拿到 uploadUrl + attachmentId + storageKey
+ *   2. 浏览器 PUT uploadUrl (直接到 MinIO,不经 API)
+ *   3. POST /finalize    → 服务端 HeadObject 验证 size 后写 attachments 表
+ *
+ * src 字段是浏览器可直接放进 <img src> / <a href download> 的相对 URL;
+ * cookie 鉴权由全局 app.use('/api/*', requireAuth) 兜底。
+ */
+
+/** 响应 DTO —— 单条 attachment。 */
+export const AttachmentSchema = z.object({
+  id: z.string().min(1).max(32),
+  pageId: PageIdSchema,
+  uploaderId: z.string().min(1),
+  originalFilename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(127),
+  sizeBytes: z.number().int().nonnegative(),
+  kind: z.enum(['image', 'file']),
+  /** 形如 /api/attachments/{id}/raw,不带 host。 */
+  src: z.string().regex(/^\/api\/attachments\/[A-Za-z0-9_-]+\/raw$/),
+  createdAt: z.number().int().positive(),
+})
+
+/** POST /api/attachments/upload-url 入参。 */
+export const RequestUploadInputSchema = z.object({
+  pageId: PageIdSchema,
+  originalFilename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(127),
+  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES_DEFAULT),
+})
+
+/** POST /api/attachments/finalize 入参。
+ *  storageKey 格式 {page_id}/{attachment_id}{ext};由 /upload-url 产生并回传,
+ *  客户端原样带回。附件最终存储在 MinIO bucket:{storageKey}。 */
+export const FinalizeUploadInputSchema = z.object({
+  attachmentId: z.string().min(1).max(32),
+  storageKey: z.string().regex(/^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+(\.[a-z0-9]+)?$/),
+  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES_DEFAULT),
+  originalFilename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(127),
+})
+
+/* ---------- Attachment type exports ---------- */
+export type Attachment = z.infer<typeof AttachmentSchema>
+export type RequestUploadInput = z.infer<typeof RequestUploadInputSchema>
+export type FinalizeUploadInput = z.infer<typeof FinalizeUploadInputSchema>
+
+/** POST /api/attachments/upload-url 响应。 */
+export interface RequestUploadResponse {
+  uploadUrl: string
+  attachmentId: string
+  storageKey: string
+  /** ms since epoch,便于前端做 countdown UI。 */
+  expiresAt: number
+}
 
 /* ---------- Stage 8 type exports ---------- */
 export type PageVersion = z.infer<typeof PageVersionSchema>

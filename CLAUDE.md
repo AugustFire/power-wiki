@@ -12,7 +12,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 
 - **不要暗色主题。** 不写 `prefers-color-scheme`、不做主题切换、不加 dark token 覆盖。
 - **不要移动端适配。** 不写 `@media` 断点。`index.html` viewport 锁死 `1280`,全局最小宽度 1280px。
-- **不要图片功能。** 不接 Tiptap Image 扩展、不做 URL 粘贴、不做文件上传。工具栏和 slash 菜单里都不能出现图片项。
+- **不要图片功能。** 不接 Tiptap Image 扩展、不做 URL 粘贴、不做文件上传。工具栏和 slash 菜单里都不能出现图片项。**已废止(2026-07-06):** v1 起允许页面级附件,走 `MinIO` 对象存储(dev + prod 共用,`docker-compose.yml` 一行起)。**允许的 MIME**:`ALLOWED_MIME_TYPES` 见 `packages/shared/src/constants.ts` —— 涵盖 `image/*`、`application/pdf`、Office(doc/docx/xls/xlsx/ppt/pptx)、Markdown / 纯文本 / CSV、zip。**入口**:toolbar `插入图片 / 附件` 按钮、slash 菜单 `图片 / 附件`、粘贴图片 / 拖文件入编辑器。**外部 URL 粘贴图片仍然不做**——`sanitize.ts` 的 `img src` 协议白名单只放行 `/api/attachments/*`,挡掉 `https://`、`data:`、`blob:`、`javascript:`。全局媒体库留待 v2。**不做文件内嵌预览**——文件卡就是 `icon + 文件名 + 大小 + 下载按钮`,PDF / Word / Excel 没有缩略图、没有 iframe 预览(后端成本大、收益边际)。
 - **键盘快捷键放开。** Tiptap StarterKit 默认 keymap 全开(格式 / 撤销重做 / 列表 / 引用 / 代码块等)。仅 Cmd/Ctrl+S 拦截以防浏览器「保存网页」对话框。
 - **暂时不要文档协同。** Yjs / y-prosemirror / y-tiptap 依赖已装,留待未来启用。
 - **Drizzle schema 不许外键约束。** 所有表不写 `.references()`,所有 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` 类的 DDL 都不写。级联删除必须显式在路由里完成(recursive CTE 或事务清理)。写新表 / 新列也要遵守。
@@ -35,14 +35,19 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 
 ```bash
 pnpm install              # 安装依赖
-docker compose up -d       # Postgres(首次需要)
+docker compose up -d       # Postgres + MinIO(首次需要)
 cp apps/api/.env.example apps/api/.env   # 首次需要
 pnpm dev                  # 同时起 web + api
 pnpm typecheck            # 递归类型检查
 pnpm -F api db:generate   # Drizzle 生成迁移
 pnpm -F api db:migrate    # 应用迁移(API 启动也会自动跑)
-docker compose down       # 停 Postgres(数据保留)
+docker compose down       # 停 Postgres + MinIO(数据保留)
 ```
+
+## 备份
+
+- **Postgres**:卷 `power-wiki-pgdata` — `pg_dump` 整库或 BDR/WAL。
+- **MinIO(附件对象)**:卷 `power-wiki-miniodata` — `mc mirror local/power-wiki-attachments /backup/path/`,diff 同步、可断点续传。**两端必须同步备份**:DB 行级元数据 + 对象存储字节,缺一不可 —— 只备份 DB 会留下无主的 S3 对象,只备份 MinIO 会在 DB 行引用了丢失的对象。
 
 ## 深入阅读
 

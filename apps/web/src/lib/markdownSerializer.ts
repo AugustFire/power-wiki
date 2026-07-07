@@ -40,6 +40,7 @@ import { Toggle } from '@/editor/toggleExtension'
 import { PageRef } from '@/editor/pageRefExtension'
 import { DateInline } from '@/editor/dateInlineExtension'
 import { Mention } from '@/editor/mentionExtension'
+import { ImageAttachment, formatBytes } from '@/editor/imageAttachmentExtension'
 
 type SerializeFn = MarkdownNodeSpec['serialize']
 
@@ -94,6 +95,37 @@ const mentionSerialize: SerializeFn = (state, node) => {
   state.write('@' + label)
 }
 
+const imageAttachmentSerialize: SerializeFn = (state, node) => {
+  const id = String(node.attrs.id ?? '')
+  const src = '/api/attachments/' + id + '/raw'
+  const filename = String(node.attrs.originalFilename ?? '附件').replace(/[\[\]]/g, '')
+  const caption = String(node.attrs.caption ?? '').trim()
+  const align = String(node.attrs.align ?? 'left') as 'left' | 'center' | 'right'
+  if (node.attrs.kind === 'file') {
+    // 文件卡不参与对齐,块级走 markdown 链接即可
+    const size = formatBytes(Number(node.attrs.sizeBytes ?? 0))
+    const label = size ? filename + ' (' + size + ')' : filename
+    state.write('[' + label + '](' + src + ')')
+    if (caption) state.write('\n*' + caption.replace(/\*/g, '') + '*')
+    return
+  }
+  // 图片:align=left(默认)走标准 `![alt](src)`;center/right 走 HTML
+  // `<figure align="..."><img></figure>`,GitHub / VSCode / Notion 都能识别。
+  if (align === 'left') {
+    const alt = String(node.attrs.alt ?? '').replace(/[\[\]]/g, '') || filename
+    state.write('![' + alt + '](' + src + ')')
+    if (caption) state.write('\n*' + caption.replace(/\*/g, '') + '*')
+  } else {
+    const alt = (String(node.attrs.alt ?? '') || filename).replace(/"/g, '&quot;')
+    state.write('<figure align="' + align + '">\n\n')
+    state.write('![' + alt + '](' + src + ')')
+    if (caption) {
+      state.write('\n*' + caption.replace(/\*/g, '') + '*')
+    }
+    state.write('\n\n</figure>')
+  }
+}
+
 // 包装 5 个 custom 扩展,addStorage() 注入 markdown.serialize。
 // Tiptap 的 extend() 返回新 class,共享 schema name,tiptap-markdown 通过
 // extension.name 匹配。
@@ -107,6 +139,8 @@ const PageRefWithMd = PageRef.extend({ addStorage: () => ({ markdown: { serializ
 const DateInlineWithMd = DateInline.extend({ addStorage: () => ({ markdown: { serialize: dateInlineSerialize as any } }) })
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const MentionWithMd = Mention.extend({ addStorage: () => ({ markdown: { serialize: mentionSerialize as any } }) })
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ImageAttachmentWithMd = ImageAttachment.extend({ addStorage: () => ({ markdown: { serialize: imageAttachmentSerialize as any } }) })
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const exportExtensions: any[] = baseExtensions.map((ext: any) => {
@@ -121,6 +155,8 @@ const exportExtensions: any[] = baseExtensions.map((ext: any) => {
       return DateInlineWithMd
     case 'mention':
       return MentionWithMd
+    case 'imageAttachment':
+      return ImageAttachmentWithMd
     default:
       return ext
   }

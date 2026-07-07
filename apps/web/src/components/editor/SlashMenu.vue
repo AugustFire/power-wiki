@@ -6,6 +6,8 @@ import { api } from '@/lib/api'
 import type { MentionCandidate, PageNode } from '@power-wiki/shared'
 import DateTimePicker from './DateTimePicker.vue'
 import type { DateMode } from '@/editor/dateInlineExtension'
+import { openAttachmentPicker } from '@/lib/attachmentPicker'
+import { uploadAndInsert } from '@/editor/uploadAndInsert'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -25,7 +27,8 @@ interface SlashItem {
   run: (editor: AnyEditor) => void
 }
 
-// 注意:严格不包含图片/链接选项(用户硬约束)。
+// v1 起允许页面级上传(图片 / PDF),入口:slash `图片 / 附件` + toolbar 按钮 + 粘贴 + 拖拽。
+// 外部 URL 粘贴图片仍由 sanitize.ts 的 img src 白名单挡掉(只放行 /api/attachments/*)。
 // 2026-07-01: 把原来的 `date` + `mention` 两个 slash 项合并成一个 `@` 项,
 // picker 内部用 tab(成员 / 日期)分流 —— 减少列表项,符合"@ 一处搞定"
 // 的用户预期。
@@ -114,6 +117,16 @@ const items: SlashItem[] = [
     description: '可点击展开/收起的内容',
     icon: 'expand_more',
     run: (e) => e.chain().focus().setToggle().run(),
+  },
+  {
+    id: 'attachment',
+    label: '图片 / 附件',
+    description: '上传图片或 PDF 文件',
+    icon: 'image',
+    kind: 'needsPicker',
+    run: () => {
+      // needsPicker:由 onSelectIndex 调 openAttachmentUpload 弹文件选择器
+    },
   },
   {
     id: 'pageRef',
@@ -257,6 +270,10 @@ function onSelectIndex(idx: number) {
   }
   if (item.kind === 'needsPicker' && item.id === 'at') {
     openAtPicker()
+    return
+  }
+  if (item.kind === 'needsPicker' && item.id === 'attachment') {
+    openAttachmentUpload()
     return
   }
 
@@ -478,6 +495,24 @@ const atPickerError = ref<string | null>(null)
 let atSearchToken = 0
 
 const activePageId = useActivePageId()
+
+// 附件上传入口:与 toolbar 按钮同套流程(openAttachmentPicker → uploadAndInsert)。
+// 失败仅 alert + console(项目暂无 toast 系统)。
+function openAttachmentUpload() {
+  const e = props.editor
+  const pageId = activePageId.activePageId.value
+  if (!e || !pageId) {
+    hideMenu()
+    return
+  }
+  openAttachmentPicker((file) => {
+    uploadAndInsert(file, e, pageId).catch((err) => {
+      console.error('[SlashMenu] attachment upload failed', err)
+      window.alert('附件上传失败,请重试')
+    })
+  })
+  hideMenu()
+}
 
 const filteredAtCandidates = computed<MentionCandidate[]>(() => {
   const q = atPickerQuery.value.trim().toLowerCase()

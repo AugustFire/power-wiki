@@ -46,6 +46,12 @@ const ALLOWED_ATTR = [
   'data-date', // DateInline:ISO 时间冗余存储(DOMPurify 友好)
   'data-user-id', // @mention(Stage 6):mention 节点的 userId,read 端解析 + 通知跳转锚点
   'data-label', // @mention(Stage 6):显示用 label(DOMPurify 友好形式)
+  'download', // 附件文件卡片 <a download> 触发下载
+  'data-attachment-id', // 页面附件:附件 id(src 派生自它)
+  'data-attachment-kind', // 页面附件:image / file
+  'data-attachment-mime', // 页面附件:MIME 类型
+  'data-attachment-filename', // 页面附件:原始文件名
+  'data-attachment-size', // 页面附件:字节数
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等
@@ -150,8 +156,27 @@ export function sanitizeAndHardenLinks(html: string): string {
       a.removeAttribute('href')
       return
     }
+    // 附件下载链接:同源 /api/attachments/{id}/raw,保留 download 触发下载,
+    // 不强制 target=_blank(否则会开新标签而非直接下载)。
+    if (/^\/api\/attachments\/[A-Za-z0-9_-]+\/raw$/.test(href)) {
+      a.setAttribute('rel', 'noopener noreferrer')
+      return
+    }
     a.setAttribute('rel', 'noopener noreferrer')
     a.setAttribute('target', '_blank')
+  })
+  // 图片 src 白名单:只放行 /api/attachments/{id}/raw。挡掉 https:// / data: /
+  // blob: 等外部来源(硬约束:不做外部 URL 粘贴图片)。命中的替换成占位符。
+  wrapper.querySelectorAll('img[src]').forEach((img) => {
+    const src = img.getAttribute('src') || ''
+    const allowed = /^\/api\/attachments\/[A-Za-z0-9_-]+\/raw$/.test(src)
+    if (!allowed) {
+      const alt = img.getAttribute('alt') || '(外部图片已屏蔽)'
+      const placeholder = document.createElement('span')
+      placeholder.className = 'blocked-image'
+      placeholder.textContent = alt
+      img.replaceWith(placeholder)
+    }
   })
   return wrapper.innerHTML
 }

@@ -396,6 +396,45 @@ export const pageLabels = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Attachments — 页面级附件(image/* + application/pdf)
+ *
+ *  一行 = 一个上传文件,归属单一 page。文件字节存 MinIO/S3,DB 只存元数据。
+ *  上传走 presigned PUT(浏览器直传 MinIO),下载走 API 流式代理
+ *  (`GET /api/attachments/:id/raw`)。S3 object key 格式:{page_id}/{id}{ext}。
+ *
+ *  No FK — page hard-delete 时由 pages.ts DELETE 递归 CTE 同事务清理 attachments
+ *  行,并在事务外 best-effort 删 S3 对象(DB 是事实来源,orphan 对象容忍)。
+ * ───────────────────────────────────────────────────────────────── */
+export const attachments = pgTable(
+  'attachments',
+  {
+    /** nanoid(12) — 附件 id,也是 S3 object key 的第二段。 */
+    id: text('id').primaryKey(),
+    /** 所属页面 id。No FK,page purge 时显式清掉。 */
+    pageId: text('page_id').notNull(),
+    /** 上传者 user id。No FK。 */
+    uploaderId: text('uploader_id').notNull(),
+    /** 用户上传时的原始文件名(展示用),≤255 字符。 */
+    originalFilename: text('original_filename').notNull(),
+    /** S3 object key,格式 {page_id}/{id}{ext}。 */
+    storageKey: text('storage_key').notNull(),
+    /** MIME 类型;上传前已校验为 ALLOWED_MIME_TYPES 之一。 */
+    mimeType: text('mime_type').notNull(),
+    /** 文件字节数;由 HeadObject 验证写入(不信前端 size)。≤ MAX_UPLOAD_BYTES。 */
+    sizeBytes: integer('size_bytes').notNull(),
+    /** 'image'(image/* mime)或 'file'(application/pdf 等)。决定编辑器 /
+     *  read view 渲染 image 节点还是 file 卡片。 */
+    kind: text('kind', { enum: ['image', 'file'] }).notNull(),
+    /** Date.now() 毫秒,上传时间。 */
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('attachments_page_idx').on(table.pageId, table.createdAt),
+    index('attachments_uploader_idx').on(table.uploaderId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -417,3 +456,5 @@ export type PageVersionRow = typeof pageVersions.$inferSelect
 export type NewPageVersionRow = typeof pageVersions.$inferInsert
 export type PageLabelRow = typeof pageLabels.$inferSelect
 export type NewPageLabelRow = typeof pageLabels.$inferInsert
+export type AttachmentRow = typeof attachments.$inferSelect
+export type NewAttachmentRow = typeof attachments.$inferInsert

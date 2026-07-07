@@ -17,5 +17,44 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: power-wiki-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      # 浏览器 PUT 跨域:逗号分隔多 origin;生产改为真实 web origin
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      # 主机端口用 9100/9101(9000/9001 在 Windows 上常被 VMware NAT / 其他服务占)。
+      # 容器内端口不变(9000/9001);API / web 通过 S3_ENDPOINT env 指向主机端口。
+      - '127.0.0.1:9100:9000'   # S3 API
+      - '127.0.0.1:9101:9001'   # Web console
+    volumes:
+      - power-wiki-miniodata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: power-wiki-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin};
+      mc mb --ignore-existing local/${S3_BUCKET:-power-wiki-attachments};
+      echo 'MinIO init: bucket ready';
+      "
+    restart: 'no'
+
 volumes:
   power-wiki-pgdata:
+  power-wiki-miniodata:

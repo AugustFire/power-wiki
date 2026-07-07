@@ -3,6 +3,8 @@ import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
 import extensions from '@/editor/extensions'
+import { uploadAndInsert, isAllowedFile } from '@/editor/uploadAndInsert'
+import { useActivePageId } from '@/composables/useActivePageId'
 import SlashMenu from './SlashMenu.vue'
 import EditorBubbleMenu from './EditorBubbleMenu.vue'
 
@@ -56,6 +58,22 @@ function scheduleSave(editor: Editor) {
   }, 800)
 }
 
+const { activePageId } = useActivePageId()
+
+// 附件上传:从 paste / drop 拿到的 File 走 uploadAndInsert 三步流程。
+// 失败仅 alert + console(项目暂无 toast 系统)。pos 可选,drop 时定点插入。
+async function runUpload(file: File, pos?: number) {
+  const ed = editor.value
+  const pageId = activePageId.value
+  if (!ed || !pageId) return
+  try {
+    await uploadAndInsert(file, ed, pageId, pos)
+  } catch (err) {
+    console.error('[RichEditor] attachment upload failed', err)
+    window.alert('附件上传失败,请重试')
+  }
+}
+
 const editor = useEditor({
   extensions,
   content: props.modelValue,
@@ -65,6 +83,29 @@ const editor = useEditor({
     },
     // Cmd/Ctrl+S 由 extensions.ts 的 BlockBrowserSave plugin 拦截(priority:1000),
     // 这里不再重复实现。其余快捷键放行给 Tiptap 默认 keymap。
+    //
+    // 粘贴图片 / 附件:剪贴板里有文件(截图 Cmd+V、复制文件)且 MIME 在白名单内
+    // 时,拦截默认行为改走上传;否则放行(让 ProseMirror 处理文本 / HTML 粘贴)。
+    handlePaste(_view, event) {
+      const files = event.clipboardData?.files
+      const file = files && files.length > 0 ? files[0] : null
+      if (!file || !isAllowedFile(file)) return false
+      event.preventDefault()
+      void runUpload(file)
+      return true
+    },
+    // 拖拽文件进编辑区:内部节点拖动(moved=true)不管,只处理外部文件。
+    // pos 用 posAtCoords 定位落点,失败则追加到末尾(pos=undefined)。
+    handleDrop(view, event, _slice, moved) {
+      if (moved) return false
+      const files = event.dataTransfer?.files
+      const file = files && files.length > 0 ? files[0] : null
+      if (!file || !isAllowedFile(file)) return false
+      event.preventDefault()
+      const coords = view.posAtCoords({ left: event.clientX, top: event.clientY })
+      void runUpload(file, coords?.pos)
+      return true
+    },
   },
   onUpdate({ editor }) {
     scheduleSave(editor)
