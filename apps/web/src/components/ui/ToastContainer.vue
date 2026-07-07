@@ -66,12 +66,14 @@ function iconFor(kind: Toast['kind']): string {
 </template>
 
 <style scoped>
-/* 容器固定在右下角 topbar 下方(topbar=56px,padding 16px,塞 80)。
-   pointer-events: none 让 toast 不挡点击,内部 toast 卡片重新打开
-   pointer-events: auto。 */
+/* 容器固定在右下角,bottom 24px / right 24px。flex-direction: column
+   让新 toast 出现在最底(远离视口中线),老 toast 自然向上堆叠 —— 跟
+   Linear / Notion / GitHub 的位置与堆叠方向一致,不抢顶栏 / banner 的
+   视线。pointer-events: none 让容器不挡页面交互,内部 toast 卡片
+   重新打开 pointer-events: auto。 */
 .toast-container {
   position: fixed;
-  top: 80px;
+  bottom: 24px;
   right: 24px;
   display: flex;
   flex-direction: column;
@@ -81,50 +83,52 @@ function iconFor(kind: Toast['kind']): string {
   max-width: calc(100vw - 48px);
 }
 
-/* 单卡片:左 3px 颜色条 + icon + msg + close,固定最小 240 / 最大 360。 */
+/* 单卡片:背景走 soft 色块(Atlassian 系统一致 -- App.vue 顶部
+   error-banner 用 --danger-soft 同套路),icon + 文字保持全色饱和度。
+   圆角 / 阴影 / 间距 全部走 token,跟 CheatSheetModal / ConfirmDialog
+   同一族视觉。 */
 .toast {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 240px;
   max-width: 360px;
-  padding: 12px 14px;
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dfe1e6);
-  border-radius: 6px;
-  box-shadow: var(--shadow-md);
+  padding: 11px 14px;
+  background: var(--bg-subtle, #ebecf0);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg, 6px);
+  box-shadow: var(--shadow-sm);
   pointer-events: auto;
-  /* 默认左色条透明,由具体 kind 覆盖 */
-  border-left: 3px solid var(--border, #dfe1e6);
 }
+
 .toast-success {
-  border-left-color: var(--success, #36b37e);
+  background: var(--success-soft, #e3fcef);
+  color: var(--success, #36b37e);
 }
 .toast-error {
-  border-left-color: var(--danger, #de350b);
+  background: var(--danger-soft, #ffebe6);
+  color: var(--danger, #de350b);
 }
 .toast-info {
-  border-left-color: var(--accent, #0052cc);
+  background: var(--accent-soft, #deebff);
+  color: var(--accent, #0052cc);
 }
 
 .toast-icon {
   font-size: 18px;
   flex-shrink: 0;
 }
-.toast-success .toast-icon {
-  color: var(--success, #36b37e);
-}
-.toast-error .toast-icon {
-  color: var(--danger, #de350b);
-}
+.toast-success .toast-icon,
+.toast-error .toast-icon,
 .toast-info .toast-icon {
-  color: var(--accent, #0052cc);
+  color: inherit;
 }
 
 .toast-msg {
   flex: 1;
   font-size: 13px;
-  line-height: 1.5;
+  font-weight: 500;
+  line-height: 1.45;
   color: var(--text-1, #172b4d);
   word-break: break-word;
 }
@@ -135,15 +139,18 @@ function iconFor(kind: Toast['kind']): string {
   width: 22px;
   height: 22px;
   cursor: pointer;
-  color: var(--text-3, #6b778c);
-  border-radius: 4px;
+  color: inherit;
+  opacity: 0.6;
+  border-radius: var(--radius-md, 4px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: opacity 80ms ease;
 }
 .toast-close:hover {
-  background: var(--hover-bg, #f4f5f7);
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
 }
 .toast-close .material-symbols-outlined {
   font-size: 16px;

@@ -86,37 +86,32 @@ function relativeTime(ts: number): string {
 
 /**
  * Render markdown body to safe HTML. v0 only converts newlines + chips;
- * no other tags allowed. We deliberately do NOT wrap every `@xxx` in
- * contentMd: the rich-page editor's chip path stores `mentioned_user_ids`
- * JSONB on the comment row, and the chip rendering on those SELECT pages
- * belongs to the rendered chip. Here, we wrap only the names listed in
- * `mentionedUserIds` so that:
- *   - A casual typing of `email@example.com` in a comment doesn't get a chip.
- *   - A user typing `@bob` who's in the page's space gets the chip rendered
- *     with the real-mention variant.
- * Anything else is left as plain text (no `data-mention="0"` hint chip),
- * which matches how editors in v0 just typed `@bob` without using the
- * editor's Tiptap Suggestion.
+ * no other tags allowed.
+ *
+ * Mentions are chipped off the *text* (`@name`), NOT off `mentionedUserIds`.
+ * Those two are separate concerns: the comment text is the display source of
+ * truth, while `mentionedUserIds` (opaque nanoid user ids, never the display
+ * name) is the notification target of record — they don't share an alphabet,
+ * so matching text against ids can never work.
+ *
+ * A token is chipped when `@` sits at the start of input or right after
+ * whitespace, mirroring the composer's own trigger rule
+ * (`useCommentMention.findAtTrigger`). That boundary is what keeps
+ * `email@example.com` — where `@` is preceded by a letter — out of the chip
+ * path. The 32-char cap matches the mention label cap upstream.
  */
 function renderBody(): string {
   const raw = props.comment.contentMd
   // Escape HTML first so user content can never inject markup.
   let out = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-  const labels = props.comment.mentionedUserIds
-    .map((id) => id.trim())
-    .filter((s) => s.length > 0 && s.length <= 32 && !/\s/.test(s))
-  if (labels.length > 0) {
-    const escapedLabels = labels.map((l) =>
-      l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-    )
-    const re = new RegExp(`@(${escapedLabels.join('|')})\\b`, 'g')
-    out = out.replace(
-      re,
-      (m, name) =>
-        `<span class="mention-chip" data-user-id="${name}" data-label="${name}" data-mention="1">@${name}</span>`,
-    )
-  }
+  // Note: newline → <br> happens *after* this, so `\s` here still sees raw
+  // "\n" and a mention at the very start of a new line is matched correctly.
+  out = out.replace(
+    /(^|\s)@([^\s@]{1,32})/g,
+    (_m, pre: string, name: string) =>
+      `${pre}<span class="mention-chip" data-mention="1">@${name}</span>`,
+  )
 
   // Wrap newlines as <br>.
   return out.replace(/\n/g, '<br>')
