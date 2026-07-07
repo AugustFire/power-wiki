@@ -64,6 +64,50 @@ const BlockBrowserSave = Extension.create({
   },
 })
 
+// 表格单元格公共 attrs:colwidth / backgroundColor / textAlign / verticalAlign。
+// TableCell 全用,TableHeader 不用 verticalAlign(表头不会垂直对齐),解构丢弃。
+// 同时把 colwidth 写出到 HTML,让编辑时的列宽在发布/读取后保留
+// (Tiptap 自带的 colwidth 只有 parseHTML、没有 renderHTML,导致重设的列宽
+//  保存到 contentHTML 后丢失,read 视图总是回到默认 min-width)
+const cellAttrs = {
+  colwidth: {
+    default: null,
+    parseHTML: (el: HTMLElement) => {
+      const attr = el.getAttribute('colwidth') || el.getAttribute('data-colwidth')
+      return attr ? attr.split(',').map((w) => parseInt(w, 10)) : null
+    },
+    renderHTML: (attrs: Record<string, unknown>) => {
+      const w = attrs.colwidth as number[] | null | undefined
+      if (!w || w.length === 0) return {}
+      return { colwidth: w.join(','), 'data-colwidth': w.join(',') }
+    },
+  },
+  backgroundColor: {
+    default: null,
+    parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
+    renderHTML: (attrs: Record<string, unknown>) => {
+      if (!attrs.backgroundColor) return {}
+      return { style: `background-color: ${attrs.backgroundColor}` }
+    },
+  },
+  textAlign: {
+    default: null,
+    parseHTML: (el: HTMLElement) => el.style.textAlign || null,
+    renderHTML: (attrs: Record<string, unknown>) => {
+      if (!attrs.textAlign) return {}
+      return { style: `text-align: ${attrs.textAlign}` }
+    },
+  },
+  verticalAlign: {
+    default: null,
+    parseHTML: (el: HTMLElement) => el.style.verticalAlign || null,
+    renderHTML: (attrs: Record<string, unknown>) => {
+      if (!attrs.verticalAlign) return {}
+      return { style: `vertical-align: ${attrs.verticalAlign}` }
+    },
+  },
+}
+
 /**
  * Tiptap 扩展集合
  *
@@ -88,88 +132,22 @@ const extensions = [
   Table.configure({ resizable: true }),
   TableRow,
   TableCell.extend({
-    // 给 td 加 backgroundColor / textAlign / verticalAlign 三个属性,
-    // 让 setCellAttribute 命令能改背景、对齐。Tiptap 通过 style 序列化。
-    // 同时把 colwidth 写出到 HTML,让编辑时的列宽在发布/读取后保留
-    // (Tiptap 自带的 colwidth 只有 parseHTML、没有 renderHTML,导致重设的列宽
-    //  保存到 contentHTML 后丢失,read 视图总是回到默认 min-width)
     addAttributes() {
       return {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...(this.parent?.() as any),
-        colwidth: {
-          default: null,
-          parseHTML: (el: HTMLElement) => {
-            const attr = el.getAttribute('colwidth') || el.getAttribute('data-colwidth')
-            return attr ? attr.split(',').map((w) => parseInt(w, 10)) : null
-          },
-          renderHTML: (attrs: Record<string, unknown>) => {
-            const w = attrs.colwidth as number[] | null | undefined
-            if (!w || w.length === 0) return {}
-            return { colwidth: w.join(','), 'data-colwidth': w.join(',') }
-          },
-        },
-        backgroundColor: {
-          default: null,
-          parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
-          renderHTML: (attrs: Record<string, unknown>) => {
-            if (!attrs.backgroundColor) return {}
-            return { style: `background-color: ${attrs.backgroundColor}` }
-          },
-        },
-        textAlign: {
-          default: null,
-          parseHTML: (el: HTMLElement) => el.style.textAlign || null,
-          renderHTML: (attrs: Record<string, unknown>) => {
-            if (!attrs.textAlign) return {}
-            return { style: `text-align: ${attrs.textAlign}` }
-          },
-        },
-        verticalAlign: {
-          default: null,
-          parseHTML: (el: HTMLElement) => el.style.verticalAlign || null,
-          renderHTML: (attrs: Record<string, unknown>) => {
-            if (!attrs.verticalAlign) return {}
-            return { style: `vertical-align: ${attrs.verticalAlign}` }
-          },
-        },
+        ...cellAttrs,
       }
     },
   }),
   TableHeader.extend({
-    // 表头同样支持上述属性 + colwidth
     addAttributes() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { verticalAlign: _drop, ...rest } = cellAttrs
       return {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...(this.parent?.() as any),
-        colwidth: {
-          default: null,
-          parseHTML: (el: HTMLElement) => {
-            const attr = el.getAttribute('colwidth') || el.getAttribute('data-colwidth')
-            return attr ? attr.split(',').map((w) => parseInt(w, 10)) : null
-          },
-          renderHTML: (attrs: Record<string, unknown>) => {
-            const w = attrs.colwidth as number[] | null | undefined
-            if (!w || w.length === 0) return {}
-            return { colwidth: w.join(','), 'data-colwidth': w.join(',') }
-          },
-        },
-        backgroundColor: {
-          default: null,
-          parseHTML: (el: HTMLElement) => el.style.backgroundColor || null,
-          renderHTML: (attrs: Record<string, unknown>) => {
-            if (!attrs.backgroundColor) return {}
-            return { style: `background-color: ${attrs.backgroundColor}` }
-          },
-        },
-        textAlign: {
-          default: null,
-          parseHTML: (el: HTMLElement) => el.style.textAlign || null,
-          renderHTML: (attrs: Record<string, unknown>) => {
-            if (!attrs.textAlign) return {}
-            return { style: `text-align: ${attrs.textAlign}` }
-          },
-        },
+        ...rest,
       }
     },
   }),
