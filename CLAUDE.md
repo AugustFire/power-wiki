@@ -22,6 +22,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **DB 表 / 字段必须有 SQL `COMMENT`,中文字面量。** 新建表 / 加列 / 加索引必须同时写 `apps/api/src/db/schema.ts` 同名字段上的 JSDoc **和** 对应 migration 里的 `COMMENT ON TABLE` / `COMMENT ON COLUMN` / `COMMENT ON INDEX`。Schema 上的 JSDoc 是事实来源,改一处必须同步另一处,drift 视为 bug。`pg_description` 看不到的字段 = 没写完。`drizzle-kit` 不自动生成 `COMMENT`,这是 API 协作者的责任。现有 12 张表的注释已由 `0008_add_column_comments.sql` + `0009_add_attachments.sql` 补齐,新表 / 新列默认带注释。
 - **MinIO dev 端口锁死 9100/9101。** `docker-compose.yml` 显式注释了原因 —— Windows 上 9000/9001 经常被 VMware NAT / 其他服务占用,改 `.env` 的 `S3_ENDPOINT` 时**必须**用 9100(`localhost:9100`),否则附件上传会连不上。prod 端口不受这条约束。
 - **Star / 收藏 toggle 不打 `page_version`。** `PATCH /api/pages/:id` 只更新 `pages.starred`,**不**写 `page_versions`(`starred` 是 metadata,不是 content)。Auto-save 静默 + snapshot 边界 30s idle 之外,任何"打 tag"类的 PATCH 都不应触发 version insert。
+- **测试脚本及其产物一律放 `scripts/` 子目录,不放项目根。** 验收 / 截图 / 烟测脚本(`verify_*.py` / `snap_*.py` / `smoke-*.cjs` / `verify-phaseN.py` 等)、脚本产物(`screenshots/` / cookies / 中间 HTML / `__pycache__`)都集中在 `scripts/` 子树下,根目录保持干净。**例外**:`printscreen/` 是用户精选配图目录(供 README 引用的产品截图),**不属于测试产物**,不动;`scripts/screenshots/` 是脚本截图的归属位置,根上残留的空 `screenshots/` 历史目录直接删。
 
 ## 关键约定
 
