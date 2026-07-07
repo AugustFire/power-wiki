@@ -6,6 +6,12 @@ type AnyEditor = any
 
 const props = defineProps<{
   editor: AnyEditor
+  /**
+   * toolbar 表情按钮 mousedown 时捕获的 activeElement(早于 focus 转移)。
+   * 用于让 emoji 落到折叠块小标题 <input> 这类普通 DOM 输入框,
+   * 而非 ProseMirror 的 contenteditable。
+   */
+  target?: HTMLElement | null
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -134,7 +140,34 @@ const filteredEmojis = computed<string[]>(() => {
   return Array.from(seen).filter((e) => e.includes(q))
 })
 
+/**
+ * 优先用 props.target(toggle 标题 input / 评论框等普通 DOM input/textarea);
+ * 退化到 document.activeElement(用户在 popover 打开后切到 input 的情况);
+ * 都不是则落到 ProseMirror 选区。
+ */
+function resolveInputTarget(): HTMLInputElement | HTMLTextAreaElement | null {
+  const t = props.target
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return t
+  const a = document.activeElement
+  if (a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement) return a
+  return null
+}
+
 function insert(emoji: string) {
+  const inputEl = resolveInputTarget()
+  if (inputEl) {
+    // 原生选区 API 插入 + dispatch input 事件(v-model / @input 同步到 attr)
+    const start = inputEl.selectionStart ?? inputEl.value.length
+    const end = inputEl.selectionEnd ?? inputEl.value.length
+    inputEl.value = inputEl.value.slice(0, start) + emoji + inputEl.value.slice(end)
+    // selectionStart / selectionEnd 用 UTF-16 code unit 索引,emoji.length 也是
+    const caret = start + emoji.length
+    inputEl.selectionStart = inputEl.selectionEnd = caret
+    inputEl.focus()
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+    emit('close')
+    return
+  }
   const e = props.editor
   if (!e) return
   e.chain().focus().insertContent(emoji).run()

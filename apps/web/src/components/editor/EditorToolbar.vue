@@ -501,12 +501,27 @@ function closeColorPopover() {
 const emojiOpen = ref(false)
 const emojiWrap = ref<HTMLElement | null>(null)
 
+/**
+ * toolbar 表情按钮 mousedown 时捕获的 activeElement(早于 focus 转移到按钮)。
+ * mousedown 早于 click / focus —— 此时 activeElement 还是用户上次聚焦的 input
+ * (折叠块小标题 / 评论框等),按钮接管 focus 后就拿不到了。EmojiPicker 拿到这个
+ * target 后能直接走原生选区 API 把 emoji 塞进 <input>,而不是漏到 ProseMirror。
+ */
+const emojiTarget = ref<HTMLElement | null>(null)
+
+function captureEmojiTarget() {
+  const a = document.activeElement
+  emojiTarget.value =
+    a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement ? a : null
+}
+
 function toggleEmoji() {
   emojiOpen.value = !emojiOpen.value
 }
 
 function closeEmoji() {
   emojiOpen.value = false
+  emojiTarget.value = null
 }
 
 // ─── 块类型下拉 ───────────────────────────────────────────────
@@ -1049,13 +1064,14 @@ function handleClick(btn: Btn) {
           title="插入表情"
           aria-haspopup="menu"
           :aria-expanded="emojiOpen"
+          @mousedown="captureEmojiTarget"
           @click="toggleEmoji"
         >
           <span class="material-symbols-outlined">add_reaction</span>
         </button>
         <Transition name="popover-fade">
         <div v-if="emojiOpen" class="tb-emoji-popover">
-          <EmojiPicker :editor="editor" @close="closeEmoji" />
+          <EmojiPicker :editor="editor" :target="emojiTarget" @close="closeEmoji" />
         </div>
         </Transition>
       </div>

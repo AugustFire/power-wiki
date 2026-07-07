@@ -25,7 +25,26 @@ const { recordVisit } = useRecentPages()
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
-const safeHtml = computed(() => sanitizeAndHardenLinks(page.value?.contentHTML ?? ''))
+
+/**
+ * 折叠块 read 视图默认收起。
+ * 编辑器存的 <details open> 在 read 端需要显示为 collapsed(Confluence / 飞书
+ * 风格 —— 不希望一进页面所有折叠块全展开)。strip 掉所有 details 的 open 属性。
+ * 用户点 summary 仍可展开,刷新页面后回到 collapsed —— 这是"默认折叠"的语义。
+ * exportPageAsHtml 也走 sanitizeAndHardenLinks,导出仍要保留原 open 状态,所以
+ * 这一步不放在 sanitize 里,只在 read 视图的 safeHtml 管道里做。
+ */
+function collapseTogglesByDefault(html: string): string {
+  if (!html || typeof document === 'undefined') return html
+  const wrap = document.createElement('div')
+  wrap.innerHTML = html
+  wrap.querySelectorAll('details[open]').forEach((d) => d.removeAttribute('open'))
+  return wrap.innerHTML
+}
+
+const safeHtml = computed(() =>
+  collapseTogglesByDefault(sanitizeAndHardenLinks(page.value?.contentHTML ?? '')),
+)
 const contentEl = ref<HTMLElement | null>(null)
 
 /**
