@@ -236,15 +236,25 @@ function excerpt(html: string): string {
               </button>
             </div>
 
-            <!-- 我最近访问(per-user,localStorage) -->
-            <div v-if="myRecentPages.length > 0" class="section-title">
-              <span>我最近访问</span>
+            <!-- 我最近访问(per-user,localStorage)。新用户还没访问过任何
+                 页时(localStorage 空),这里 fallback 到「推荐浏览」+ 当前空间
+                 最近更新的 3 条根页面,避免空状态直接消失、用户看到 4 个 0 的
+                 stat 卡片像 demo 数据没清。 -->
+            <div class="section-title">
+              <span>{{ myRecentPages.length > 0 ? '我最近访问' : '推荐浏览' }}</span>
             </div>
             <ul v-if="myRecentPages.length > 0" class="recent-list recent-list--mine">
               <li v-for="r in myRecentPages" :key="r.id" @click="goPage(r.id)">
                 <span class="material-symbols-outlined doc-icon" style="font-size:18px">history</span>
                 <span class="rl-title">{{ r.title }}</span>
                 <span class="rl-meta">{{ relativeTime(r.visitedAt) }}</span>
+              </li>
+            </ul>
+            <ul v-else class="recent-list">
+              <li v-for="p in recentPages.slice(0, 3)" :key="p.id" @click="goPage(p.id)">
+                <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
+                <span class="rl-title">{{ p.title }}</span>
+                <span class="rl-meta">{{ relativeTime(p.updatedAt) }}</span>
               </li>
             </ul>
 
