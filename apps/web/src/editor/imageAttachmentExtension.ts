@@ -37,6 +37,8 @@
  */
 import { Node, mergeAttributes } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import type { Node as PMNode } from '@tiptap/pm/model'
+import type { EditorState } from '@tiptap/pm/state'
 import ImageAttachmentView from '@/components/editor/ImageAttachmentView.vue'
 import { fileIconFor } from '@/editor/attachmentIcon'
 
@@ -256,77 +258,72 @@ export const ImageAttachment = Node.create({
           }),
       setAttachmentCaption:
         (id: string, caption: string) =>
-        ({ state, dispatch }) => {
-          let found = false
-          const tr = state.tr
-          state.doc.descendants((n, pos) => {
-            if (n.type.name === 'imageAttachment' && n.attrs.id === id) {
-              tr.setNodeMarkup(pos, undefined, { ...n.attrs, caption })
-              found = true
-            }
-          })
-          if (found && dispatch) dispatch(tr)
-          return found
-        },
+        ({ state, dispatch }) =>
+          patchAttachment(state, dispatch, id, (old) => ({ ...old, caption })),
       setAttachmentAlign:
         (id: string, align: Alignment) =>
-        ({ state, dispatch }) => {
-          let found = false
-          const tr = state.tr
-          state.doc.descendants((n, pos) => {
-            if (n.type.name === 'imageAttachment' && n.attrs.id === id) {
-              tr.setNodeMarkup(pos, undefined, { ...n.attrs, align })
-              found = true
-            }
-          })
-          if (found && dispatch) dispatch(tr)
-          return found
-        },
+        ({ state, dispatch }) =>
+          patchAttachment(state, dispatch, id, (old) => ({ ...old, align })),
       setAttachmentAlt:
         (id: string, alt: string) =>
-        ({ state, dispatch }) => {
-          let found = false
-          const tr = state.tr
-          state.doc.descendants((n, pos) => {
-            if (n.type.name === 'imageAttachment' && n.attrs.id === id) {
-              tr.setNodeMarkup(pos, undefined, { ...n.attrs, alt })
-              found = true
-            }
-          })
-          if (found && dispatch) dispatch(tr)
-          return found
-        },
+        ({ state, dispatch }) =>
+          patchAttachment(state, dispatch, id, (old) => ({ ...old, alt })),
       replaceAttachment:
         (oldId: string, newArg: InsertAttachmentArg) =>
         ({ state, dispatch }) => {
-          // 把所有 id === oldId 的节点替换成 newArg。
           // 保留用户元数据(alt / caption / align),只换字节属性
           // (id / kind / mime / originalFilename / sizeBytes)。
           // 找不到节点返回 false,调用方拿到 false 后回滚上传(避免孤儿)。
-          let found = false
-          const tr = state.tr
-          state.doc.descendants((n, pos) => {
-            if (n.type.name === 'imageAttachment' && n.attrs.id === oldId) {
-              const old = n.attrs as AttachmentNodeAttrs
-              tr.setNodeMarkup(pos, undefined, {
-                id: newArg.id,
-                kind: newArg.kind,
-                mime: newArg.mimeType,
-                originalFilename: newArg.originalFilename,
-                sizeBytes: newArg.sizeBytes,
-                alt: old.alt,
-                caption: old.caption,
-                align: old.align,
-              })
-              found = true
-            }
-          })
-          if (found && dispatch) dispatch(tr)
-          return found
+          return patchAttachment(state, dispatch, oldId, (old) => ({
+            id: newArg.id,
+            kind: newArg.kind,
+            mime: newArg.mimeType,
+            originalFilename: newArg.originalFilename,
+            sizeBytes: newArg.sizeBytes,
+            alt: old.alt,
+            caption: old.caption,
+            align: old.align,
+          }))
         },
     }
   },
 })
+
+/**
+ * 找到第一个 id 匹配的 imageAttachment 节点,patch 它的 attrs 后 dispatch。
+ * 抽出来避免 4 个 setter 各自重复 state.doc.descendants + setNodeMarkup + found
+ * 标志位,也避免未来加新 attrs setter 时复制粘贴漂移。
+ *
+ * 性能:descendants 一旦找到第一个匹配就 return false 提前停止,单次 setter
+ * 平均是 O(找到位置所需的遍历),最坏 O(N)。建 id→pos Map 在 4 个 setter
+ * 各自独立调用时并不更省 —— 反而要遍历完整文档。
+ */
+function patchAttachment(
+  state: EditorState,
+  dispatch: ((tr: import('@tiptap/pm/state').Transaction) => void) | undefined,
+  id: string,
+  patch: (old: AttachmentNodeAttrs) => Partial<AttachmentNodeAttrs>,
+): boolean {
+  let foundPos: number | null = null
+  let foundNode: PMNode | null = null
+  state.doc.descendants((n, pos) => {
+    if (foundPos !== null) return false
+    if (n.type.name === 'imageAttachment' && n.attrs.id === id) {
+      foundPos = pos
+      foundNode = n as PMNode
+      return false
+    }
+  })
+  if (foundPos === null || foundNode === null) return false
+  const oldAttrs = (foundNode as PMNode).attrs as AttachmentNodeAttrs
+  const newAttrs = patch(oldAttrs)
+  if (dispatch) {
+    const tr = state.tr
+    tr.setNodeMarkup(foundPos, undefined, newAttrs)
+    dispatch(tr)
+  }
+  return true
+}
 
 declare module '@tiptap/core' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
