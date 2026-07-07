@@ -19,12 +19,14 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **不做页面模板功能。** 不建 `page_templates` 表、不挂 `/api/templates` 路由、不做模板选择器 / 模板按钮 / 内置模板 seed。复制需求一律走页面复制(`POST /api/pages/:id/duplicate`,标题前缀 `复制自`,新页落在源页正下方同 sibling 组)。
 - **Labels 双视图同步** — ReadView / EditView 内容底部都有可编辑 `<LabelPills>`,不用 `compact` prop;右 TOC 另有只读 chip 镜像。两边共享 `page.labels` reactive,主体编辑 → 右 TOC 同步更新。
 - **Auto-save 永远静默,version 只在 idle / route-leave 边界自动打;不做手动「保存为版本」按钮。** `PATCH /api/pages/:id` 只更新 `pages` 行,**不**写 `page_versions`(防 auto-save 噪声)。`POST /api/pages/:id/snapshots` 是打 checkpoint 的唯一入口。Restore 端点自管 version insert。Retention 30 行。不要新增「手动保存版本」UI。
-- **DB 表 / 字段必须有 SQL `COMMENT`,中文字面量。** 新建表 / 加列 / 加索引必须同时写 `apps/api/src/db/schema.ts` 同名字段上的 JSDoc **和** 对应 migration 里的 `COMMENT ON TABLE` / `COMMENT ON COLUMN` / `COMMENT ON INDEX`。Schema 上的 JSDoc 是事实来源,改一处必须同步另一处,drift 视为 bug。`pg_description` 看不到的字段 = 没写完。`drizzle-kit` 不自动生成 `COMMENT`,这是 API 协作者的责任。现有 11 张表的注释已由 `0008_add_column_comments.sql` 补齐,新列默认带注释。
+- **DB 表 / 字段必须有 SQL `COMMENT`,中文字面量。** 新建表 / 加列 / 加索引必须同时写 `apps/api/src/db/schema.ts` 同名字段上的 JSDoc **和** 对应 migration 里的 `COMMENT ON TABLE` / `COMMENT ON COLUMN` / `COMMENT ON INDEX`。Schema 上的 JSDoc 是事实来源,改一处必须同步另一处,drift 视为 bug。`pg_description` 看不到的字段 = 没写完。`drizzle-kit` 不自动生成 `COMMENT`,这是 API 协作者的责任。现有 12 张表的注释已由 `0008_add_column_comments.sql` + `0009_add_attachments.sql` 补齐,新表 / 新列默认带注释。
+- **MinIO dev 端口锁死 9100/9101。** `docker-compose.yml` 显式注释了原因 —— Windows 上 9000/9001 经常被 VMware NAT / 其他服务占用,改 `.env` 的 `S3_ENDPOINT` 时**必须**用 9100(`localhost:9100`),否则附件上传会连不上。prod 端口不受这条约束。
+- **Star / 收藏 toggle 不打 `page_version`。** `PATCH /api/pages/:id` 只更新 `pages.starred`,**不**写 `page_versions`(`starred` 是 metadata,不是 content)。Auto-save 静默 + snapshot 边界 30s idle 之外,任何"打 tag"类的 PATCH 都不应触发 version insert。
 
 ## 关键约定
 
 - ID:`apps/web/src/lib/id.ts` 的 `newId()` — `nanoid(10)`,字母表 31 字符(去掉了 0/o/1/i/l);后端 `apps/api/src/lib/ids.ts` 的 `generatePageId()` 同套。
-- 空页面默认值集中在 `apps/web/src/lib/constants.ts`:`emptyDoc()`、`EMPTY_HTML`、`DEFAULT_TITLE`、`normalizeTitle()`。**不要在页面 / store 里再硬编码这些字面量**。
+- 空页面默认值集中在 `packages/shared/src/constants.ts`(`emptyDoc()`、`EMPTY_HTML`、`DEFAULT_TITLE`、`normalizeTitle()`、`ALLOWED_MIME_TYPES`、`MIME_TO_EXT`、`MAX_UPLOAD_BYTES_DEFAULT`)—— **事实来源**,`apps/web/src/lib/constants.ts` 只 re-export。**不要在页面 / store / 后端 route 里再硬编码这些字面量**,统一从 `@power-wiki/shared` 读。
 - 设计令牌:`apps/web/src/styles/tokens.css` 是视觉唯一事实来源。**禁止**自造十六进制色值 / 间距 / 字号。
 - 焦点环:仅键盘聚焦时显示(`#4C9AFF`),鼠标点击不出现。
 - 图标:`material-symbols-outlined`。字体:Plus Jakarta Sans + PingFang SC 后备 + JetBrains Mono。

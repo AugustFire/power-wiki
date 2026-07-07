@@ -51,6 +51,45 @@
 
 ---
 
+## [0.6.0] - 2026-07-07
+
+Stage 8: 附件 / 懒加载 / 搜索 / 历史页 / 性能。覆盖 8 个 commit(`13d908d` / `ce9c77a` / `ce99d05` / `4a57454` / `61a3367` / `1667145` / `f9c1a19` / `6a747e1`)。
+
+### Added
+- **页面级附件(Stage 8 主线)** — S3 直传 + DB 元数据:`POST /api/attachments/upload-url` + `POST /finalize` 两步上传(浏览器 `PUT` 到 presigned URL,字节不经过 API),`GET /:id/raw` 流式下载(image `inline` / file `attachment`);`attachments` 表(migration `0009_add_attachments.sql`,带 `COMMENT ON`)+ `imageAttachmentExtension`(Tiptap 节点)+ `ImageAttachmentView`(inline image / file 卡片)+ `AttachmentLightbox`(全屏查看);S3 走 `apps/api/src/lib/s3.ts`,`@aws-sdk/client-s3` 入依赖;`packages/shared/src/constants.ts` 加 `ALLOWED_MIME_TYPES` / `MIME_TO_EXT` / `MAX_UPLOAD_BYTES_DEFAULT`;`docker-compose.yml` 起 minio,主机端口锁 `9100/9101`(避 Windows 9000 占用)。`sanitize.ts` 的 img src 白名单只放行 `/api/attachments/*`,挡 `https://` / `data:` / `blob:` / `javascript:`。
+- **侧栏懒加载** — `PageTree` 首次只拉根级,`expand` 节点时再 `GET /api/pages?parentId=X` 拉子页;`pages.ts` 加 `getPageChildren` 端点,PageTree 缓存 children by parentId,避免 N+1。
+- **Confluence 三栏宽度可拖** — `Sidebar` / `TocPanel` 手柄持久化(本地存储),刷新保留。
+- **打开子页自动展开定位** — `pagesStore.setActive` 后,PageTree 找到该页路径所有 ancestor → 全部 `expand`,然后 `scrollIntoView` 滚到节点 + 高亮闪一下。
+- **零中间件全文搜索** — `GET /api/search?q=...` 直走 Drizzle `ILIKE` over `pages.title` + `pages.content_text`,LIKE 通配符 escape,无 ES / 无 Redis;`TopSearch.vue` debounce 200ms + 键盘 `↑↓ Enter Esc` + 跨 space 结果分组 + 命中高亮。
+- **Admin personal-space 写拦截硬约束** — `SpaceEditView` 等管理 UI 显式提示 "admin 不可写 personal space",`personalSpaceGuard` 在 `assertAdminNotWritingPersonalSpace` 抛 `personal_space_readonly`。
+- **DB 列注释硬约束** — migration `0008_add_column_comments.sql` 给所有 `pages` / `comments` / `notifications` / `page_versions` / `users` / `spaces` / `groups` / `sessions` 列加 `COMMENT ON COLUMN`,`pgmeta` / `pg_dump` 出来自带文档;CLAUDE.md 加硬约束一条。
+- **历史页全屏化** — `HistoryView.vue` 从弹层改为独立 `/p/:id/history` 顶级路由,左右双栏(版本列表 + diff 视图);`VersionList` 改组件卡。
+- **inline 字符级 diff** — `apps/web/src/lib/textDiff.ts` 自研 `diffChars`(LCS + 字符对齐),`VersionDiffView` 弃用 side-by-side 矩阵,改单行内 `−` 红 / `+` 绿 inline 渲染 + 行级 fallback。
+- **页面级附件 + 替换/布局/防误触** — `App.vue` 全局 `beforeunload` 拦截未保存编辑;MarkdownSerializer 加 image serializer;sanitize 文件名。
+- **MinIO 主机端口锁 9100/9101** — `docker-compose.yml` 显式注释原因(Windows 上 9000 经常被 VMware NAT 占用),`.env` 的 `S3_ENDPOINT` 必须用 9100。
+
+### Changed
+- **折叠块 read 模式默认收起** — `ReadView.vue` `safeHtml` 在 `sanitizeAndHardenLinks` 之后再走 `collapseTogglesByDefault`,strip 所有 `<details open>`;与 Confluence 行为对齐。用户点 summary 仍可展开,刷新回到 collapsed。
+- **小标题可输入表情** — `EmojiPicker` 接受 `target` prop,toolbar 表情按钮 mousedown 时捕获 `activeElement`(`<input>` / `<textarea>`),picker 命中后走原生选区 API 插入 + dispatch `input` 事件;退化链 target → `document.activeElement` → ProseMirror,评论框等也一并生效。
+- **comments 双行布局回退** — `CommentItem.vue` 改双行:第一行 username · time · edited,第二行文本,头像保留;长 URL `overflow-wrap: anywhere`。
+- **Star / Recent / Search UX 收尾** — `Sidebar` 顶区重排,空态插画 + 引导文案;`stores/recent` 加去重 + 时间衰减;`TopSearch` 加搜索框 + 跨 space 分组。
+- **PDF 导出走 `window.print()` + `print.css`** — `print.css` `@page A4` + `@media print` 隐藏 chrome;h1 自动 `page-break-before`(首例外);`pre/callout/toggle/table` 避免内部跨页;`a[href]::after` 打印 href。
+
+### Fixed
+- **`1667145` admin 冷启动并发 `PATCH /api/pages/:id` storm** — bootstrap 路径加幂等去重;`personalSpaceGuard` 在写路径必走。
+- **`61a3367` 清 b2e0605 残留** — `page_templates` 表已 drop(migration `0007_drop_page_templates.sql`),`apps/api/src/routes/pageTemplates.ts` 删除,`TemplatePickerDialog` / `TemplatePickerTrigger` 组件 + `useTemplates` composable 整块拆;labels / history / version 同步修复。
+- **`4a57454` `textDiff` 空 unchanged-run 不再产空行** — VersionList skeleton 占位,空态统一显示「当前版本与 v{N} 内容一致」。
+- **`f9c1a19` perf memo** — `/api/pages` 列表分页 `limit/offset`,Pinia store `markStale` 模式,PageTree 懒加载不重复拉。
+- **`ce9c77a` 拖拽时 N+1 复拉** — `PageTree` 拖拽时不再重新拉 children,共享 module-scope `childrenByParent` 缓存。
+- **`6a747e1` 折叠块小标题无法输入表情** — EmojiPicker 走原生选区 API(见 Changed)。
+
+### CLAUDE.md 硬约束新增
+- **MinIO dev 端口锁死 9100/9101** — 改 `.env` 的 `S3_ENDPOINT` 必须用 9100,Windows 上 9000 经常被占。
+- **Star / 收藏 toggle 不打 `page_version`** — `PATCH /:id` 只更新 `pages.starred`,**不**写 `page_versions`(metadata,不是 content)。
+- **DB 表 / 字段必须有 SQL `COMMENT`(已升级到 12 张表)** — `0008_add_column_comments.sql` + `0009_add_attachments.sql` 补齐,新表 / 新列默认带注释。
+
+---
+
 ## [Unreleased-prior]
 
 ### Added
@@ -239,7 +278,8 @@
 
 ---
 
-[Unreleased]: ../../compare/main...HEAD
+[Unreleased]: ../../compare/v0.6.0...HEAD
+[0.6.0]: ../../compare/v0.5.0...v0.6.0
 [0.5.0]: ../../compare/v0.4.0...v0.5.0
 [0.4.0]: ../../compare/v0.3.0...v0.4.0
 [0.3.0]: ../../compare/v0.2.0...v0.3.0
