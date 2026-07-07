@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
@@ -21,6 +21,7 @@ import { formatRelativeTime } from '@/lib/relativeTime'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
+const route = useRoute()
 const router = useRouter()
 const { recordVisit } = useRecentPages()
 
@@ -138,6 +139,31 @@ watch(
     if (p && p.title) recordVisit({ id: p.id, title: p.title })
   },
   { immediate: true },
+)
+
+/**
+ * 通知点击跳过来的 hash 锚点(`/p/{id}#comment-{cid}`) → 滚到对应评论。
+ * 评论是 CommentsSection 内部 fetch 后才挂载的,所以 retry 模式:100ms 一次,
+ * 最多 10 次(1s)。评论可能不在第一页(loadMore 之前的),这种 case 超时后会
+ * 自然停在列表顶端 —— 用户点通知已经跳到页面了,不会跳到完全无关位置。
+ */
+watch(
+  () => route.hash,
+  (hash) => {
+    if (!hash || !hash.startsWith('#comment-')) return
+    const id = hash.slice(1)
+    let attempts = 0
+    const tryScroll = () => {
+      const el = document.getElementById(id)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
+      if (++attempts < 10) setTimeout(tryScroll, 100)
+    }
+    tryScroll()
+  },
+  { immediate: true, flush: 'post' },
 )
 
 // v-html 之后跑一道语法高亮(read 端没有 decorations,需要手动补)

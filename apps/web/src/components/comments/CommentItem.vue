@@ -148,7 +148,7 @@ function onReplyAdded(c: Comment): void {
 </script>
 
 <template>
-  <div class="comment-item" :data-author="comment.authorName ?? comment.authorId">
+  <div :id="`comment-${comment.id}`" class="comment-item" :data-author="comment.authorName ?? comment.authorId">
     <div class="ci-body">
       <div class="ci-head">
         <span class="ci-author">{{ comment.authorName ?? comment.authorId }}</span>

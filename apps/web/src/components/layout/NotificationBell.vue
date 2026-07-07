@@ -67,10 +67,13 @@ function close(): void {
   open.value = false
 }
 
-function onItemClick(id: string, pageId: string): void {
+function onItemClick(id: string, pageId: string, commentId: string | null): void {
   void store.markRead([id])
   close()
-  router.push(`/p/${pageId}`)
+  // commentId 有值时跳到具体评论(`#comment-{commentId}` 锚点由 CommentItem 的
+  // :id 属性 + ReadView 的 hash 监听 + scrollIntoView 处理);否则纯 page 跳。
+  const hash = commentId ? `#comment-${commentId}` : ''
+  router.push(`/p/${pageId}${hash}`)
 }
 
 function onMarkAll(): void {
@@ -220,7 +223,7 @@ function relTime(ts: number): string {
             class="nd-row"
             :class="{ 'is-unread': !n.isRead }"
             type="button"
-            @click="onItemClick(n.id, n.pageId)"
+            @click="onItemClick(n.id, n.pageId, n.commentId)"
           >
             <span class="nd-avatar" :style="{ background: n.actorColor ?? '#0052CC' }">
               {{ (n.actorName ?? n.actorId).slice(0, 1) }}
