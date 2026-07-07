@@ -16,6 +16,7 @@ import BrandLogo from '@/components/ui/BrandLogo.vue'
 import SpaceSwitcher from '@/components/layout/SpaceSwitcher.vue'
 import UserMenu from '@/components/ui/UserMenu.vue'
 import NotificationBell from '@/components/layout/NotificationBell.vue'
+import HelpButton from '@/components/layout/HelpButton.vue'
 import { useUiStore } from '@/stores/ui'
 
 const uiStore = useUiStore()
@@ -39,6 +40,7 @@ const uiStore = useUiStore()
       <kbd class="gs-kbd">⌘K</kbd>
     </button>
     <div class="topbar-right">
+      <HelpButton />
       <NotificationBell />
       <UserMenu />
     </div>
