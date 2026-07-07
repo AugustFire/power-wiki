@@ -10,6 +10,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -342,7 +343,26 @@ watch(
 
       <div class="content">
         <div class="content-inner read-page">
-          <div v-if="page">
+          <!-- 冷启动 / store 还没 fetch 完时显示 Skeleton(直链 / 刷新场景)。
+               遵守 docs/loading-ux.md:33 "首次加载用 Skeleton,不用「加载中…」文本"。
+               Skeleton 形状模仿真实内容(title + byline + 多行正文 + callout-ish),
+               chrome 高度稳定,load 后是 fade 而不是空白闪一下。 -->
+          <div v-if="!pagesStore.loaded" class="read-skeleton" aria-busy="true" aria-live="polite">
+            <Skeleton height="36px" width="70%" />
+            <div class="read-skeleton-byline">
+              <Skeleton width="32px" height="32px" radius="50%" />
+              <Skeleton width="40%" height="12px" />
+              <Skeleton width="25%" height="12px" />
+            </div>
+            <div class="read-skeleton-content">
+              <Skeleton :count="8" height="14px" />
+              <Skeleton height="56px" />
+              <Skeleton :count="4" height="14px" />
+              <Skeleton height="56px" />
+              <Skeleton :count="3" height="14px" />
+            </div>
+          </div>
+          <div v-else-if="page">
             <!-- 标签条(紧凑版) — 只显示有真实数据支撑的状态 -->
             <div class="page-tags">
               <span class="status-pill success">
@@ -499,5 +519,25 @@ watch(
 }
 .version-link .material-symbols-outlined {
   font-size: 16px;
+}
+
+/* ReadView Skeleton —— 模仿真实布局的占位行,chrome 高度稳定 */
+.read-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 8px;
+}
+.read-skeleton-byline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+.read-skeleton-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
 }
 </style>
