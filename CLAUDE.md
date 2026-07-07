@@ -23,6 +23,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **MinIO dev 端口锁死 9100/9101。** `docker-compose.yml` 显式注释了原因 —— Windows 上 9000/9001 经常被 VMware NAT / 其他服务占用,改 `.env` 的 `S3_ENDPOINT` 时**必须**用 9100(`localhost:9100`),否则附件上传会连不上。prod 端口不受这条约束。
 - **Star / 收藏 toggle 不打 `page_version`。** `PATCH /api/pages/:id` 只更新 `pages.starred`,**不**写 `page_versions`(`starred` 是 metadata,不是 content)。Auto-save 静默 + snapshot 边界 30s idle 之外,任何"打 tag"类的 PATCH 都不应触发 version insert。
 - **测试脚本及其产物一律放 `scripts/` 子目录,不放项目根。** 验收 / 截图 / 烟测脚本(`verify_*.py` / `snap_*.py` / `smoke-*.cjs` / `verify-phaseN.py` 等)、脚本产物(`screenshots/` / cookies / 中间 HTML / `__pycache__`)都集中在 `scripts/` 子树下,根目录保持干净。**例外**:`printscreen/` 是用户精选配图目录(供 README 引用的产品截图),**不属于测试产物**,不动;`scripts/screenshots/` 是脚本截图的归属位置,根上残留的空 `screenshots/` 历史目录直接删。
+- **不主动 commit / push。** 没有用户明确指示(`提交吧` / `推吧` / `commit 一下` 之类)时,所有 `git commit` / `git push` 一律不做 —— 即使本地 typecheck 已绿、polish 类微调完毕。每个改动做完先汇报,等用户口头授权再动。**计划批准 ≠ 提交授权**:用户批准了若干任务清单(`好的` 接下来做 T1-T10)不等于授权你在执行过程里逐个 commit 上去。
 
 ## 关键约定
 

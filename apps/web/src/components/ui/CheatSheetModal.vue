@@ -17,6 +17,7 @@
 import { onBeforeUnmount, watch } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
+import { MOD_KEY as MOD } from '@/lib/platform'
 
 const uiStore = useUiStore()
 const { cheatSheetOpen } = storeToRefs(uiStore)
@@ -24,36 +25,34 @@ const { cheatSheetOpen } = storeToRefs(uiStore)
 type Shortcut = { keys: string[]; desc: string }
 type Group = { title: string; items: Shortcut[] }
 type Tip = { icon: string; title: string; desc: string }
-
-// ⌘ 在 Windows 上就是 Ctrl;视口锁死桌面端,不做平台分支 —— 跟 TopBar 一致。
 const shortcutGroups: Group[] = [
   {
     title: '全局',
     items: [
-      { keys: ['⌘', 'K'], desc: '搜索所有页面' },
+      { keys: [MOD,'K'], desc: '搜索所有页面' },
       { keys: ['/'], desc: '搜索(Vim 风格,仅非输入框聚焦)' },
-      { keys: ['⌘', '/'], desc: '打开 / 关闭这张速查表' },
-      { keys: ['⌘', 'S'], desc: '立即存档为新版本快照' },
+      { keys: [MOD,'/'], desc: '打开 / 关闭这张速查表' },
+      { keys: [MOD,'S'], desc: '立即存档为新版本快照' },
     ],
   },
   {
     title: '编辑',
     items: [
-      { keys: ['⌘', 'B'], desc: '加粗' },
-      { keys: ['⌘', 'I'], desc: '斜体' },
-      { keys: ['⌘', 'U'], desc: '下划线' },
-      { keys: ['⌘', 'Z'], desc: '撤销' },
-      { keys: ['⌘', '⇧', 'Z'], desc: '重做' },
+      { keys: [MOD,'B'], desc: '加粗' },
+      { keys: [MOD,'I'], desc: '斜体' },
+      { keys: [MOD,'U'], desc: '下划线' },
+      { keys: [MOD,'Z'], desc: '撤销' },
+      { keys: [MOD,'⇧', 'Z'], desc: '重做' },
     ],
   },
   {
     title: '结构',
     items: [
-      { keys: ['⌘', '⌥', '1'], desc: '一级标题' },
-      { keys: ['⌘', '⌥', '2'], desc: '二级标题' },
-      { keys: ['⌘', '⇧', '7'], desc: '有序列表' },
-      { keys: ['⌘', '⇧', '8'], desc: '无序列表' },
-      { keys: ['⌘', '⇧', '9'], desc: '引用块' },
+      { keys: [MOD,'⌥', '1'], desc: '一级标题' },
+      { keys: [MOD,'⌥', '2'], desc: '二级标题' },
+      { keys: [MOD,'⇧', '7'], desc: '有序列表' },
+      { keys: [MOD,'⇧', '8'], desc: '无序列表' },
+      { keys: [MOD,'⇧', '9'], desc: '引用块' },
       { keys: ['Tab'], desc: '列表 / Task 缩进一级' },
       { keys: ['⇧', 'Tab'], desc: '列表 / Task 反向缩进' },
     ],
@@ -167,7 +166,7 @@ onBeforeUnmount(() => {
             <div>
               <h2 id="cheat-title" class="cheat-title">速查表</h2>
               <p class="cheat-subtitle">
-                不好发现的快捷键和小技巧集中在这里。<kbd class="cheat-mini-kbd">⌘/</kbd> 任意处唤起。
+                不好发现的快捷键和小技巧集中在这里。<kbd class="cheat-mini-kbd">{{ MOD }}</kbd>/ 任意处唤起。
               </p>
             </div>
             <button

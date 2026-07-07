@@ -18,6 +18,7 @@ import UserMenu from '@/components/ui/UserMenu.vue'
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import HelpButton from '@/components/layout/HelpButton.vue'
 import { useUiStore } from '@/stores/ui'
+import { MOD_KEY } from '@/lib/platform'
 
 const uiStore = useUiStore()
 </script>
@@ -37,7 +38,7 @@ const uiStore = useUiStore()
     >
       <span class="material-symbols-outlined icon">search</span>
       <span class="gs-placeholder">搜索所有页面…</span>
-      <kbd class="gs-kbd">⌘K</kbd>
+      <kbd class="gs-kbd">{{ MOD_KEY }}K</kbd>
     </button>
     <div class="topbar-right">
       <HelpButton />

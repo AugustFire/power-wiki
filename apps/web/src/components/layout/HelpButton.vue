@@ -9,6 +9,7 @@
  * Feather "help-circle" 风格,与设计基准一致。
  */
 import { useUiStore } from '@/stores/ui'
+import { MOD_KEY } from '@/lib/platform'
 
 const uiStore = useUiStore()
 
@@ -22,7 +23,7 @@ function onClick(): void {
     class="help-btn"
     type="button"
     aria-label="键盘快捷键与隐藏功能"
-    title="键盘快捷键与隐藏功能 (⌘/)"
+    title="键盘快捷键与隐藏功能 ({{ MOD_KEY }})"
     @click="onClick"
   >
     <svg
