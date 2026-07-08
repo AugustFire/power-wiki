@@ -49,6 +49,9 @@ export const users = pgTable('users', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
+  /** argon2id 密码哈希(@node-rs/argon2,见 apps/api/src/auth/password.ts)。
+   *  格式 `$argon2id$v=19$m=...,t=...,p=...$salt$hash`。登录时 verifyPassword
+   *  常量时间校验,不要在这里做字符串比较或 decode。 */
   passwordHash: text('password_hash').notNull(),
   role: text('role', { enum: ['admin', 'user'] }).notNull().default('user'),
   status: text('status', { enum: ['active', 'disabled', 'must_reset_password'] })
@@ -469,6 +472,11 @@ export const pageLikes = pgTable(
   (t) => [
     /** Composite PK = one like per (page, user) — idempotent. */
     primaryKey({ columns: [t.pageId, t.userId] }),
+    /** 单列 page_id 索引 — selectPagesWithAuthor 的 likesCount correlated
+     *  subquery 走这里(避免全表扫描 COUNT(*))。跟 page_labels 的
+     *  page_id 单列索引命名 + 心智模型对齐:每个 page-* join 表都建
+     *  page_id 单列索引。 */
+    index('page_likes_page_idx').on(t.pageId),
     /** Future: "我赞过哪些页面" — 直接走 user_id 即可。 */
     index('page_likes_user_idx').on(t.userId),
   ],
