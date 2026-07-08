@@ -20,14 +20,27 @@
  * ("圆形头部太占行高"). Buttons are direct icons, not a kebab menu — the
  * old kebab was hard to dismiss.
  *
+ * Edit affordance (author-only):
+ *   - `canEdit` is the author id check (admin cannot edit others — see
+ *     apps/api/src/lib/commentGuards.ts).
+ *   - Click ✏️ → row swaps to `<textarea>` + 保存/取消. Re-uses
+ *     `useCommentMention` so the @ popover behaves the same as the
+ *     composer. Cmd/Ctrl+Enter saves, Esc cancels.
+ *   - Mention re-derivation on save: `parseMentionsFromText()` re-extracts
+ *     @-names from the new text using a candidate name→id map loaded on
+ *     `enterEdit()`. Combined with the popover's `editMentions` set (which
+ *     only ADDS via popover picks, never removes via text edit) this
+ *     correctly drops deleted mentions. Server still re-verifies.
+ *
  * `useAuth` is used only to know if the current user is the author or
  * admin (which gates the delete affordance). Mutation events bubble up to
  * the parent so it can update the local tree without refetching.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
+import { useCommentMention } from '@/composables/useCommentMention'
 import CommentsComposer from './CommentsComposer.vue'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import type { Comment } from '@power-wiki/shared'
@@ -40,6 +53,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'reply-added', parent: Comment, child: Comment): void
   (e: 'deleted', id: string): void
+  (e: 'edited', updated: Comment): void
 }>()
 
 const auth = useAuthStore()
@@ -48,10 +62,26 @@ const me = computed(() => auth.user)
 const canModify = computed(
   () => !!me.value && (me.value.id === props.comment.authorId || me.value.role === 'admin'),
 )
+// 编辑权限 = 仅作者(后端 guardMutateComment 同步收窄,见 apps/api/src/lib/commentGuards.ts)
+// admin 不能编辑他人评论 — Confluence / Notion / 飞书 默认。
+const canEdit = computed(() => !!me.value && me.value.id === props.comment.authorId)
 
 const showReply = ref(false)
 const expanded = ref(false)
 const error = ref<string | null>(null)
+
+// ── 编辑态 ─────────────────────────────────────────────────────────
+const editing = ref(false)
+const editText = ref('')
+const editMentions = ref<Set<string>>(new Set())
+const editError = ref<string | null>(null)
+const editSubmitting = ref(false)
+const editTextareaEl = ref<HTMLTextAreaElement | null>(null)
+const pageIdRef = computed(() => props.pageId)
+const mention = useCommentMention(editTextareaEl, editMentions, pageIdRef)
+// name → userId,enterEdit 时一次性 fetch 整页候选,save 时反查文本里实际 @ 的名字。
+// 不缓存到 store:仅当前编辑会话需要,关掉编辑就丢。
+const candidateMap = ref<Map<string, string>>(new Map())
 
 /**
  * 是否需要"展开"按钮的启发式:
@@ -67,6 +97,13 @@ const needsExpand = computed(() => {
   // 阈值 200 让"超过 4 行才需要展开"成为合理启发式,绝大多数短评论不被截断。
   const text = props.comment.contentMd
   return text.length > 200 || text.includes('\n')
+})
+
+// 编辑过的 hover 提示:v0 只展示时间,actor 永远是作者本人(后端 edit 已
+// 收窄到 author-only),无需展示「编辑人」。v1 加 edit history 再扩。
+const editTitle = computed(() => {
+  if (!props.comment.isEdited || !props.comment.editedAt) return undefined
+  return `编辑于 ${formatRelativeTime(props.comment.editedAt)}`
 })
 
 watch(
@@ -140,6 +177,104 @@ function onReplyAdded(c: Comment): void {
   showReply.value = false
   emit('reply-added', props.comment, c)
 }
+
+/* ── 行内编辑 ───────────────────────────────────────────────────────
+ *
+ * enterEdit:把当前评论的 contentMd / mentionedUserIds 灌进本地草稿,
+ *   拉一次整页 mention-candidates 缓存(后端 guard 没变,PATCH 还会
+ *   re-verify,所以本地 cache 只是为解析文本里的 @name)。
+ *
+ * saveEdit:trim → 校验非空 + 与原文不同 → 用 parseMentionsFromText
+ *   从新文本反查 user ids(覆盖"从文本里删除 @name"的情况)→ 合并
+ *   popover 新选的 → PATCH。edit 永远是 author-only(后端硬约束),
+ *   所以这里只关心内容正确性,不重做权限。
+ */
+
+async function loadCandidates(): Promise<void> {
+  try {
+    const cands = await api.comments.mentionCandidates(props.pageId, '')
+    candidateMap.value = new Map(cands.map((c) => [c.name, c.id]))
+  } catch {
+    // 静默失败:save 时 parseMentionsFromText 拿不到映射,会回退到
+    // 只用 editMentions set(只含 popover 选过的)。漏几个 mention
+    // 通知总比阻塞编辑体验好。
+  }
+}
+
+function parseMentionsFromText(text: string): string[] {
+  const ids: string[] = []
+  // 跟 CommentItem.renderBody 同套 regex:@ 必须在开头或空白后,
+  // 名字 ≤32 字符、无空白 / @,避免 email@example.com 误判。
+  const re = /(^|\s)@([^\s@]{1,32})/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const id = candidateMap.value.get(m[2]!)
+    if (id) ids.push(id)
+  }
+  return [...new Set(ids)]
+}
+
+async function enterEdit(): Promise<void> {
+  editText.value = props.comment.contentMd
+  editMentions.value = new Set(props.comment.mentionedUserIds)
+  editError.value = null
+  editing.value = true
+  void loadCandidates()
+  await nextTick()
+  editTextareaEl.value?.focus()
+}
+
+function cancelEdit(): void {
+  editing.value = false
+  editText.value = ''
+  editMentions.value = new Set()
+  editError.value = null
+  mention.close()
+}
+
+async function saveEdit(): Promise<void> {
+  if (editSubmitting.value) return // 防 Cmd+Enter 重复触发
+  const content = editText.value.trim()
+  if (!content) return
+  // 内容未变就不要无意义 PATCH(后端虽然会接受,但会刷 isEdited / editedAt)
+  if (content === props.comment.contentMd) {
+    cancelEdit()
+    return
+  }
+  editSubmitting.value = true
+  editError.value = null
+  try {
+    const fromText = parseMentionsFromText(editText.value)
+    const merged = [...new Set([...fromText, ...editMentions.value])]
+    const updated = await api.comments.update(props.comment.id, {
+      contentMd: content,
+      mentionedUserIds: merged.length > 0 ? merged : undefined,
+    })
+    emit('edited', updated)
+    editing.value = false
+    editText.value = ''
+    editMentions.value = new Set()
+  } catch (e: unknown) {
+    editError.value = e instanceof Error ? e.message : '保存失败,请稍后再试'
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
+function onEditKeydown(ev: KeyboardEvent): void {
+  // popover 自己处理 ↑/↓/Enter/Esc(选 mention);不在 popover 模式下,
+  // 我们拦截 Cmd/Ctrl+Enter(保存)和 Esc(取消)。
+  if (mention.onTextareaKeydown(ev)) return
+  if (ev.key === 'Escape') {
+    ev.preventDefault()
+    cancelEdit()
+    return
+  }
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault()
+    void saveEdit()
+  }
+}
 </script>
 
 <template>
@@ -151,7 +286,7 @@ function onReplyAdded(c: Comment): void {
         <span class="ci-time">{{ relativeTime(comment.createdAt) }}</span>
         <template v-if="comment.isEdited">
           <span class="ci-dot" aria-hidden="true">·</span>
-          <span class="ci-edited">已编辑</span>
+          <span class="ci-edited" :title="editTitle">已编辑</span>
         </template>
         <div class="ci-actions">
           <button
@@ -166,6 +301,16 @@ function onReplyAdded(c: Comment): void {
             <span class="material-symbols-outlined">reply</span>
           </button>
           <button
+            v-if="canEdit && !editing"
+            class="ci-icon-btn"
+            type="button"
+            aria-label="编辑评论"
+            title="编辑评论"
+            @click="enterEdit"
+          >
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+          <button
             v-if="canModify"
             class="ci-icon-btn ci-icon-btn-danger"
             type="button"
@@ -177,7 +322,35 @@ function onReplyAdded(c: Comment): void {
           </button>
         </div>
       </div>
+      <textarea
+        v-if="editing"
+        ref="editTextareaEl"
+        v-model="editText"
+        class="ci-edit-textarea"
+        :disabled="editSubmitting"
+        rows="4"
+        :placeholder="'编辑评论 (Cmd/Ctrl+Enter 保存,Esc 取消,输入 @ 提及成员)'"
+        @keydown="onEditKeydown"
+        @input="mention.onTextareaInput"
+        @scroll="mention.onTextareaScroll"
+      />
+      <div v-if="editing" class="ci-edit-actions">
+        <button
+          class="ci-edit-btn ci-edit-cancel"
+          type="button"
+          :disabled="editSubmitting"
+          @click="cancelEdit"
+        >取消</button>
+        <button
+          class="ci-edit-btn ci-edit-save"
+          type="button"
+          :disabled="editSubmitting || !editText.trim() || editText === comment.contentMd"
+          @click="saveEdit"
+        >{{ editSubmitting ? '保存中…' : '保存' }}</button>
+      </div>
+      <p v-if="editing && editError" class="ci-edit-error">{{ editError }}</p>
       <div
+        v-if="!editing"
         class="ci-text"
         :class="{ expanded }"
         v-html="renderBody()"
@@ -204,6 +377,7 @@ function onReplyAdded(c: Comment): void {
           :page-id="pageId"
           @reply-added="(p, c) => emit('reply-added', p, c)"
           @deleted="(id) => emit('deleted', id)"
+          @edited="(u) => emit('edited', u)"
         />
       </div>
       <p v-if="error" class="ci-error">{{ error }}</p>
@@ -355,6 +529,73 @@ function onReplyAdded(c: Comment): void {
 }
 .ci-error {
   margin: 4px 0 0;
+  color: var(--danger, #de350b);
+  font-size: 12px;
+}
+
+/* ── 行内编辑 ──────────────────────────────────────────────────────
+ * 跟 composer 同样的视觉:1px border + 4px radius + 焦点环。Edit 模
+ * 态是 composer 的「单行变体」,所以 .ci-edit-* 的 border / radius
+ * 跟 .comment-composer textarea 完全一致,只在 grid 布局上不同
+ * (行内编辑不需要 28px avatar 列,全宽)。 */
+.ci-edit-textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #dfe1e6);
+  border-radius: 4px;
+  font: inherit;
+  background: var(--bg, #fff);
+  color: var(--text-1, #172b4d);
+  box-sizing: border-box;
+}
+.ci-edit-textarea:focus {
+  outline: 2px solid var(--accent, #0052cc);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.ci-edit-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ci-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ci-edit-btn {
+  padding: 6px 14px;
+  border-radius: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.ci-edit-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ci-edit-cancel {
+  background: transparent;
+  color: var(--text-3, #5e6c84);
+}
+.ci-edit-cancel:hover:not([disabled]) {
+  background: var(--hover-bg, #f4f5f7);
+}
+.ci-edit-save {
+  background: var(--accent, #0052cc);
+  color: #fff;
+}
+.ci-edit-save:hover:not([disabled]) {
+  background: var(--accent-hover, #0747a6);
+}
+
+.ci-edit-error {
+  margin: 6px 0 0;
   color: var(--danger, #de350b);
   font-size: 12px;
 }

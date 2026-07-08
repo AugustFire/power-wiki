@@ -178,6 +178,27 @@ function onDeleted(id: string): void {
     }
   }
 }
+
+/**
+ * PATCH /api/comments/:id 的响应里带最新 contentMd / mentionedUserIds /
+ * isEdited / editedAt。替换对应行(保留嵌套 replies —— 编辑是内容层面,
+ * 不动回复树)。Walk 顺序跟 onDeleted 一样:先 root 后 replies。
+ */
+function onEdited(updated: Comment): void {
+  for (let i = 0; i < items.value.length; i++) {
+    if (items.value[i]!.id === updated.id) {
+      items.value[i] = { ...items.value[i]!, ...updated, replies: items.value[i]!.replies }
+      return
+    }
+  }
+  for (const top of items.value) {
+    const idx = top.replies.findIndex((r) => r.id === updated.id)
+    if (idx >= 0) {
+      top.replies[idx] = updated
+      return
+    }
+  }
+}
 </script>
 
 <template>
@@ -202,6 +223,7 @@ function onDeleted(id: string): void {
         :page-id="pageId"
         @reply-added="onReplyAdded"
         @deleted="onDeleted"
+        @edited="onEdited"
       />
     </div>
 

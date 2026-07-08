@@ -91,7 +91,7 @@
 | GET    | `/?pageId=&limit=&offset=` | `?pageId` 必填;返 `{items: Comment[] with embedded replies, hasMore, limit, offset}`(**不是**通用 `PaginatedList`,comment list 端点特殊);top-level `parent_id IS NULL`,replies 平铺在每个 top-level 的 `replies: Comment[]` 内,**最大嵌套深度 = 2** |
 | GET    | `/mention-candidates?pageId=&q=` | `?pageId` 必填;返 `string[]` 候选 userId;后端限定为该 page space 的访问组成员(JOIN `space_group_access × user_group_members × users WHERE status='active'`) |
 | POST   | `/` | body `{pageId, contentMd, contentText, parentId?, mentionedUserIds?}` → 201 `Comment`;**单事务**内 `INSERT comment + enqueueNotifications(kind=mention|reply|comment_on_my_page)`,作者与目标相同时不发 |
-| PATCH  | `/:id` | body `{contentMd, contentText, mentionedUserIds?}`;author-or-admin;`isEdited=true, editedAt=now`;事务前 re-verify mentions,伪造 userId 丢弃 |
+| PATCH  | `/:id` | body `{contentMd, contentText, mentionedUserIds?}`;**author-only**(admin 不能编辑他人评论,Confluence / Notion / 飞书 默认);`isEdited=true, editedAt=now`;事务前 re-verify mentions,伪造 userId 丢弃 |
 | DELETE | `/:id` | 软删除,`deletedAt=now, deletedBy=me.id` → 204;author-or-admin |
 
 ## Notifications(`/api/notifications`)

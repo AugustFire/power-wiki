@@ -67,7 +67,8 @@ export async function guardCreateComment(args: PostArgs): Promise<GuardOutcome> 
 interface MutateArgs extends BaseArgs {
   commentId: string
   /** Required write op — `'delete'` lets admin delete someone else's comment;
-   *  `'edit'` requires author-or-admin. */
+   *  `'edit'` is author-only (admin cannot edit others' comments — matches
+   *  Confluence / Notion / 飞书 default). */
   op: 'edit' | 'delete'
 }
 
@@ -112,15 +113,25 @@ export async function guardMutateComment(args: MutateArgs): Promise<GuardOutcome
 
   if (op === 'edit' && row.deletedAt !== null) return notFound(c)
 
-  // Author-or-admin authorization (post-visibility; admin is allowed to delete
-  // even non-personal pages — but admin on a personal-space page is rejected
-  // above before this check).
+  // Per-op authorization (post-visibility):
+  //   - edit   : author only. Admin cannot edit others' comments (Confluence /
+  //              Notion / 飞书 default; edits rewrite content history which is
+  //              harder to audit than deletes).
+  //   - delete : author or admin. Admin is allowed to delete comments on
+  //              non-personal pages, but admin on a personal-space page is
+  //              rejected above before this check.
   const isAdmin = me.role === 'admin'
   const isAuthor = row.authorId === me.id
-  if (!isAdmin && !isAuthor) {
+  if (op === 'edit' && !isAuthor) {
     return {
       ok: false,
-      response: c.json({ error: 'forbidden', message: '只有评论作者本人或管理员可以编辑/删除' }, 403),
+      response: c.json({ error: 'forbidden', message: '只有评论作者本人可以编辑' }, 403),
+    }
+  }
+  if (op === 'delete' && !isAdmin && !isAuthor) {
+    return {
+      ok: false,
+      response: c.json({ error: 'forbidden', message: '只有评论作者本人或管理员可以删除' }, 403),
     }
   }
 
