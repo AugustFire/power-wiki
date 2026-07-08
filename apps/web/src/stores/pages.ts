@@ -521,6 +521,65 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
+   * 顶栏 👍 toggle。乐观更新:本地先 flip likedByMe + 调整 likesCount,
+   * API 返回后用服务端权威值覆盖。失败回滚到 snapshot + banner。
+   *
+   * `page.likesCount ?? 0` 给没拿到 page(罕见)的场景兜底 ——
+   * 这种情况就是没缓存,前端对数字的乐观翻转无意义,直接不渲染 UI 而已。
+   *
+   * 返回 server 的权威 { liked, likesCount },方便 caller 知道最终状态
+   * (ReadView 已经按 optimistic 更新了,这里主要给未来「auto-redirect after
+   * like」一类 caller 留 hook)。
+   */
+  async function togglePageLike(
+    id: string,
+  ): Promise<{ liked: boolean; likesCount: number }> {
+    const idx = pages.value.findIndex((p) => p.id === id)
+    if (idx < 0) {
+      // 缓存里没有该 page — 不能乐观翻转,直接 fire 一次 server 调用
+      const r = await api.pages.toggleLike(id)
+      return r
+    }
+    const snapshot = { ...pages.value[idx]! }
+    const wasLiked = snapshot.likedByMe === true
+    const beforeCount = snapshot.likesCount ?? 0
+    // Optimistic flip
+    pages.value[idx] = {
+      ...snapshot,
+      likedByMe: !wasLiked,
+      likesCount: beforeCount + (wasLiked ? -1 : 1),
+    }
+    try {
+      const r = await api.pages.toggleLike(id)
+      // 用服务端权威值覆盖(server COUNT(*) 才是事实来源,不是乐观推算)
+      const i = pages.value.findIndex((p) => p.id === id)
+      if (i >= 0) {
+        pages.value[i] = {
+          ...pages.value[i]!,
+          likedByMe: r.liked,
+          likesCount: r.likesCount,
+        }
+      }
+      // trashed 也对齐(sidebar 偶尔 list / trash 共存场景)
+      const ti = trashed.value.findIndex((p) => p.id === id)
+      if (ti >= 0) {
+        trashed.value[ti] = {
+          ...trashed.value[ti]!,
+          likedByMe: r.liked,
+          likesCount: r.likesCount,
+        }
+      }
+      return r
+    } catch (e) {
+      // 回滚
+      const i = pages.value.findIndex((p) => p.id === id)
+      if (i >= 0) pages.value[i] = snapshot
+      ui().setError(`操作失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
    * Stage 5 / B.1: load trashed pages for the active space. Called by
    * TrashView on mount + when switching spaces. Resets pagination state.
    * `loadMoreTrash(spaceId)` appends the next batch via the same API.
@@ -1001,6 +1060,7 @@ export const usePagesStore = defineStore('pages', () => {
     loadMoreTrash,
     restorePage,
     purgePage,
+    togglePageLike,
   }
 })
 

@@ -655,27 +655,66 @@
 .subpage-row .label { flex: 1; font-weight: 500; }
 .subpage-row .updated { font-size: 12px; color: var(--text-3); }
 
-/* reactions */
-.reactions {
-    margin-top: 32px;
+/* like button + 头像组 —— 放在 Labels 之下、CommentsSection 之上。
+   左对齐,跟 .labels 同 32px top margin + 同 4px gap,视觉上跟标签条
+   同一类「行内元数据」。无气泡、无 border。
+   关键:
+   - 按钮**没有**水平 padding —— 👍 图标直接贴在 .page-reactions
+     的左边缘,跟 .label-leading-icon 起始位置对齐。
+   - margin-bottom 设为 0,让点赞行紧贴下方的 comments-section
+     border-top 分割线(56px margin-top 是 comments 区自己的呼吸空间,
+     不用再叠加 32px 上去)。 */
+.page-reactions {
     display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin: 32px 0 0;
 }
-.reaction-pill {
+.page-reactions .like-button {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 10px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    font-size: 13px;
+    padding: 2px 0;
+    background: transparent;
+    border: none;
     color: var(--text-2);
-    background: var(--bg);
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.12s ease, color 0.12s ease;
+    user-select: none;
+    font-family: inherit;
 }
-.reaction-pill:hover { background: var(--bg-subtle); }
-.reaction-pill.add { color: var(--text-3); border-style: dashed; }
+.page-reactions .like-button:hover {
+    background: var(--bg-subtle);
+    color: var(--text);
+}
+.page-reactions .like-button.active {
+    color: var(--accent);
+    font-weight: 600;
+}
+.page-reactions .like-button.active:hover {
+    background: var(--accent-soft);
+}
+.page-reactions .like-button:disabled {
+    cursor: progress;
+    opacity: 0.7;
+}
+.page-reactions .like-button .like-icon {
+    font-size: 18px;
+    /* outlined 拇指 → filled 拇指,用 font-variation-settings 切;
+       size 18px 跟正文行高和谐。 */
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+.page-reactions .like-button.active .like-icon {
+    font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 20;
+}
+.page-reactions .like-button .like-count {
+    font-variant-numeric: tabular-nums;
+    min-width: 12px;
+    text-align: left;
+}
 
 /* =========================
    Comments (Stage 6)

@@ -7,6 +7,7 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import WhoLikedList from '@/components/page/WhoLikedList.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
@@ -107,6 +108,23 @@ function relativeTime(ts: number): string {
 async function toggleStar() {
   if (!page.value) return
   await pagesStore.updatePage(page.value.id, { starred: !page.value.starred })
+}
+
+/**
+ * 页面顶栏 👍 toggle。乐观更新走 store(本地先翻 likedByMe + ±1 count),
+ * 服务端回包覆盖。我们不依赖本地乐观值做 UI(button 状态用 page.likedByMe,
+ * 它是 reactive 的),失败由 store banner 兜底,这里只防双击(re-entry
+ * 防护:toggling=true 期间忽略第二次点击)。
+ */
+const togglingLike = ref(false)
+async function onToggleLike() {
+  if (!page.value || togglingLike.value) return
+  togglingLike.value = true
+  try {
+    await pagesStore.togglePageLike(page.value.id)
+  } finally {
+    togglingLike.value = false
+  }
 }
 
 /**
@@ -419,7 +437,25 @@ watch(
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>
 
+            <!-- 点赞区:放在正文下方(Labels 之上),左对齐,跟 .labels
+                 同 margin / 同左起点,视觉上跟标签条同一类"行内元数据"。 -->
             <LabelPills v-if="page" :page="page" />
+
+            <div v-if="page" class="page-reactions">
+              <button
+                type="button"
+                class="like-button"
+                :class="{ active: page.likedByMe === true }"
+                :disabled="togglingLike"
+                :aria-pressed="page.likedByMe === true"
+                :title="page.likedByMe ? '取消点赞' : '赞一下'"
+                @click="onToggleLike"
+              >
+                <span class="material-symbols-outlined like-icon">thumb_up</span>
+                <span class="like-count">{{ page.likesCount ?? 0 }}</span>
+              </button>
+              <WhoLikedList :page="page" />
+            </div>
 
             <div v-if="subPages.length > 0" class="subpages">
               <div class="subpages-title">
@@ -436,25 +472,6 @@ watch(
                 <span class="label">{{ sp.title }}</span>
                 <span class="updated">{{ relativeTime(sp.updatedAt) }}</span>
               </div>
-            </div>
-
-            <div class="reactions">
-              <button class="reaction-pill">
-                <span>👍</span>
-                <span>3</span>
-              </button>
-              <button class="reaction-pill">
-                <span>🎉</span>
-                <span>1</span>
-              </button>
-              <button class="reaction-pill">
-                <span>❤️</span>
-                <span>2</span>
-              </button>
-              <button class="reaction-pill add">
-                <span class="material-symbols-outlined icon-md">add</span>
-                <span>添加反应</span>
-              </button>
             </div>
 
             <!-- Stage 6: live comments section (replaces the prior dead

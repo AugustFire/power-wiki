@@ -120,6 +120,7 @@ const HUMAN_KIND: Record<string, string> = {
   mention: '提到了你',
   reply: '回复了你的评论',
   comment_on_my_page: '评论了你的页面',
+  page_like: '赞了你的页面',
 }
 
 function relTime(ts: number): string {

@@ -69,6 +69,24 @@ export const PageNodeSchema = z.object({
    * PageTree 一律当 leaf。Optional 不写回 seed / 旧 cache。
    */
   hasChildren: z.boolean().optional(),
+  /** 页面点赞总数 —— 由 page_likes 表 COUNT(*) GROUP BY page_id 出。
+   *  Optional:种子页 / 老 cache 没填时为 undefined,前端 fallback 0。 */
+  likesCount: z.number().int().nonnegative().optional(),
+  /** 当前用户是否已赞 —— EXISTS(page_likes WHERE page_id=? AND user_id=me)。
+   *  Optional 同上;前端 ReadView 用它判断 👍 按钮的 primary 态。 */
+  likedByMe: z.boolean().optional(),
+  /** 点赞者 sample —— 后端取前 5 个赞的用户(按 created_at 升序),带
+   *  id/name/color 用于头像组渲染。user 已 disabled 时 name/color 为 null。
+   *  Optional:未走 selectPagesWithAuthor 的 fallback 路径给 []。 */
+  likedBySample: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().nullable(),
+        color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/).nullable(),
+      }),
+    )
+    .optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */
@@ -237,7 +255,7 @@ export const NotificationSchema = z.object({
   actorId: z.string().min(1),
   actorName: z.string().nullable(),
   actorColor: z.string().nullable(),
-  kind: z.enum(['mention', 'reply', 'comment_on_my_page']),
+  kind: z.enum(['mention', 'reply', 'comment_on_my_page', 'page_like']),
   pageId: z.string().min(1),
   pageTitle: z.string().nullable(),
   commentId: z.string().min(1).nullable(),
@@ -290,6 +308,21 @@ export const MarkReadInputSchema = z
 /** GET /api/notifications/unread-count 响应 */
 export const UnreadCountResponseSchema = z.object({
   count: z.number().int().nonnegative(),
+})
+
+/* ---------- Page likes — toggle 👍 ----------
+ * POST /api/pages/:id/like 单端点 toggle。响应只返两个最小字段,
+ * 避免刷新整页 PageNode;前端在本地 store 已经缓存的 PageNode 上直接
+ * 合并这两个字段即可。PageNode 上的 likesCount / likedByMe 单独通过
+ * GET / 拿到,这个端点是写后的最小回执。
+ */
+export const ToggleLikeResponseSchema = z.object({
+  /** 切换后当前用户的 like 状态 —— true=已赞, false=已取消 */
+  liked: z.boolean(),
+  /** 该页最新的赞总数 >= 0,toggle 后立刻同步。
+   *  并发竞态下后端 SERIALIZABLE 事务保证准确,前端不再 optimistically
+   * 推算 — 一次返回就是权威值。 */
+  likesCount: z.number().int().nonnegative(),
 })
 
 /* ---------- API 输入 schema(请求体) ---------- */
@@ -514,3 +547,4 @@ export interface RequestUploadResponse {
 /* ---------- Stage 8 type exports ---------- */
 export type PageVersion = z.infer<typeof PageVersionSchema>
 export type AddLabelInput = z.infer<typeof AddLabelInputSchema>
+export type ToggleLikeResponse = z.infer<typeof ToggleLikeResponseSchema>

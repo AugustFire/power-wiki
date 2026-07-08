@@ -11,6 +11,7 @@
  *                                         前端在 idle boundary / route leave 时主动打
  *                                         POST /:id/snapshots 触发)
  *   POST   /api/pages/:id/snapshots    → 201 + PageVersion (边界 / idle checkpoint,manual)
+ *   POST   /api/pages/:id/like         → 200 + { liked, likesCount } (toggle 单端点)
  *   PATCH  /api/pages/:id/move         → PageNode (404 if not in visible space, excludes trashed)
  *   POST   /api/pages/:id/publish      → 201 + PageNode (personal → team space copy)
  *   POST   /api/pages/:id/duplicate    → 201 + PageNode (in-place sibling copy, title "复制自+原标题")
@@ -54,6 +55,7 @@ import {
   PageVersionSchema,
   PaginatedListSchema,
   SnapPageInputSchema,
+  ToggleLikeResponseSchema,
   UpdatePageInputSchema,
   MovePageInputSchema,
   PublishPageInputSchema,
@@ -71,12 +73,14 @@ import {
   pageVersions,
   pageLabels,
   attachments,
+  pageLikes,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { deleteObject } from '../lib/s3'
+import { enqueueNotifications } from '../lib/notify'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
@@ -103,10 +107,14 @@ export const pagesRouter = new Hono<{ Variables: Variables }>()
  * the join column for rows with no labels — those would otherwise land in
  * the agg as a NULL element. Drizzle's `.mapWith(...)` keeps the result
  * typed as `string[]` (parse the JSON if non-null, [] otherwise).
+ *
+ * 点赞:`likesCount` 是 COUNT(*) 走 page_likes 主键 (page_id, user_id),
+ * `likedByMe` 是 EXISTS 配合 viewerUserId 算的布尔。Pass null when the
+ * call site has no user context (none today — even GET /:id has `me`).
  */
 function selectPagesWithAuthor(
   where?: SQL,
-  opts: { includeDeleted?: boolean } = {},
+  opts: { includeDeleted?: boolean; viewerUserId?: string | null } = {},
 ) {
   const labelsAgg = sql<string[]>`
     COALESCE(
@@ -126,6 +134,55 @@ function selectPagesWithAuthor(
         AND c.deleted_at IS NULL
     )
   `.as('has_children')
+  // 点赞总数 — 走 page_likes 主键前缀,COUNT(*) GROUP BY page_id。
+  // 用 correlated subquery 而不是 LEFT JOIN + COUNT 避免破坏现有的
+  // GROUP BY(pages.id, users.name, users.color):多 LEFT JOIN 会让行数
+  // 翻倍,得再 DISTINCT,不如直接 correl。
+  const likesCountExpr = sql<number>`
+    (SELECT COUNT(*)::int
+     FROM page_likes pl
+     WHERE pl.page_id = ${pages.id})
+  `.as('likes_count')
+  // 当前用户是否已赞 — 取 viewerUserId,无用户(匿名 / 内部调用)时给 false。
+  // 用 COALESCE 包一层:viewerUserId 为 null 时 EXISTS(... AND user_id = NULL)
+  // 永远 false,EXISTS 直接返 false,COALESCE(false) 还是 false。
+  const likedByMeExpr = opts.viewerUserId != null
+    ? sql<boolean>`
+        COALESCE(
+          EXISTS (
+            SELECT 1 FROM page_likes plm
+            WHERE plm.page_id = ${pages.id}
+              AND plm.user_id = ${opts.viewerUserId}
+          ),
+          false
+        )
+      `.as('liked_by_me')
+    : sql<boolean>`false`.as('liked_by_me')
+  // 点赞者 sample(前 5 人,按 created_at 升序)—— 给 byline 行头像组用。
+  // Subquery + LIMIT 是 PostgreSQL 在 json_agg 里取前 N 的标准做法(LIMIT
+  // 不能直接放 json_agg 内层,但子查询包一层即可)。`likedBySample` 比
+  // `likesCount` 多取一份 JOIN,只有 COUNT > 0 才值得渲染头像组;
+  // 前端 v-if 会用 likesCount 守门,这里无脑算即可(N 表,N+1 一致)。
+  // JSON shape: [{ id, name, color }, ...],name/color 在 user 已 disabled
+  // 或从未建档(authorId='me' 那种 page 不是 liked)时为 null — LEFT JOIN 保留。
+  const likedBySampleExpr = sql<Array<{ id: string; name: string | null; color: string | null }>>`
+    COALESCE(
+      (
+        SELECT json_agg(
+          json_build_object('id', u.id, 'name', u.name, 'color', u.color)
+        )
+        FROM (
+          SELECT pl.user_id
+          FROM page_likes pl
+          WHERE pl.page_id = ${pages.id}
+          ORDER BY pl.created_at ASC
+          LIMIT 5
+        ) sub
+        LEFT JOIN users u ON u.id = sub.user_id
+      ),
+      '[]'::json
+    )
+  `.as('liked_by_sample')
   const q = db
     .select({
       ...getTableColumns(pages),
@@ -133,6 +190,9 @@ function selectPagesWithAuthor(
       authorColor: users.color,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
+      likesCount: likesCountExpr,
+      likedByMe: likedByMeExpr,
+      likedBySample: likedBySampleExpr,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))
@@ -197,7 +257,7 @@ pagesRouter.get('/', async (c) => {
         return c.json({ error: 'not_found' }, 404)
       }
       const where = buildSpaceFilter(eq(pages.spaceId, querySpace))
-      let q = selectPagesWithAuthor(where).$dynamic()
+      let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
       if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
       const rows = await q
       const result = applyPagination(rows.map(rowToPageNode), limit, offset)
@@ -205,7 +265,7 @@ pagesRouter.get('/', async (c) => {
     }
 
     const where = buildSpaceFilter(inArray(pages.spaceId, visible))
-    let q = selectPagesWithAuthor(where).$dynamic()
+    let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
     if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
     const rows = await q
     const result = applyPagination(rows.map(rowToPageNode), limit, offset)
@@ -214,7 +274,7 @@ pagesRouter.get('/', async (c) => {
 
   // Admin path.
   const where = buildSpaceFilter(querySpace ? eq(pages.spaceId, querySpace) : undefined)
-  let q = selectPagesWithAuthor(where).$dynamic()
+  let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
   const result = applyPagination(rows.map(rowToPageNode), limit, offset)
@@ -230,7 +290,8 @@ pagesRouter.get('/', async (c) => {
  *  "/trash" to the dynamic param handler.
  */
 pagesRouter.get('/trash', async (c) => {
-  if (c.get('user').role !== 'admin') {
+  const me = c.get('user')
+  if (me.role !== 'admin') {
     return c.json({ error: 'forbidden', message: '需要管理员权限' }, 403)
   }
   const querySpace = c.req.query('space')
@@ -242,7 +303,7 @@ pagesRouter.get('/trash', async (c) => {
   const { limit, offset } = parsed.args
   let q = selectPagesWithAuthor(
     and(eq(pages.spaceId, querySpace), isNotNull(pages.deletedAt)),
-    { includeDeleted: true },
+    { includeDeleted: true, viewerUserId: me.id },
   ).orderBy(sql`${pages.deletedAt} DESC`).$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
@@ -258,7 +319,7 @@ pagesRouter.get('/trash', async (c) => {
 pagesRouter.get('/:id', async (c) => {
   const me = c.get('user')
   const id = c.req.param('id')
-  const [row] = await selectPagesWithAuthor(eq(pages.id, id))
+  const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
   if (!row) return c.json({ error: 'not_found' }, 404)
   if (row.spaceId === null) return c.json({ error: 'not_found' }, 404)
   if (!(await canAccessSpace(me.id, me.role === 'admin', row.spaceId))) {
@@ -324,7 +385,7 @@ pagesRouter.post('/', async (c) => {
     })
 
   // Re-fetch via the LEFT JOIN helper so authorName / authorColor are populated.
-  const [row] = await selectPagesWithAuthor(eq(pages.id, id))
+  const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
   if (!row) return c.json({ error: 'not_found' }, 404)
   const node = rowToPageNode(row)
   // Validate the response shape with the same schema the frontend will use —
@@ -389,7 +450,7 @@ pagesRouter.patch('/:id', async (c) => {
     await db.update(pages).set(patch).where(eq(pages.id, id))
   }
 
-  const [row] = await selectPagesWithAuthor(eq(pages.id, id))
+  const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
   if (!row) return c.json({ error: 'not_found' }, 404)
 
   return c.json(PageNodeSchema.parse(rowToPageNode(row)))
@@ -488,6 +549,97 @@ pagesRouter.post('/:id/snapshots', async (c) => {
   }
   if (row.icon !== null) v.icon = row.icon
   return c.json(PageVersionSchema.parse(v), 201)
+})
+
+/* ─── POST /api/pages/:id/like ───────────────────────────────────────
+ *  Toggle 端点 — 不接受 body,服务端 SELECT-then-INSERT/DELETE。
+ *  响应只返最小回执 { liked, likesCount },前端 store 已在缓存里有
+ *  PageNode,只需要合并这两个字段。返回 PageNode 整页是无谓开销
+ *  (Tiptap contentJSON 经常 50KB+,移动端解析慢)。
+ *
+ *  并发安全:
+ *    - 同一用户连点两次 → 第一次 INSERT,第二次 SELECT-then-DELETE,
+ *      后到的请求总是查到正确状态。复合主键 (page_id, user_id) 保证幂等。
+ *    - 不同用户并发 → SELECT-then-INSERT/DELETE 不是原子的,但 likesCount
+ *      是 toggle 完后再 COUNT(*) 一次,反映最新;不会出现「我刚 like 但
+ *      计数没变」的 stale read。前端用返回值覆盖本地计数即可,不要再乐观推算。
+ *    - like INSERT + notification INSERT 在同一事务里 —— 避免「赞了但作者
+ *      没收到通知」(掉了一边) 或「没赞但收到通知」(极端竞态)。
+ *
+ *  权限:能 canAccessSpace(page.spaceId) 的人才能 like —— 私域成员互赞
+ *  是正常的,匿名公开不算(暂未支持)。trashed page 直接 404。
+ *
+ *  Admin 写 personal space 的反向保护:assertAdminNotWritingPersonalSpace
+ *  不应用在这里 —— like 是**读语义**,不修改 page 行,不污染作者。
+ *  只挡 admin 通过写路径 PATCH/publish/duplicate。这条保留 admin 也能
+ *  赞别人 personal draft 的语义(虽然罕见)。
+ *
+ *  通知:like → 给页面作者发一条 page_like;unlike → 静默(不补发通知,
+ *  也不发"取消赞"通知,Notion / Confluence 都这么做)。自己赞自己的页
+ *  不通知(actor === recipient 时 enqueueNotifications 直接过滤)。
+ */
+pagesRouter.post('/:id/like', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  // Access check + page existence check (also need authorId + title for notification).
+  const [page] = await db
+    .select({
+      spaceId: pages.spaceId,
+      deletedAt: pages.deletedAt,
+      authorId: pages.authorId,
+      title: pages.title,
+    })
+    .from(pages)
+    .where(eq(pages.id, id))
+    .limit(1)
+  if (!page || page.spaceId === null || page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  // Toggle + (optional) notification in one tx so we don't split-brain like vs notify.
+  let liked = false
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ userId: pageLikes.userId })
+      .from(pageLikes)
+      .where(and(eq(pageLikes.pageId, id), eq(pageLikes.userId, me.id)))
+      .limit(1)
+    if (existing.length > 0) {
+      await tx
+        .delete(pageLikes)
+        .where(and(eq(pageLikes.pageId, id), eq(pageLikes.userId, me.id)))
+      liked = false
+    } else {
+      await tx.insert(pageLikes).values({
+        pageId: id,
+        userId: me.id,
+        createdAt: Date.now(),
+      })
+      liked = true
+      // page_like 通知 —— enqueueNotifications 内部已经过滤 actor === recipient,
+      // 所以 page.authorId === me.id 的自赞不会发通知。
+      await enqueueNotifications(tx, {
+        kind: 'page_like',
+        actor: me,
+        pageId: id,
+        pageTitle: page.title,
+        commentId: null,
+        pageAuthorId: page.authorId,
+      })
+    }
+  })
+
+  // 实时 COUNT(*) 一下,不用前端 optimistic 推算
+  const countResult = await db.execute<{ count: number }>(sql`
+    SELECT COUNT(*)::int AS count FROM page_likes WHERE page_id = ${id}
+  `)
+  const likesCount = Number(countResult.rows[0]?.count ?? 0)
+
+  return c.json(ToggleLikeResponseSchema.parse({ liked, likesCount }))
 })
 
 /* ─── PATCH /api/pages/:id/move ────────────────────────────────────── */
@@ -647,7 +799,7 @@ pagesRouter.patch('/:id/move', async (c) => {
     }
   })
 
-  const [row] = await selectPagesWithAuthor(eq(pages.id, id)).limit(1)
+  const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)))
 })
@@ -783,7 +935,7 @@ pagesRouter.post('/:id/publish', async (c) => {
     authorId: me.id,
   })
 
-  const [row] = await selectPagesWithAuthor(eq(pages.id, newId)).limit(1)
+  const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
 })
@@ -902,7 +1054,7 @@ pagesRouter.post('/:id/duplicate', async (c) => {
     }
   })
 
-  const [row] = await selectPagesWithAuthor(eq(pages.id, newId)).limit(1)
+  const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
 })
@@ -1035,6 +1187,9 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(pageLabels)
         .where(inArray(pageLabels.pageId, subtreeIds))
+      await tx
+        .delete(pageLikes)
+        .where(inArray(pageLikes.pageId, subtreeIds))
       await tx
         .delete(attachments)
         .where(inArray(attachments.pageId, subtreeIds))

@@ -11,6 +11,9 @@
  *   - mention kind: one row per mentioned user (excluding the actor)
  *   - reply kind: zero or one row, target = parent comment author
  *   - comment_on_my_page: zero or one row, target = page author
+ *   - page_like kind: zero or one row, target = page author; only on LIKE
+ *     (unlike is silent — no notification, no email). commentId is null
+ *     since likes are not tied to a comment.
  *   - `pageTitle` snapshotted at trigger time (denormalized for history)
  */
 import { nanoid } from 'nanoid'
@@ -18,20 +21,26 @@ import type { AuthenticatedUser } from '../auth/session'
 import { notifications } from '../db/schema'
 import type { db } from '../db/client'
 
-export type NotificationKind = 'mention' | 'reply' | 'comment_on_my_page'
+export type NotificationKind =
+  | 'mention'
+  | 'reply'
+  | 'comment_on_my_page'
+  | 'page_like'
 
 export interface EnqueueArgs {
   kind: NotificationKind
   actor: AuthenticatedUser
   pageId: string
-  /** Page title snapshot — pass through from the comment trigger site. */
+  /** Page title snapshot — pass through from the trigger site. */
   pageTitle?: string | null
-  commentId: string
+  /** Required for comment-derived kinds (mention/reply/comment_on_my_page).
+   *  Pass `null` for `page_like` — likes are not tied to a comment. */
+  commentId?: string | null
   /** Required for kind='mention'. Ignored for others. */
   mentionedUserIds?: string[]
   /** Required for kind='reply'. */
   parentAuthorId?: string | null
-  /** Required for kind='comment_on_my_page'. */
+  /** Required for kind='comment_on_my_page' and kind='page_like'. */
   pageAuthorId?: string | null
 }
 
@@ -52,7 +61,9 @@ type NotificationRowShape = {
   kind: NotificationKind
   pageId: string
   pageTitle: string | null
-  commentId: string
+  /** Comment row id for comment-derived kinds (mention/reply/comment_on_my_page);
+   *  null for page_like (likes aren't tied to a comment). */
+  commentId: string | null
   mentionUserId: string | null
   isRead: false
   createdAt: number
@@ -83,7 +94,7 @@ export async function enqueueNotifications(
           kind: 'mention',
           pageId: args.pageId,
           pageTitle: args.pageTitle ?? null,
-          commentId: args.commentId,
+          commentId: args.commentId ?? null,
           mentionUserId: uid,
           isRead: false,
           createdAt: now,
@@ -101,7 +112,7 @@ export async function enqueueNotifications(
           kind: 'reply',
           pageId: args.pageId,
           pageTitle: args.pageTitle ?? null,
-          commentId: args.commentId,
+          commentId: args.commentId ?? null,
           mentionUserId: null,
           isRead: false,
           createdAt: now,
@@ -119,7 +130,25 @@ export async function enqueueNotifications(
           kind: 'comment_on_my_page',
           pageId: args.pageId,
           pageTitle: args.pageTitle ?? null,
-          commentId: args.commentId,
+          commentId: args.commentId ?? null,
+          mentionUserId: null,
+          isRead: false,
+          createdAt: now,
+        })
+      }
+      break
+    }
+    case 'page_like': {
+      const target = args.pageAuthorId
+      if (target && target !== args.actor.id) {
+        rows.push({
+          id: newNid(),
+          userId: target,
+          actorId: args.actor.id,
+          kind: 'page_like',
+          pageId: args.pageId,
+          pageTitle: args.pageTitle ?? null,
+          commentId: null,
           mentionUserId: null,
           isRead: false,
           createdAt: now,

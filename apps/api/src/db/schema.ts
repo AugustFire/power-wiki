@@ -258,11 +258,14 @@ export const comments = pgTable(
 
 /* ─────────────────────────────────────────────────────────────────
  *  Notifications — Stage 6
- *  One row per (recipient, event). Three event kinds:
+ *  One row per (recipient, event). Four event kinds:
  *    - 'mention'           → recipient was @mentioned in a comment
  *    - 'reply'             → recipient's comment got a reply
  *    - 'comment_on_my_page'→ recipient is the page author; a top-level
  *                            comment was added
+ *    - 'page_like'         → recipient is the page author; someone liked
+ *                            their page (POST /api/pages/:id/like)
+ *                            commentId / mentionUserId null; pageTitle 快照
  *  Reads are filtered by userId === current user; there is no admin
  *  bypass. 30s poll for unread-count on the frontend (see
  *  composables/useNotifications.ts); SSE is v0.1.
@@ -281,7 +284,7 @@ export const notifications = pgTable(
     actorId: text('actor_id').notNull(),
 
     kind: text('kind', {
-      enum: ['mention', 'reply', 'comment_on_my_page'],
+      enum: ['mention', 'reply', 'comment_on_my_page', 'page_like'],
     }).notNull(),
 
     /** Landing target — clicking the notification jumps to /p/{pageId}
@@ -435,6 +438,43 @@ export const attachments = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Page likes — 顶栏 👍
+ *
+ *  一行 = 一个用户对一页的一次点赞。Toggle 语义:后端先 SELECT,
+ *  存在就 DELETE,不在就 INSERT;不需要单独 DELETE endpoint,前端也不需要
+ *  "unliked" 标志。复合主键 (page_id, user_id) 保证幂等(同一用户
+ *  对同一页面重复 INSERT 会撞 PK 报 23505,我们 SELECT-then-INSERT 避免)。
+ *
+ *  跟 page_labels 一样:No FK,page hard-delete 时由 pages.ts DELETE
+ *  递归 CTE 显式清理(见 apps/api/src/routes/pages.ts DELETE?purge=true)。
+ *
+ *  索引:
+ *  - 主键 (page_id, user_id):直接给"该页有多少赞 / 该用户赞过没"用
+ *  - page_likes_page_idx (page_id 单独):"某页点赞数"是用 COUNT(*) 算的,
+ *    group by 主键前缀就够快了,这个索引主要是和 page_labels 的命名对齐
+ *    + 心智模型一致(每个 page-* join 表都建 page_id 单列索引)。
+ *  - page_likes_user_idx (user_id):未来"我赞过哪些页面"用。
+ * ───────────────────────────────────────────────────────────────── */
+export const pageLikes = pgTable(
+  'page_likes',
+  {
+    /** No FK — page hard-delete cleans up explicitly. */
+    pageId: text('page_id').notNull(),
+    /** No FK — disabled/deleted users get their rows swept by app code if needed. */
+    userId: text('user_id').notNull(),
+    /** Date.now() 毫秒,点赞时间。当前端不需要显示具体点赞时间时这个字段
+     *  仅供 audit / 排序用。 */
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    /** Composite PK = one like per (page, user) — idempotent. */
+    primaryKey({ columns: [t.pageId, t.userId] }),
+    /** Future: "我赞过哪些页面" — 直接走 user_id 即可。 */
+    index('page_likes_user_idx').on(t.userId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -458,3 +498,5 @@ export type PageLabelRow = typeof pageLabels.$inferSelect
 export type NewPageLabelRow = typeof pageLabels.$inferInsert
 export type AttachmentRow = typeof attachments.$inferSelect
 export type NewAttachmentRow = typeof attachments.$inferInsert
+export type PageLikeRow = typeof pageLikes.$inferSelect
+export type NewPageLikeRow = typeof pageLikes.$inferInsert

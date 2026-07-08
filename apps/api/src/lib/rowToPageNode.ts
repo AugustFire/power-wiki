@@ -18,6 +18,11 @@
  * Stage 8: `labels` is also denormalized via a LEFT JOIN + json_agg in
  * `pages.ts`. The mapper accepts the joined array (always present; [] when
  * the page has no labels or when the caller didn't bother to join).
+ *
+ * Page likes: `likesCount` (always present on joined rows; `0` default) +
+ * `likedByMe` (false default) come from correlated subqueries in
+ * `selectPagesWithAuthor`. Hand-undefined in fallback paths so callers that
+ * skip the JOIN still produce a valid DTO.
  */
 
 import type { PageNode } from '@power-wiki/shared'
@@ -35,6 +40,15 @@ export type PageRowWithAuthor = PageRow & {
    * 任何走 selectPagesWithAuthor 的路径(GET / 和 GET /:id)都会自动计算。
    */
   hasChildren: boolean
+  /** 点赞总数。Joined rows 一定有这个字段(0 / 数字),未走 join 的 fallback
+   *  在 rowToPageNode 里 fallback 成 0。 */
+  likesCount?: number
+  /** 当前用户是否已赞。Joined rows 为 boolean(SELECT COALESCE) ,
+   *  未传 viewerUserId 时返回 false。Fallback 路径给 false。 */
+  likedByMe?: boolean
+  /** 点赞者 sample(前 5 人) —— LEFT JOIN users 拿 name/color,user 被
+   *  disabled 时 name/color 为 null。Fallback 路径给 []。 */
+  likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
 }
 
 export function rowToPageNode(row: PageRowWithAuthor): PageNode {
@@ -61,6 +75,9 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,
     hasChildren: row.hasChildren,
+    likesCount: row.likesCount ?? 0,
+    likedByMe: row.likedByMe ?? false,
+    likedBySample: row.likedBySample ?? [],
   }
   if (row.icon !== null) node.icon = row.icon
   return node

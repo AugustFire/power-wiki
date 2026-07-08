@@ -37,6 +37,7 @@ import {
   ResetPasswordInputSchema,
   SignInInputSchema,
   SpaceSchema,
+  ToggleLikeResponseSchema,
   UnreadCountResponseSchema,
   UpdateCommentInputSchema,
   UserGroupSchema,
@@ -67,6 +68,7 @@ import type {
   SetSpaceAccessInput,
   SignInInput,
   Space,
+  ToggleLikeResponse,
   UpdateCommentInput,
   UpdateGroupInput,
   UpdatePageInput,
@@ -406,6 +408,22 @@ export const api = {
         { method: 'DELETE' },
       )
       invalidatePrefix('/pages/trash')
+    },
+    /**
+     * 顶栏 👍 toggle。单端点:服务端 SELECT-then-INSERT/DELETE,无需
+     * 区分 like / unlike 两条路径。响应是最小回执 { liked, likesCount }
+     * —— 后端 COUNT(*) 完再返回,前端**不要**乐观推算,直接覆盖本地值即可。
+     */
+    toggleLike: async (id: string): Promise<ToggleLikeResponse> => {
+      const raw = await request<ToggleLikeResponse>(
+        `/pages/${encodeURIComponent(id)}/like`,
+        { method: 'POST' },
+      )
+      // toggle 后 likesCount 变了 —— 任何缓存的 pages 列表都失效,下个
+      // sidebar / search 调用重新拉。In-place 操作不会改 page 主体,
+      // 但 detail view 不会重新进 list,所以纯 invalidate GET。
+      invalidatePrefix('/pages')
+      return ToggleLikeResponseSchema.parse(raw) as ToggleLikeResponse
     },
   },
 

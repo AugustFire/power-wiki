@@ -66,6 +66,16 @@ export interface PageNode {
    * 此字段可能为 undefined,PageTree 一律当 leaf 处理。
    */
   hasChildren?: boolean
+  /** 页面点赞总数 —— page_likes 表 COUNT(*) GROUP BY page_id 算出。
+   *  Optional:种子页 / 老 cache 没填时为 undefined,前端 ReadView fallback 0 渲染。 */
+  likesCount?: number
+  /** 当前用户是否已赞 —— EXISTS(page_likes WHERE page_id=? AND user_id=me)。
+   *  Optional:同上,前端用这个判断 👍 按钮的 primary 态。 */
+  likedByMe?: boolean
+  /** 点赞者 sample(前 5 人,按 created_at 升序) —— 给 ReadView 头像组用。
+   *  user 已 disabled 时 name/color 为 null。Optional:未走 selectPagesWithAuthor
+   *  的 fallback 路径给 []。 */
+  likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */
