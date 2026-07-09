@@ -49,6 +49,7 @@
 import { Hono } from 'hono'
 import { and, eq, getTableColumns, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import {
+  ActivityEventSchema,
   CreatePageInputSchema,
   DuplicatePageInputSchema,
   PageNodeSchema,
@@ -74,6 +75,7 @@ import {
   pageLabels,
   attachments,
   pageLikes,
+  pageEvents,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
@@ -81,6 +83,8 @@ import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { deleteObject } from '../lib/s3'
 import { enqueueNotifications } from '../lib/notify'
+import { recordPageEvent, SUPPORTED_KINDS, type PageEventKind } from '../lib/pageEvents'
+import { purgeExpiredTrash } from '../lib/retention'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
@@ -281,10 +285,131 @@ pagesRouter.get('/', async (c) => {
   return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
 })
 
+/* ─── GET /api/pages/activity ───────────────────────────────────────────
+ *  P1-3 v2 workspace-wide 活动流。`?space=<id>` 可选过滤;不传 = 当前用户
+ *  可见的所有空间(admin 看全部,普通用户走 canAccessSpace)。按 created_at DESC
+ *  返回最多 50 行 ActivityEvent,每行带 `kind`(created/edited/moved/restored/
+ *  duplicated/published)+ actor + page + space 信息。
+ *
+ *  数据来源是 `page_events` 表 —— 写路径(POST /pages, PATCH, /move,
+ *  /restore, /duplicate, /publish)显式插行,UI 按 kind 渲染不同动词。v1
+ *  时代用 `pages.updated_at` 派生,语义错位,已废弃。
+ *
+ *  事件行无 FK(actor/page 删后保留作审计);我们 LEFT JOIN pages 拿最新标题
+ *  (如果 page 已硬删,title fallback '已删除页面'),LEFT JOIN users 拿 actor
+ *  显示字段,LEFT JOIN spaces 拿 chip。
+ *
+ *  Registered BEFORE GET /:id 同 trash 路由的 dispatch 考虑。
+ */
+pagesRouter.get('/activity', async (c) => {
+  const me = c.get('user')
+  const spaceId = c.req.query('space')?.trim() || null
+
+  // 分页 — 默认 20 条/页,上限 50(同 search.ts 的硬上限)。`?offset=N`
+  // 翻页时用;空 offset/limit 用 schema default。
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  let { limit, offset } = parsed.args
+  if (limit === undefined) limit = 20
+  if (limit > 50) limit = 50
+
+  // Accessibility scope。admin 短路 TRUE,普通用户拿 visibleSpaceIds。
+  // Empty visible set 直接返空 —— 与 search.ts 一致的 fail-closed 行为。
+  let accessibleScope: SQL
+  if (me.role === 'admin') {
+    accessibleScope = sql`TRUE`
+  } else {
+    const ids = await getAccessibleSpaceIds(me.id, false)
+    if (ids === '*' || ids.length === 0) {
+      return c.json({ items: [], hasMore: false })
+    }
+    accessibleScope = inArray(pageEvents.spaceId, ids)
+  }
+  const spaceFilter: SQL = spaceId ? eq(pageEvents.spaceId, spaceId) : sql`TRUE`
+
+  // page_events → pages (拿最新 title) → users (actor name/color) → spaces (chip)
+  // created_at DESC。LIMIT limit+1 → applyPagination 算 hasMore。
+  // `?space=<id>` 走 page_events_space_created_idx 复合索引;无 space 过滤
+  // 走 page_events_created_idx。
+  const rows = await db
+    .select({
+      pageId: pageEvents.pageId,
+      pageTitle: pages.title,
+      kind: pageEvents.kind,
+      actorId: pageEvents.actorId,
+      actorName: users.name,
+      actorColor: users.color,
+      createdAt: pageEvents.createdAt,
+      spaceId: pageEvents.spaceId,
+      spaceName: spaces.name,
+      spaceColor: spaces.color,
+      spaceKind: spaces.kind,
+    })
+    .from(pageEvents)
+    .leftJoin(pages, eq(pages.id, pageEvents.pageId))
+    .leftJoin(users, eq(users.id, pageEvents.actorId))
+    .leftJoin(spaces, eq(spaces.id, pageEvents.spaceId))
+    .where(and(spaceFilter, accessibleScope))
+    .orderBy(sql`${pageEvents.createdAt} DESC`)
+    .limit(limit + 1)
+    .offset(offset)
+
+  // 分页收缩(limit+1 → hasMore)。先算 hasMore 再映射 kind/zod,避免
+  // 对会被 drop 掉的那 1 行做无用映射。
+  const page = applyPagination(rows, limit, offset)
+
+  // kind 是应用层 enum (text 列),zod 验证。空 / 未知 kind 兜底 'edited' —
+  // v0 数据全是受控写路径,defensive only。集合从 pageEvents.ts 来,避免
+  // 新加 kind 时漏改这里 — 上一次坑:加 trashed/purged 没改这行,feed
+  // 静默把它们打成 edited。
+  const items = page.items
+    .filter((r) => r.spaceId !== null)
+    .map((r) => {
+      const kindRaw = String(r.kind ?? '')
+      const kind: PageEventKind =
+        SUPPORTED_KINDS.has(kindRaw as PageEventKind)
+          ? (kindRaw as PageEventKind)
+          : 'edited'
+      return ActivityEventSchema.parse({
+        pageId: r.pageId,
+        pageTitle: r.pageTitle ?? '(已删除页面)',
+        kind,
+        actorId: r.actorId ?? 'me',
+        actorName: r.actorName,
+        actorColor: r.actorColor,
+        updatedAt: r.createdAt,
+        spaceId: r.spaceId!,
+        spaceName: r.spaceName ?? '(已删除空间)',
+        spaceColor: r.spaceColor ?? '#888888',
+        spaceKind: r.spaceKind ?? 'shared',
+      })
+    })
+
+  return c.json({ items, hasMore: page.hasMore })
+})
+
+/* ─── (v1 activity 旧实现保留参考) ─────────────────────────────────────
+ *  v1 走 pages.updated_at 派生,只能报「这页最近被改」,无法区分
+ *  create / edit / move / restore / duplicate / publish。已废弃;改成读
+ *  page_events(见上方 P1-3 v2)。
+ *
+ *  旧 sql 块保留作为「为什么不能用 pages.updated_at」的脚注(避免后人
+ *  重新发明同一个轮子):
+ *
+ *    db.select({ pageId, updatedAt, actorId: pages.updatedBy, ... })
+ *      .from(pages).leftJoin(users, ...).leftJoin(spaces, ...)
+ *      .where(and(isNull(pages.deletedAt), spaceFilter, accessibleScope))
+ *      .orderBy(sql`${pages.updatedAt} DESC`).limit(50)
+ * ───────────────────────────────────────────────────────────────────── */
+
 /* ─── GET /api/pages/trash ─────────────────────────────────────────────
  *  Admin-only. `?space=<id>` is REQUIRED — admins pick a space to inspect.
  *  Returns the trashed pages in that space (deleted_at IS NOT NULL),
  *  ordered by deletion time DESC so the most recent deletion sits on top.
+ *
+ *  P1-8:每次进来都先 lazy 跑一次 purgeExpiredTrash() — 读 admin 配置
+ *  (trash_retention_days),hard-delete 掉 deleted_at < cutoff 的行,
+ *  再返剩余 trash。retention=0 时跳过(DB no-op)。
  *
  *  Registered BEFORE GET /:id so Hono's first-match dispatch doesn't route
  *  "/trash" to the dynamic param handler.
@@ -298,6 +423,9 @@ pagesRouter.get('/trash', async (c) => {
   if (!querySpace) {
     return c.json({ error: 'space_required' }, 400)
   }
+  // P1-8: lazy purge — admin 打开 trash 顺手清。30s+ 的不活跃 purge
+  // 计划进 v2(cron / 启动时跑)。lazy 是 v0 简化。
+  await purgeExpiredTrash()
   const parsed = safeParsePagination(c)
   if (!parsed.ok) return parsed.response
   const { limit, offset } = parsed.args
@@ -381,8 +509,17 @@ pagesRouter.post('/', async (c) => {
       sortOrder,
       createdAt: now,
       updatedAt: now,
+      updatedBy: me.id,
       authorId: me.id,
     })
+
+  // P1-3 v2: emit a 'created' event for the activity feed.
+  await recordPageEvent({
+    pageId: id,
+    spaceId: input.spaceId,
+    kind: 'created',
+    actor: me,
+  })
 
   // Re-fetch via the LEFT JOIN helper so authorName / authorColor are populated.
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
@@ -422,7 +559,10 @@ pagesRouter.patch('/:id', async (c) => {
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, existing.spaceId)
   if (blocked) return blocked
 
-  const patch: Partial<typeof pages.$inferInsert> = { updatedAt: Date.now() }
+  const patch: Partial<typeof pages.$inferInsert> = {
+    updatedAt: Date.now(),
+    updatedBy: me.id,
+  }
   if (input.title !== undefined) patch.title = input.title
   if (input.contentJSON !== undefined) patch.contentJson = input.contentJSON
   if (input.contentHTML !== undefined) patch.contentHtml = input.contentHTML
@@ -448,6 +588,9 @@ pagesRouter.patch('/:id', async (c) => {
 
   if (isContentChange) {
     await db.update(pages).set(patch).where(eq(pages.id, id))
+    // No 'edited' event here — auto-save (every 500ms while typing) would
+    // spam the activity feed. The 'edited' event is fired instead by
+    // POST /pages/:id/snapshots (idle 30s / route-leave boundary).
   }
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
@@ -517,6 +660,16 @@ pagesRouter.post('/:id/snapshots', async (c) => {
           SELECT MAX(version_number) FROM page_versions WHERE page_id = ${id}
         ) - ${RETENTION}
     `)
+  })
+
+  // P1-3 v4: snapshot 边界 = 编辑边界。auto-save PATCH 不再单独打
+  // 'edited' event(idle 30s / route-leave 会触发这个 snapshot,正好覆盖)。
+  // 同样的活动语义,但事件密度跟 version history 对齐,feed 不被淹没。
+  await recordPageEvent({
+    pageId: id,
+    spaceId: page.spaceId,
+    kind: 'edited',
+    actor: me,
   })
 
   // refetch + 渲染 DTO(LEFT JOIN users 拿编辑者姓名/颜色)
@@ -788,10 +941,11 @@ pagesRouter.patch('/:id/move', async (c) => {
       .update(pages)
       .set({
         spaceId: targetSpaceId,
-        parentId: targetParentId,
-        sortOrder: -1,
-        updatedAt: Date.now(),
-      })
+      parentId: targetParentId,
+      sortOrder: -1,
+      updatedAt: Date.now(),
+      updatedBy: me.id,
+    })
       .where(eq(pages.id, id))
     // Sequentially rewrite sibling order — the `await` ensures every UPDATE
     // commits before the transaction's COMMIT (Drizzle queues tx.update()
@@ -805,6 +959,23 @@ pagesRouter.patch('/:id/move', async (c) => {
         .set({ sortOrder: i })
         .where(eq(pages.id, orderedIds[i]!))
     }
+  })
+
+  // P1-3 v2: emit 'moved' event AFTER the tx commits (targetSpaceId is
+  // already in effect on the page row, so we record under the new space).
+  // For cross-space moves, payload carries the source space so the UI
+  // could later show "moved from {srcSpace} → {dstSpace}".
+  await recordPageEvent({
+    pageId: id,
+    spaceId: targetSpaceId,
+    kind: 'moved',
+    actor: me,
+    payload: {
+      fromSpaceId: existing.spaceId,
+      toSpaceId: targetSpaceId,
+      fromParentId: existing.parentId,
+      toParentId: targetParentId,
+    },
   })
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id }).limit(1)
@@ -940,7 +1111,19 @@ pagesRouter.post('/:id/publish', async (c) => {
     sortOrder,
     createdAt: now,
     updatedAt: now,
+    updatedBy: me.id,
     authorId: me.id,
+  })
+
+  // P1-3 v2: emit 'published' event on the NEW page. Source stays in the
+  // personal space and is NOT re-stamped — the act of publishing is a new
+  // page event, not an edit on the source.
+  await recordPageEvent({
+    pageId: newId,
+    spaceId: targetSpaceId,
+    kind: 'published',
+    actor: me,
+    payload: { sourcePageId: source.id },
   })
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
@@ -1042,6 +1225,7 @@ pagesRouter.post('/:id/duplicate', async (c) => {
       sortOrder: -1, // sentinel — rewritten below; avoids unique-index conflict
       createdAt: now,
       updatedAt: now,
+      updatedBy: me.id,
       authorId: me.id, // the duplicator becomes the new page's author
       // starred / labels / deleted_* intentionally NOT copied — fresh page.
     })
@@ -1062,6 +1246,16 @@ pagesRouter.post('/:id/duplicate', async (c) => {
     }
   })
 
+  // P1-3 v2: emit 'duplicated' event on the NEW copy. Source row is
+  // untouched — duplicating is a new-page event, not an edit.
+  await recordPageEvent({
+    pageId: newId,
+    spaceId: source.spaceId,
+    kind: 'duplicated',
+    actor: me,
+    payload: { sourcePageId: id },
+  })
+
   const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
@@ -1075,7 +1269,8 @@ pagesRouter.post('/:id/duplicate', async (c) => {
  *  restore shouldn't silently succeed).
  */
 pagesRouter.post('/:id/restore', async (c) => {
-  if (c.get('user').role !== 'admin') {
+  const me = c.get('user')
+  if (me.role !== 'admin') {
     return c.json({ error: 'forbidden', message: '需要管理员权限' }, 403)
   }
   const id = c.req.param('id')
@@ -1106,8 +1301,17 @@ pagesRouter.post('/:id/restore', async (c) => {
 
   await db
     .update(pages)
-    .set({ deletedAt: null, deletedBy: null, updatedAt: Date.now() })
+    .set({ deletedAt: null, deletedBy: null, updatedAt: Date.now(), updatedBy: me.id })
     .where(and(eq(pages.id, id), isNotNull(pages.deletedAt)))
+
+  // P1-3 v2: emit 'restored' event so the activity feed surfaces the
+  // recovery (vs. mistaking it for an edit).
+  await recordPageEvent({
+    pageId: id,
+    spaceId: existing.spaceId,
+    kind: 'restored',
+    actor: me,
+  })
 
   return c.body(null, 204)
 })
@@ -1211,6 +1415,15 @@ pagesRouter.delete('/:id', async (c) => {
         console.warn('[purge] failed to delete object', storageKey, err)
       }
     }
+    // Activity feed — purge event references the now-deleted pageId. The
+    // LEFT JOIN in GET /activity will surface title=null and the view
+    // renders "(无标题)". Event row stays put (no FK, no cascade).
+    await recordPageEvent({
+      pageId: id,
+      spaceId: existing.spaceId,
+      kind: 'purged',
+      actor: me,
+    })
     return c.body(null, 204)
   }
 
@@ -1240,8 +1453,15 @@ pagesRouter.delete('/:id', async (c) => {
 
   await db
     .update(pages)
-    .set({ deletedAt: Date.now(), deletedBy: me.id, updatedAt: Date.now() })
+    .set({ deletedAt: Date.now(), deletedBy: me.id, updatedAt: Date.now(), updatedBy: me.id })
     .where(and(eq(pages.id, id), isNull(pages.deletedAt)))
+
+  await recordPageEvent({
+    pageId: id,
+    spaceId: existing.spaceId,
+    kind: 'trashed',
+    actor: me,
+  })
 
   return c.body(null, 204)
 })

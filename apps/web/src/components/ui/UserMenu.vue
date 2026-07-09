@@ -18,9 +18,11 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const uiStore = useUiStore()
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -67,6 +69,16 @@ function goMySpace() {
   // /me renders MySpaceView which flips the active space to the user's
   // personal space and bounces to / (HomeView then renders the tree).
   void router.push('/me')
+}
+
+/**
+ * Open the SettingsDrawer (P1-6). Triggered by the 「设置」 menu item below.
+ * Drawer itself lives at the App.vue level (teleport), so we only flip
+ * uiStore.openSettings() here; the drawer responds to the reactive flag.
+ */
+function goSettings() {
+  close()
+  uiStore.openSettings()
 }
 
 async function onLogout() {
@@ -135,6 +147,16 @@ async function onLogout() {
         >
           <span class="material-symbols-outlined um-icon">cottage</span>
           <span>我的空间</span>
+        </button>
+
+        <button
+          type="button"
+          class="um-item"
+          role="menuitem"
+          @click="goSettings"
+        >
+          <span class="material-symbols-outlined um-icon">settings</span>
+          <span>设置</span>
         </button>
 
         <button

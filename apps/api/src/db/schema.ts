@@ -40,6 +40,7 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 /* ─────────────────────────────────────────────────────────────────
  *  Users / Auth
@@ -181,6 +182,14 @@ export const pages = pgTable(
      */
     authorId: text('author_id').notNull().default('me'),
 
+    /**
+     * 最近编辑者 user id(P1-3 活动流的数据来源)。
+     * 每次 PATCH / move / restore 都同步更新。无 FK — disabled / deleted
+     * users 的行保留不动(UI 派生时 LEFT JOIN users,缺 name/color 用 null 渲染)。
+     * 老存量行在 0012 migration 里 backfill 成 author_id。
+     */
+    updatedBy: text('updated_by'),
+
     starred: boolean('starred').notNull().default(false),
 
     /**
@@ -196,6 +205,7 @@ export const pages = pgTable(
     index('pages_parent_order_idx').on(table.parentId, table.sortOrder),
     index('pages_space_idx').on(table.spaceId),
     index('pages_trash_idx').on(table.spaceId, table.deletedAt),
+    index('pages_updated_by_idx').on(table.updatedBy),
   ],
 )
 
@@ -483,6 +493,36 @@ export const pageLikes = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Admin settings — P1-8 回收站保留期
+ *
+ *  key-value 表,只存全局 admin 配置。当前唯一 key:
+ *    - `trash_retention_days`:回收站过期天数(数字字符串)。
+ *      - `0` = 永不清理(等价 v0 行为,但仍走 lazy purge 路径;
+ *        lazy 看到 0 直接 no-op,跳过 DELETE)
+ *      - `30` = 默认
+ *      - 大于 0 的整数 = 该天数
+ *
+ *  设计理由:
+ *    - 单表 key-value 而不是「每个 setting 一列」,未来加 settings
+ *      (登录失败锁定阈值、附件大小上限等)不用动 schema。
+ *    - 不强制每行存在:`trash_retention_days` 缺失时 lib/retention.ts
+ *      直接 fallback 30 天,0013 migration 也 seed 缺省值。
+ *  No FK — 改 admin 不会触发 settings 行级联。
+ * ───────────────────────────────────────────────────────────────── */
+
+export const adminSettings = pgTable('admin_settings', {
+  /** Setting key,e.g. 'trash_retention_days'.作为唯一主键。 */
+  key: text('key').primaryKey(),
+  /** 字符串值(数字也以字符串存,frontend 自行 parseInt / parseFloat)。
+   *  JSON 不上 — 简单 key-value 没有嵌套需求。 */
+  value: text('value').notNull(),
+  /** 最后更新时间 ms。admin 改后端 PATCH 时刷新。 */
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  /** No FK — admin 删账号不级联 settings(配置是 workspace 级)。 */
+  updatedBy: text('updated_by'),
+})
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -508,3 +548,49 @@ export type AttachmentRow = typeof attachments.$inferSelect
 export type NewAttachmentRow = typeof attachments.$inferInsert
 export type PageLikeRow = typeof pageLikes.$inferSelect
 export type NewPageLikeRow = typeof pageLikes.$inferInsert
+export type AdminSettingRow = typeof adminSettings.$inferSelect
+export type NewAdminSettingRow = typeof adminSettings.$inferInsert
+
+/* ─────────────────────────────────────────────────────────────────────
+ *  page_events — workspace-wide 活动流数据源(P1-3 v2)。
+ *
+ *  之前活动流从 `pages.updated_at` 派生,只能报「这页最近被改」,无法区分
+ *  create / edit / move / restore / duplicate / publish — UI 端 verb 写死成
+ *  「编辑了」是错位语义。这张表由写路径(POST /pages, PATCH, /move, /restore,
+ *  /duplicate, /publish)显式插行,前端按 kind 渲染不同动词。
+ *
+ *  设计要点:
+ *   - **无 FK**(CLAUDE.md 硬约束):actor_id 可以是已 disabled / 已删 user
+ *     (前端 LEFT JOIN users 拿到 null 后兜底显示「已删除用户」)。
+ *     page_id 同理 — 硬删后这张表的事件行**保留**作历史(否则审计会丢)。
+ *   - **payload jsonb**:move 存 {fromSpaceId, toSpaceId} 等上下文。
+ *     前端 v0 只读不写,扩展时再加 enum。
+ *   - **created_at bigint (ms)**:跟其他表对齐,索引按 DESC 让活动流一次
+ *     走 index scan。
+ *   - **空间过滤索引 + 时间倒序索引**:`?space=<id>` 的核心 path 走
+ *     (space_id, created_at DESC) 的复合索引,workspace-wide 走 created_at DESC
+ *     单列索引。
+ *   - **INSERT 不参与 page_versions 写入**:跟 starred toggle 同理,纯
+ *     metadata 写不触发 PATCH / 写 version;这里我们显式 INSERT,跟那种
+ *     「不动 page_version」是不同维度的事。
+ * ───────────────────────────────────────────────────────────────────── */
+export const pageEvents = pgTable(
+  'page_events',
+  {
+    id: text('id').primaryKey(),
+    pageId: text('page_id').notNull(),
+    spaceId: text('space_id').notNull(),
+    kind: text('kind').notNull(),
+    actorId: text('actor_id'),
+    /** 可选 jsonb,前端 v0 不解析。future fields: move 存 from/to space,
+     *  duplicate / publish 存 source page id。 */
+    payload: jsonb('payload'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    index('page_events_space_created_idx').on(t.spaceId, sql`${t.createdAt} DESC`),
+    index('page_events_created_idx').on(sql`${t.createdAt} DESC`),
+  ],
+)
+export type PageEventRow = typeof pageEvents.$inferSelect
+export type NewPageEventRow = typeof pageEvents.$inferInsert

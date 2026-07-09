@@ -80,6 +80,20 @@ export const useUiStore = defineStore('ui', () => {
   const commentsOpen = ref(false)
 
   /**
+   * P1-6 — Settings drawer state. UserMenu 「设置」入口唤起,SettingsDrawer
+   * 渲染。挂 uiStore 而不是 provide/inject 是因为 UserMenu 和 SettingsDrawer
+   * 不在同一组件树里(UserMenu 在 TopBar 内,SettingsDrawer 顶层 teleport),
+   * 走 store 更直白。
+   */
+  const settingsDrawerOpen = ref(false)
+  function openSettings(): void {
+    settingsDrawerOpen.value = true
+  }
+  function closeSettings(): void {
+    settingsDrawerOpen.value = false
+  }
+
+  /**
    * Resolve the expansion list for a given space, falling back to the
    * legacy single-list state when the space hasn't been toggled yet.
    * Returns a fresh array each call to avoid giving callers a live
@@ -216,6 +230,9 @@ export const useUiStore = defineStore('ui', () => {
     commentsOpen,
     openComments,
     closeComments,
+    settingsDrawerOpen,
+    openSettings,
+    closeSettings,
     toasts,
     notify,
     dismiss,

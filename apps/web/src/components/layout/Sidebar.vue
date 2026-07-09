@@ -6,6 +6,7 @@ import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { newId } from '@/lib/id'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import PageTree from './PageTree.vue'
 
 const pagesStore = usePagesStore()
@@ -162,16 +163,19 @@ watch(
         </span>
         <span class="count">{{ tree.length }}</span>
       </div>
-      <div v-if="tree.length === 0" class="tree-empty">
-        <div class="tree-empty-icon">
-          <span class="material-symbols-outlined" style="font-size:24px">inbox</span>
-        </div>
-        <div class="tree-empty-text">还没有页面</div>
+      <EmptyState
+        v-if="tree.length === 0"
+        class="tree-empty"
+        variant="no-data"
+        size="sm"
+        icon="inbox"
+        title="还没有页面"
+      >
         <button class="tree-empty-cta" @click="createRoot">
           <span class="material-symbols-outlined icon-sm">add</span>
           创建第一个
         </button>
-      </div>
+      </EmptyState>
       <div v-else class="tree">
         <PageTree
           v-for="root in tree"
@@ -327,26 +331,8 @@ watch(
 }
 
 .tree-empty {
-  padding: 16px 4px 4px;
-  color: var(--text-3);
-  font-size: 13px;
-  text-align: center;
-}
-.tree-empty-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--bg-subtle);
-  color: var(--text-3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 10px;
-}
-.tree-empty-text {
-  color: var(--text-3);
-  font-size: 13px;
-  margin-bottom: 10px;
+  /* EmptyState 自带 padding,这里仅约束外层居中即可 */
+  margin-top: 8px;
 }
 .tree-empty-cta {
   display: inline-flex;

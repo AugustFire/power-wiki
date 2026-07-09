@@ -27,6 +27,116 @@ const spacesStore = useSpacesStore()
 const uiStore = useUiStore()
 const { confirm } = useConfirm()
 
+/* ─── P1-8: 回收站保留期设置 ─────────────────────────────────────
+ *   拉一次 GET /admin/settings/trash_retention_days,挂在 trash 列表上方
+ *   一张「自动清理策略」卡片,admin 可改;改完下一次 GET /pages/trash
+ *   就照新值清理(后端 lazy purge)。
+ *
+ *   v2 交互打磨:
+ *     - 记 originalDays(服务端当前值);retentionDays !== originalDays 时
+ *       才算 dirty,保存按钮会自动 disable,点也走 short-circuit 不发请求。
+ *       替代"按钮永远能点 → 用户随手点一下也中 reset"那个老 bug。
+ *     - justSaved 在请求成功后置位 ~1.8s:按钮变绿 + 「✓ 已保存」,
+ *       给用户离按钮最近的反馈,不再只靠右下 toast。超时后回落到「保存」。
+ *     - dirty 时旁边出「尚未保存」提示,引导用户下一步。 */
+type RetentionPreset = 0 | 7 | 30 | 90 | 180
+const RETENTION_PRESETS: { value: RetentionPreset; label: string }[] = [
+  { value: 0, label: '永不清' },
+  { value: 7, label: '7 天' },
+  { value: 30, label: '30 天' },
+  { value: 90, label: '90 天' },
+  { value: 180, label: '180 天' },
+]
+const retentionDays = ref<number | null>(null)
+const originalDays = ref<number | null>(null)
+const retentionLoaded = ref(false)
+const retentionSaving = ref(false)
+const retentionCustom = ref<string>('')
+const justSaved = ref(false)
+let savedTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadRetention() {
+  try {
+    const s = await api.admin.settings.get('trash_retention_days')
+    retentionDays.value = Number(s.value)
+    retentionCustom.value = retentionDays.value === 0 ? '' : String(retentionDays.value)
+    originalDays.value = retentionDays.value
+    retentionLoaded.value = true
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 400) {
+      // 未知 key,把它视作 30 天(默认值)
+      retentionDays.value = 30
+      retentionCustom.value = '30'
+      originalDays.value = 30
+      retentionLoaded.value = true
+    } else {
+      // 网络错误不阻塞主流程,卡片留 loading 状态
+      console.warn('[trash] load retention failed', e)
+    }
+  }
+}
+
+function applyPreset(v: RetentionPreset) {
+  retentionDays.value = v
+  retentionCustom.value = v === 0 ? '' : String(v)
+}
+
+function onCustomInput() {
+  // 解析 custom 数字 → 写回 retentionDays。空 / 非法 → 不动。
+  // v-model 配 type="number" 会把值转成 number,所以要 String() 包一下。
+  const t = String(retentionCustom.value ?? '').trim()
+  if (t === '') {
+    // 留空 = 视作 0(永不清),但只在点击保存时才落定
+    retentionDays.value = 0
+    return
+  }
+  const n = Number(t)
+  if (Number.isInteger(n) && n >= 0 && n <= 36500) {
+    retentionDays.value = n
+  }
+}
+
+const dirty = computed(
+  () =>
+    retentionDays.value != null &&
+    originalDays.value != null &&
+    retentionDays.value !== originalDays.value,
+)
+
+async function saveRetention() {
+  // 防御性 short-circuit:即便按钮被外部强制 enabled,也不打无意义的 PATCH,
+  // 也不出没意义的 toast。
+  if (retentionSaving.value) return
+  if (!dirty.value || retentionDays.value == null) return
+  retentionSaving.value = true
+  try {
+    await api.admin.settings.update('trash_retention_days', {
+      value: retentionDays.value,
+    })
+    // 写 baseline,触发 dirty → false,按钮自动变回 disabled 状态
+    originalDays.value = retentionDays.value
+    uiStore.notify(
+      retentionDays.value === 0
+        ? '回收站已设为「永不清」'
+        : `回收站保留期已更新为 ${retentionDays.value} 天`,
+      'success',
+    )
+    if (savedTimer != null) clearTimeout(savedTimer)
+    justSaved.value = true
+    savedTimer = setTimeout(() => {
+      justSaved.value = false
+      savedTimer = null
+    }, 1800)
+  } catch (e) {
+    uiStore.notify(
+      e instanceof ApiError ? `保存失败: ${e.code}` : '保存失败',
+      'error',
+    )
+  } finally {
+    retentionSaving.value = false
+  }
+}
+
 type KindTab = 'shared' | 'personal'
 const kindTab = ref<KindTab>('shared')
 
@@ -87,6 +197,8 @@ onMounted(async () => {
   }
   // Run the initial load exactly once.
   void loadTrashFor(selectedSpaceId.value)
+  // P1-8: 拉一次保留期设置(不阻塞主加载)
+  void loadRetention()
 })
 
 watch(kindTab, () => {
@@ -262,6 +374,79 @@ async function onPurge(id: string, title: string) {
         共 {{ rows.length }} 项
       </div>
     </div>
+
+    <!-- P1-8: 保留期策略 -->
+    <section v-if="retentionLoaded" class="retention-card" aria-label="回收站保留期">
+      <div class="retention-head">
+        <span class="material-symbols-outlined ret-icon">schedule</span>
+        <div class="ret-title-block">
+          <h3 class="ret-title">自动清理策略</h3>
+          <p class="ret-sub">
+            <template v-if="retentionDays === 0">
+              永不自动清理 — 需要 admin 手动永久删除。
+            </template>
+            <template v-else>
+              软删除超过
+              <strong>{{ retentionDays }}</strong>
+              天的页面会在下次打开回收站时自动永久删除。
+            </template>
+          </p>
+        </div>
+      </div>
+      <div class="ret-controls">
+        <div class="ret-presets" role="radiogroup" aria-label="保留期预设">
+          <button
+            v-for="p in RETENTION_PRESETS"
+            :key="p.value"
+            type="button"
+            class="ret-chip"
+            :class="{ active: retentionDays === p.value }"
+            role="radio"
+            :aria-checked="retentionDays === p.value"
+            @click="applyPreset(p.value)"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+        <label class="ret-custom">
+          <span>自定义</span>
+          <input
+            v-model="retentionCustom"
+            type="number"
+            min="0"
+            max="36500"
+            step="1"
+            placeholder="天数"
+            @input="onCustomInput"
+          />
+          <span class="ret-unit">天</span>
+        </label>
+        <div class="ret-actions">
+          <span v-if="dirty && !retentionSaving && !justSaved" class="ret-dirty-hint">
+            <span class="material-symbols-outlined icon-sm">edit</span>
+            尚未保存
+          </span>
+          <button
+            class="ret-save"
+            :class="{ 'is-saved': justSaved }"
+            :disabled="retentionSaving || !dirty"
+            @click="saveRetention"
+          >
+            <template v-if="retentionSaving">
+              <span class="material-symbols-outlined icon-sm is-loading">progress_activity</span>
+              保存中…
+            </template>
+            <template v-else-if="justSaved">
+              <span class="material-symbols-outlined icon-sm">check</span>
+              已保存
+            </template>
+            <template v-else>
+              保存
+            </template>
+          </button>
+        </div>
+      </div>
+    </section>
 
     <div v-if="rows.length === 0" class="empty">
       <span class="material-symbols-outlined empty-icon">delete_sweep</span>
@@ -516,6 +701,146 @@ async function onPurge(id: string, title: string) {
   font-size: 12px;
   text-transform: none;
   letter-spacing: 0;
+}
+
+/* ─── P1-8 retention policy card ─── */
+.retention-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.04);
+}
+.retention-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.ret-icon {
+  font-size: 20px;
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.ret-title-block { flex: 1; min-width: 0; }
+.ret-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 0 0 2px;
+}
+.ret-sub {
+  font-size: 12.5px;
+  color: var(--text-3);
+  margin: 0;
+  line-height: 1.5;
+}
+.ret-sub strong { color: var(--text-1); font-weight: 600; }
+.ret-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ret-presets {
+  display: inline-flex;
+  gap: 6px;
+}
+.ret-chip {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.ret-chip:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
+}
+.ret-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+.ret-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.ret-custom input {
+  width: 80px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-1);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  outline: none;
+  text-align: right;
+}
+.ret-custom input:focus { border-color: var(--accent); }
+.ret-unit { color: var(--text-3); }
+.ret-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-md, 4px);
+  background: var(--accent);
+  color: white;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--duration-fast, 120ms) var(--ease-out, ease-out);
+}
+.ret-save:hover:not(:disabled) { filter: brightness(0.95); }
+.ret-save:disabled { opacity: 0.5; cursor: not-allowed; }
+.ret-save.is-saved {
+  /* 已保存短暂确认色 — 用 Atlassian 绿,跟「创建」chip 同色,
+     跟蓝主按钮拉开,减少「成功 vs 蓝主按钮」混淆 */
+  background: #36B37E;
+}
+.ret-save.is-saved:hover:not(:disabled) { filter: brightness(0.95); }
+.ret-save .icon-sm.is-loading {
+  animation: retention-spin 0.9s linear infinite;
+}
+.ret-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.ret-dirty-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-3, #6b778c);
+  font-style: italic;
+}
+.ret-dirty-hint .icon-sm { font-size: 14px; }
+@keyframes retention-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .trash-table tr:last-child td { border-bottom: none; }
 .trash-table tr.busy { opacity: 0.6; }

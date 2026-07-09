@@ -8,6 +8,8 @@ import TopSearch from '@/components/layout/TopSearch.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import CheatSheetModal from '@/components/ui/CheatSheetModal.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
+// P1-6: 自助修改姓名 / 颜色 — 顶层挂,uiStore 控制开关。
+import SettingsDrawer from '@/components/layout/SettingsDrawer.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
@@ -160,6 +162,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
     <ConfirmDialog />
     <CheatSheetModal />
     <ToastContainer />
+    <SettingsDrawer />
   </div>
 </template>
 

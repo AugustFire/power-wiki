@@ -26,6 +26,7 @@ import { useUiStore } from '@/stores/ui'
 import { api, ApiError } from '@/lib/api'
 import { debounce } from '@/lib/debounce'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import type { PageNode } from '@power-wiki/shared'
 
 const props = defineProps<{ open: boolean }>()
@@ -154,6 +155,14 @@ async function runSearch() {
 }
 
 const debouncedRunSearch = debounce(runSearch, 300)
+
+/** 「没结果」空态的标题(三种 sub-text 在此集中翻译)。 */
+const emptySearchTitle = computed(() => {
+  if (filterLabel.value && !query.value.trim()) {
+    return `没有标签为「${filterLabel.value}」的页面`
+  }
+  return `没有匹配 "${query.value.trim() || '…'}" 的页面`
+})
 
 // query 变化走防抖(打字场景);chip 变化立即重跑(点击场景,不需要 debounce)
 watch(query, () => debouncedRunSearch())
@@ -463,23 +472,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
         <div v-else-if="searching && results.length === 0" class="ts-skeleton">
           <Skeleton :count="4" height="36px" radius="var(--radius-md)" />
         </div>
-        <div v-else-if="results.length === 0" class="ts-empty">
-          <span class="material-symbols-outlined">{{ isSearchMode ? 'search_off' : 'inbox' }}</span>
-          <div v-if="isSearchMode">
-            <div class="ts-empty-primary">
-              <template v-if="filterLabel && !query.trim()">
-                没有标签为「{{ filterLabel }}」的页面
-              </template>
-              <template v-else>
-                没有匹配 "{{ query }}" 的页面
-              </template>
-            </div>
-            <div class="ts-empty-secondary">试试改一下关键词或清除过滤</div>
-          </div>
-          <div v-else>
-            <div class="ts-empty-primary">还没有页面</div>
-            <div class="ts-empty-secondary">先到某个空间里写一篇吧</div>
-          </div>
+        <div v-else-if="results.length === 0">
+          <EmptyState
+            v-if="isSearchMode"
+            variant="no-results"
+            icon="search_off"
+            :title="emptySearchTitle"
+            hint="试试改一下关键词或清除过滤"
+          />
+          <EmptyState
+            v-else
+            variant="no-data"
+            icon="inbox"
+            title="还没有页面"
+            hint="先到某个空间里写一篇吧"
+          />
         </div>
         <div v-else class="ts-list" role="listbox">
           <button
@@ -886,33 +893,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 }
 .ts-item.active .ts-item-go { opacity: 1; color: var(--accent); }
 
-.ts-empty {
-  padding: 56px 20px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: 13px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-.ts-empty .material-symbols-outlined {
-  font-size: 36px;
-  display: block;
-  color: var(--text-3);
-  opacity: 0.55;
-  margin-bottom: 8px;
-}
-.ts-empty-primary {
-  color: var(--text-2);
-  font-size: 14px;
-  font-weight: 500;
-}
-.ts-empty-secondary {
-  font-size: 12px;
-  color: var(--text-3);
-  margin-top: 2px;
-}
+/* .ts-empty 整体迁到 EmptyState,这里删掉内联样式 */
+
 .ts-skeleton {
   display: flex;
   flex-direction: column;

@@ -36,6 +36,8 @@ import { notificationsRouter } from './routes/notifications'
 import { adminUsersRouter } from './routes/adminUsers'
 import { adminGroupsRouter } from './routes/adminGroups'
 import { adminSpacesRouter } from './routes/adminSpaces'
+import { adminSettingsRouter } from './routes/adminSettings'
+import { usersRouter } from './routes/users'
 import { requireAuth, type Variables } from './auth/middleware'
 import { runBootstrap } from './auth/bootstrap'
 
@@ -76,6 +78,11 @@ app.route('/api/notifications', notificationsRouter)
 app.route('/api/admin/users', adminUsersRouter)
 app.route('/api/admin/groups', adminGroupsRouter)
 app.route('/api/admin/spaces', adminSpacesRouter)
+// P1-8: admin-only settings (trash retention, etc).
+app.route('/api/admin/settings', adminSettingsRouter)
+// P1-6: self-service user routes (current user profile read/write).
+// Mounted at /api/users, AFTER the global requireAuth gate.
+app.route('/api/users', usersRouter)
 app.route('/api/search', searchRouter)
 
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404))

@@ -6,7 +6,7 @@
  *   1. Brand mark + space switcher (current scope indicator)
  *   2. Global search trigger (opens TopSearch via uiStore; ⌘K is handled
  *      globally in App.vue's keydown listener)
- *   3. User menu (sign-out, profile)
+ *   3. Right rail: Help / Activity / Bell / UserMenu
  *
  * Lives at the top of the authed app shell. The error banner and page
  * content sit below — those stay in App.vue since they're driven by
@@ -42,6 +42,17 @@ const uiStore = useUiStore()
     </button>
     <div class="topbar-right">
       <HelpButton />
+      <!-- P1-3: workspace-wide 活动流入口。点击跳 /activity。
+        视觉跟 HelpButton 同款 32×32 + hover 灰底,语义上跟"全局入口"
+        一档(都是无障碍级 help-y 的 "go to view" 控件)。 -->
+      <RouterLink
+        to="/activity"
+        class="activity-btn"
+        title="最近页面活动"
+        aria-label="最近页面活动"
+      >
+        <span class="material-symbols-outlined">history_toggle_off</span>
+      </RouterLink>
       <NotificationBell />
       <UserMenu />
     </div>
@@ -50,4 +61,28 @@ const uiStore = useUiStore()
 
 <style scoped>
 .topbar-logo { flex-shrink: 0; }
+.activity-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2, #42526e);
+  text-decoration: none;
+  transition: background var(--duration-fast);
+}
+.activity-btn:hover {
+  background: var(--hover-bg, #f4f5f7);
+  color: var(--text-1, #172b4d);
+}
+.activity-btn.router-link-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.activity-btn .material-symbols-outlined {
+  font-size: 18px;
+}
 </style>

@@ -548,3 +548,64 @@ export interface RequestUploadResponse {
 export type PageVersion = z.infer<typeof PageVersionSchema>
 export type AddLabelInput = z.infer<typeof AddLabelInputSchema>
 export type ToggleLikeResponse = z.infer<typeof ToggleLikeResponseSchema>
+
+/* ─────────────────────────────────────────────────────────────────
+ *  P1-3 Activity feed (v2)
+ *  workspace-wide 最近活动流。一行 = 一次 page_events 表 INSERT,由写路径
+ *  显式触发(created / edited / moved / restored / duplicated / published)。
+ *  每行带 actor + page + space + kind,前端按 kind 渲染不同动词。
+ * ───────────────────────────────────────────────────────────────── */
+
+export const ActivityEventSchema = z.object({
+  pageId: PageIdSchema,
+  pageTitle: z.string(),
+  /**
+   * 事件类型。前端 verb / icon 映射:
+   *   - 'created'    → "创建了"
+   *   - 'edited'     → "编辑了"
+   *   - 'moved'      → "移动了"
+   *   - 'restored'   → "恢复了"
+   *   - 'duplicated' → "复制了"
+   *   - 'published'  → "发布了"
+   *   - 'trashed'    → "删除了" — 进 trash,page row 仍在(deleted_at 设值)
+   *   - 'purged'     → "永久删除了" — 从 trash 硬删,page row 已没了
+   * 后端应用层 enum(白名单),DB 列是 text;未知值会被后端兜底成 'edited'。
+   */
+  kind: z.enum(['created', 'edited', 'moved', 'restored', 'duplicated', 'published', 'trashed', 'purged']),
+  /** ms since epoch,事件落 page_events 表的时间(等价 updatedAt 语义)。 */
+  updatedAt: z.number().int().positive(),
+  /** 触发事件的 user id。无 FK,disabled/deleted users 保留不动。 */
+  actorId: z.string().min(1),
+  actorName: z.string().nullable(),
+  actorColor: z.string().nullable(),
+  /** 所属空间 — 左侧 chip 用。 */
+  spaceId: PageIdSchema,
+  spaceName: z.string(),
+  spaceColor: z.string(),
+  spaceKind: z.enum(['personal', 'shared']),
+})
+export type ActivityEvent = z.infer<typeof ActivityEventSchema>
+
+/* ─────────────────────────────────────────────────────────────────
+ *  P1-8 Admin settings (trash retention)
+ *
+ *  key-value 通用表,目前只支持 `trash_retention_days`(0=永不清理,>0=天数)。
+ *  详见 apps/api/src/db/migrations/0013_admin_settings.sql。
+ *  0..36500 区间(0~100 年)够用 — 真实业务不可能设 100 年。
+ * ───────────────────────────────────────────────────────────────── */
+
+export const AdminSettingSchema = z.object({
+  key: z.string().min(1).max(64),
+  /** 永远 string,数字也以字符串存;前端 parseInt。 */
+  value: z.string(),
+  updatedAt: z.number().int().nonnegative(),
+  updatedBy: z.string().nullable(),
+})
+export type AdminSetting = z.infer<typeof AdminSettingSchema>
+
+/** PATCH /api/admin/settings/:key body。whitelist:目前只支持
+ *  `trash_retention_days`,其他 key 由后端返 400 unknown_key。 */
+export const UpdateAdminSettingInputSchema = z.object({
+  value: z.number().int().min(0).max(36500),
+})
+export type UpdateAdminSettingInput = z.infer<typeof UpdateAdminSettingInputSchema>

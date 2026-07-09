@@ -77,6 +77,14 @@ const routes: RouteRecordRaw[] = [
     props: (route) => ({ parentId: route.query.parent ?? null }),
     meta: { requiresAuth: true },
   },
+  // P1-3: workspace-wide 编辑活动流。TopBar history_toggle_off icon 入口。
+  // Sidebar 不再暴露这条入口 — 三列布局 + 主 list,跟 HomeView / HistoryView 同档位。
+  {
+    path: '/activity',
+    name: 'activity',
+    component: () => import('@/views/ActivityView.vue'),
+    meta: { requiresAuth: true },
+  },
 
   // ─── Notifications inbox ──────────────────────────────────────────
   // 2026-07-01: 删除了原来的 `/notifications` 顶级路由 + NotificationsView.

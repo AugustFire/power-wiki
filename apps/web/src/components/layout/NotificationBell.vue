@@ -4,13 +4,11 @@
  *
  * Reads the module-shared `useNotifications()` composable.
  *
- * Drawer (主流 App pattern — Slack / Linear / Notion / 飞书):
- *   - 固定右侧 440px 抽屉,通过 <Teleport to="body"> 脱离 TopBar 层级
- *   - 半透明 backdrop 接受 click → close
- *   - window keydown Escape → close
- *   - 打开时锁 body 滚动,关闭恢复
- *   - 两个独立 <Transition>:backdrop opacity(200ms) + panel transform(240ms)
- *   - 头部:title + 全部标为已读 + 更多菜单(清空已读)+ X
+ * Drawer chrome(backdrop / esc / body lock / transition)由 ui/Drawer.vue
+ * 提供,本组件只管铃铛按钮 + 抽屉头部 actions(全部已读 + 清空已读菜单)
+ * + tabs + list。
+ *
+ *   - 头部:title + 全部标为已读 + 更多菜单(清空已读)+ X(close 由 drawer)
  *   - 标签:全部 / 未读(角标显示数量)
  *   - 列表:每行左侧未读强调条,正文 actor + kind + pageTitle,右侧时间
  *   - 点击行 → 路由 /p/:id + markRead + 关闭抽屉
@@ -20,12 +18,15 @@
  *     解决 2K 屏"塞不下"和"只能点铃铛关闭"两个 UX 问题.
  *   - 2026-07-01 v2: 删 /notifications 顶级页 + 抽屉底部"查看全部"链接;
  *     清空已读改放到抽屉头部的 ⋮ 菜单里, 抽屉本身就是通知中心.
+ *   - 2026-07-09 v3: 抽到 ui/Drawer.vue,本组件纯内容。
  */
-import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useNotifications } from '@/composables/useNotifications'
 import { formatRelativeTime } from '@/lib/relativeTime'
+import Drawer from '@/components/ui/Drawer.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 type TabKey = 'all' | 'unread'
 
@@ -96,25 +97,8 @@ watch(menuOpen, (isOpen) => {
   else document.removeEventListener('click', onMenuDocClick)
 })
 
-// Body scroll lock + Escape key, only active while drawer is open.
-let prevBodyOverflow = ''
-function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape') close()
-}
-watch(open, (isOpen) => {
-  if (isOpen) {
-    prevBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', onKeydown)
-  } else {
-    document.body.style.overflow = prevBodyOverflow
-    document.removeEventListener('keydown', onKeydown)
-  }
-})
-onScopeDispose(() => {
-  document.removeEventListener('keydown', onKeydown)
-  document.body.style.overflow = prevBodyOverflow
-})
+// Drawer chrome(teleport + backdrop click + ESC + body lock)由 ui/Drawer.vue
+// 提供,这里不用自己再监听 keydown / 锁 body。
 
 const HUMAN_KIND: Record<string, string> = {
   mention: '提到了你',
@@ -153,95 +137,81 @@ function relTime(ts: number): string {
     <span v-if="unreadDisplay" class="bell-badge">{{ unreadDisplay }}</span>
   </button>
 
-  <Teleport to="body">
-    <Transition name="nd-backdrop">
-      <div v-if="open" class="nd-backdrop" @click="close" />
-    </Transition>
-    <Transition name="nd-panel">
-      <aside
-        v-if="open"
-        class="nd-panel"
-        role="dialog"
-        aria-label="通知中心"
-        aria-modal="true"
+  <Drawer v-model:open="open" title="通知" label="通知中心" :width="440">
+    <template #actions>
+      <button
+        v-if="store.unreadCount > 0"
+        class="nd-mark-all"
+        type="button"
+        @click="onMarkAll"
       >
-        <header class="nd-head">
-          <h2 class="nd-title">通知</h2>
+        全部标为已读
+      </button>
+      <div ref="menuWrapEl" class="nd-menu-wrap">
+        <button
+          class="nd-kebab"
+          type="button"
+          aria-label="更多操作"
+          @click.stop="menuOpen = !menuOpen"
+        >
+          <span class="material-symbols-outlined">more_vert</span>
+        </button>
+        <div v-if="menuOpen" class="nd-menu" role="menu">
           <button
-            v-if="store.unreadCount > 0"
-            class="nd-mark-all"
             type="button"
-            @click="onMarkAll"
+            class="nd-menu-item is-danger"
+            @click="onClearRead"
           >
-            全部标为已读
-          </button>
-          <div ref="menuWrapEl" class="nd-menu-wrap">
-            <button
-              class="nd-kebab"
-              type="button"
-              aria-label="更多操作"
-              @click.stop="menuOpen = !menuOpen"
-            >
-              <span class="material-symbols-outlined">more_vert</span>
-            </button>
-            <div v-if="menuOpen" class="nd-menu" role="menu">
-              <button
-                type="button"
-                class="nd-menu-item is-danger"
-                @click="onClearRead"
-              >
-                清空已读
-              </button>
-            </div>
-          </div>
-          <button class="nd-close" type="button" aria-label="关闭" @click="close">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </header>
-        <div class="nd-tabs" role="tablist">
-          <button
-            v-for="t in tabs"
-            :key="t.key"
-            class="nd-tab"
-            :class="{ 'is-active': activeTab === t.key }"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === t.key"
-            @click="activeTab = t.key"
-          >
-            <span>{{ t.label }}</span>
-            <span class="nd-tab-count">{{ t.count }}</span>
+            清空已读
           </button>
         </div>
-        <div class="nd-list">
-          <div v-if="visibleItems.length === 0" class="nd-empty">
-            <span class="material-symbols-outlined nd-empty-icon">notifications_none</span>
-            <p>{{ activeTab === 'unread' ? '没有未读通知' : '暂无通知' }}</p>
-          </div>
-          <button
-            v-for="n in visibleItems"
-            :key="n.id"
-            class="nd-row"
-            :class="{ 'is-unread': !n.isRead }"
-            type="button"
-            @click="onItemClick(n.id, n.pageId, n.commentId)"
-          >
-            <span class="nd-avatar" :style="{ background: n.actorColor ?? '#0052CC' }">
-              {{ (n.actorName ?? n.actorId).slice(0, 1) }}
-            </span>
-            <span class="nd-text">
-              <span class="nd-line1">
-                <strong class="nd-actor">{{ n.actorName ?? n.actorId }}</strong>
-                <span class="nd-kind">{{ HUMAN_KIND[n.kind] ?? '通知' }}</span>
-              </span>
-              <span class="nd-page">{{ n.pageTitle ?? '(已删除)' }}</span>
-            </span>
-            <span class="nd-time">{{ relTime(n.createdAt) }}</span>
-          </button>
-        </div>
-      </aside>
-    </Transition>
-  </Teleport>
+      </div>
+    </template>
+    <div class="nd-tabs" role="tablist">
+      <button
+        v-for="t in tabs"
+        :key="t.key"
+        class="nd-tab"
+        :class="{ 'is-active': activeTab === t.key }"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === t.key"
+        @click="activeTab = t.key"
+      >
+        <span>{{ t.label }}</span>
+        <span class="nd-tab-count">{{ t.count }}</span>
+      </button>
+    </div>
+    <div class="nd-list">
+      <EmptyState
+        v-if="visibleItems.length === 0"
+        size="sm"
+        variant="no-data"
+        icon="notifications_none"
+        :title="activeTab === 'unread' ? '没有未读通知' : '暂无通知'"
+      />
+      <button
+        v-for="n in visibleItems"
+        :key="n.id"
+        class="nd-row"
+        :class="{ 'is-unread': !n.isRead }"
+        type="button"
+        @click="onItemClick(n.id, n.pageId, n.commentId)"
+      >
+        <span class="nd-avatar" :style="{ background: n.actorColor ?? '#0052CC' }">
+          {{ (n.actorName ?? n.actorId).slice(0, 1) }}
+        </span>
+        <span class="nd-text">
+          <span class="nd-line1">
+            <strong class="nd-actor">{{ n.actorName ?? n.actorId }}</strong>
+            <span class="nd-kind">{{ HUMAN_KIND[n.kind] ?? '通知' }}</span>
+          </span>
+          <span class="nd-page">{{ n.pageTitle ?? '(已删除)' }}</span>
+        </span>
+        <span class="nd-time">{{ relTime(n.createdAt) }}</span>
+      </button>
+    </div>
+  </Drawer>
 </template>
 
 <style scoped>
@@ -281,42 +251,8 @@ function relTime(ts: number): string {
   text-align: center;
 }
 
-.nd-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(9, 30, 66, 0.32);
-  z-index: 9998;
-}
+/* drawer 的 backdrop / panel / head / title / close chrome 都由 ui/Drawer.vue 提供 */
 
-.nd-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 440px;
-  max-width: 100vw;
-  background: var(--bg, #fff);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
-  display: flex;
-  flex-direction: column;
-  z-index: 9999;
-}
-
-.nd-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border, #ebeef0);
-  flex-shrink: 0;
-}
-.nd-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-1, #172b4d);
-  margin: 0;
-  flex: 1;
-}
 .nd-mark-all {
   background: transparent;
   border: 0;
@@ -329,24 +265,6 @@ function relTime(ts: number): string {
 }
 .nd-mark-all:hover {
   background: rgba(0, 82, 204, 0.08);
-}
-.nd-close {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-2, #42526e);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.nd-close:hover {
-  background: var(--hover-bg, #f4f5f7);
-}
-.nd-close .material-symbols-outlined {
-  font-size: 18px;
 }
 
 .nd-tabs {
@@ -395,23 +313,6 @@ function relTime(ts: number): string {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
-}
-.nd-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-3, #5e6c84);
-  gap: 12px;
-}
-.nd-empty-icon {
-  font-size: 40px;
-  opacity: 0.5;
-}
-.nd-empty p {
-  margin: 0;
-  font-size: 13px;
 }
 .nd-row {
   display: grid;
@@ -549,21 +450,5 @@ function relTime(ts: number): string {
   color: var(--danger, #de350b);
 }
 
-.nd-backdrop-enter-active,
-.nd-backdrop-leave-active {
-  transition: opacity 200ms ease;
-}
-.nd-backdrop-enter-from,
-.nd-backdrop-leave-to {
-  opacity: 0;
-}
-
-.nd-panel-enter-active,
-.nd-panel-leave-active {
-  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.nd-panel-enter-from,
-.nd-panel-leave-to {
-  transform: translateX(100%);
-}
+/* backdrop / panel 的过渡由 ui/Drawer.vue 提供 */
 </style>

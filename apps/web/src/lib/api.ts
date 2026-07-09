@@ -21,6 +21,7 @@
 
 import {
   AddLabelInputSchema,
+  AdminSettingSchema,
   AttachmentSchema,
   CommentSchema,
   CreateCommentInputSchema,
@@ -39,12 +40,15 @@ import {
   SpaceSchema,
   ToggleLikeResponseSchema,
   UnreadCountResponseSchema,
+  UpdateAdminSettingInputSchema,
   UpdateCommentInputSchema,
   UserGroupSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import type {
+  ActivityEvent,
   AddLabelInput,
+  AdminSetting,
   Attachment,
   Comment,
   CreateCommentInput,
@@ -69,6 +73,7 @@ import type {
   SignInInput,
   Space,
   ToggleLikeResponse,
+  UpdateAdminSettingInput,
   UpdateCommentInput,
   UpdateGroupInput,
   UpdatePageInput,
@@ -96,9 +101,11 @@ export class ApiError extends Error {
  * /login. The handler is pluggable so this module doesn't need to know
  * about stores/router — `main.ts` wires it up at boot.
  *
- * Public auth endpoints (sign-in / session / sign-out) may legitimately
- * return 401 and the caller (authStore.init / LoginView) needs to see that
- * raw response to branch. Those paths are excluded from auto-handling.
+ * Auth-shape endpoints that legitimately return 401 for reasons other than
+ * "session expired" — wrong current password on reset, wrong credentials on
+ * sign-in — are excluded from auto-handling. The caller (LoginView,
+ * SettingsDrawer's pwd-section) needs to surface that 401 as a form error
+ * instead of redirecting to /login.
  */
 type UnauthorizedHandler = () => void | Promise<void>
 let unauthorizedHandler: UnauthorizedHandler = () => {
@@ -118,6 +125,7 @@ const PUBLIC_AUTH_PATHS = new Set([
   '/auth/session',
   '/auth/sign-in',
   '/auth/sign-out',
+  '/auth/reset-password',
 ])
 
 /* ─── GET cache ────────────────────────────────────────────────────────
@@ -369,6 +377,23 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({}),
       }),
+    /**
+     * P1-3: workspace-wide 活动流。`?space=<id>` 过滤;`limit` / `offset` 分页,
+     * 后端默认 20/页(上限 50),`hasMore=true` 表示 offset+items 之后还有。
+     * 翻页:offset 累加 limit,append 到现有 list。
+     */
+    activity: (
+      spaceId?: string | null,
+      limit?: number,
+      offset?: number,
+    ): Promise<{ items: ActivityEvent[]; hasMore: boolean }> => {
+      const params = new URLSearchParams()
+      if (spaceId) params.set('space', spaceId)
+      if (limit !== undefined) params.set('limit', String(limit))
+      if (offset !== undefined && offset > 0) params.set('offset', String(offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      return request(`/pages/activity${qs}`)
+    },
     delete: (id: string) =>
       request<void>(`/pages/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     /**
@@ -511,6 +536,33 @@ export const api = {
         user: UserSchema.parse(r.user) as User,
         personalSpaceId: r.personalSpaceId,
       }
+    },
+  },
+
+  // P1-6: self-service current-user endpoints (every authed user can hit
+  // these). Mounted at /api/users on the backend (separate router from
+  // /api/admin/users so it can bypass admin-only middleware).
+  users: {
+    /** GET /api/users/me — current user. Used by SettingsDrawer on open to
+     *  hydrate the form, and on save to refresh authStore.user. */
+    me: {
+      get: async (): Promise<User> => {
+        const raw = await request<User>('/users/me')
+        return UserSchema.parse(raw) as User
+      },
+      /** PATCH /api/users/me — name/color only. */
+      update: async (input: UpdateUserInput): Promise<User> => {
+        const raw = await request<User>('/users/me', {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        })
+        // PATCH returned a fresh row — drop the GET /users/me cache so the
+        // next open of the drawer / any other current-user reload hits the
+        // server instead of replaying the pre-PATCH promise (request() caches
+        // GETs for FETCH_CACHE_TTL_MS — see api.ts top).
+        invalidatePrefix('/users/me')
+        return UserSchema.parse(raw) as User
+      },
     },
   },
 
@@ -681,6 +733,36 @@ export const api = {
         )
         invalidatePrefix('/admin/spaces')
         return SpaceSchema.parse(s) as Space
+      },
+    },
+    /**
+     * P1-8: global admin settings (key-value). Currently only
+     *   `trash_retention_days` is supported — 0 = never purge, >0 = days.
+     * Backend lazy-purges trashed pages whose `deleted_at` is older than
+     * the configured window on every GET /api/pages/trash.
+     */
+    settings: {
+      list: async (): Promise<AdminSetting[]> => {
+        const r = await request<{ items: AdminSetting[] }>('/admin/settings')
+        return r.items.map((s) => AdminSettingSchema.parse(s) as AdminSetting)
+      },
+      get: async (key: string): Promise<AdminSetting> => {
+        const r = await request<AdminSetting>(
+          `/admin/settings/${encodeURIComponent(key)}`,
+        )
+        return AdminSettingSchema.parse(r) as AdminSetting
+      },
+      update: async (
+        key: string,
+        input: UpdateAdminSettingInput,
+      ): Promise<AdminSetting> => {
+        const parsed = UpdateAdminSettingInputSchema.parse(input)
+        const r = await request<AdminSetting>(
+          `/admin/settings/${encodeURIComponent(key)}`,
+          { method: 'PATCH', body: JSON.stringify(parsed) },
+        )
+        invalidatePrefix('/admin/settings')
+        return AdminSettingSchema.parse(r) as AdminSetting
       },
     },
   },
