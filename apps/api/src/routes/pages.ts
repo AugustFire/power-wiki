@@ -750,8 +750,15 @@ pagesRouter.patch('/:id/move', async (c) => {
 
   const insertAt = input.newOrder ?? Number.MAX_SAFE_INTEGER // sentinel: "append"
 
-  // Collect the target parent's current children (excluding self), ordered.
-  // This becomes the basis for the new sortOrder sequence after the move.
+  // Collect the target parent's current LIVE children (excluding self),
+  // ordered. This becomes the basis for the new sortOrder sequence after
+  // the move.
+  //
+  // MUST filter `deletedAt IS NULL`: trashed rows keep their old sortOrder
+  // forever, so including them makes the renumber loop interleave renumbered
+  // live rows with stale trashed values — moved page lands at a "gap" index
+  // relative to its live siblings (frontend `pages.value` is also live-only,
+  // so the client's `newOrder` clamp was always one less than the server's).
   const targetSiblings = await db
     .select({ id: pages.id })
     .from(pages)
@@ -762,6 +769,7 @@ pagesRouter.patch('/:id/move', async (c) => {
           ? isNull(pages.parentId)
           : eq(pages.parentId, targetParentId),
         ne(pages.id, id),
+        isNull(pages.deletedAt),
       ),
     )
     .orderBy(pages.sortOrder)

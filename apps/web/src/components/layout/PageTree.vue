@@ -1,10 +1,11 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useConfirm } from '@/composables/useConfirm'
+import { usePageTreeDrag, type DropHint } from '@/composables/usePageTreeDrag'
 import PublishToSpaceMenu from './PublishToSpaceMenu.vue'
 import type { PageNode, TreeNode } from '@power-wiki/shared'
 
@@ -63,22 +64,11 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
  *  根节点(parentId === null)禁用中区 — 没有「根的子」这种语义,中 1/3 也
  *  当 before/after 处理(用 height/2 作分界)。
  *
- *  `dragState` MUST live at module scope (not per-instance): when row A
- *  starts dragging, every other PageTree instance's `onDragOver` checks
- *  the dragging id to decide whether to call `preventDefault()` (which is
- *  what allows the browser to fire `drop` at all). A per-instance ref
- *  would be null on rows that aren't the source, so they would early-
- *  return and the drop event would never fire. This is the bug we're
- *  explicitly fixing here.
+ *  dragState / autoExpandTimer 来自 usePageTreeDrag(module-scope 共享,
+ *  详见 composables/usePageTreeDrag.ts)。如果放回 <script setup> 内部
+ *  reactive 创建 → 退化为 per-instance → drop 永不触发(原 bug)。
  */
-type DropHint = 'before' | 'after' | 'child'
-const dragState = reactive<{ draggingId: string | null; dropTarget: { id: string; position: DropHint } | null }>({
-  draggingId: null,
-  dropTarget: null,
-})
-
-// 中区 hover 折叠节点 → 300ms 后自动展开 + 懒加载(让用户预知落点)
-let autoExpandTimer: ReturnType<typeof setTimeout> | null = null
+const { dragState, autoExpandTimer } = usePageTreeDrag()
 
 const isDragSource = computed(() => dragState.draggingId === props.node.id)
 const dropHint = computed<DropHint | null>(
@@ -97,17 +87,20 @@ function onDragStart(e: DragEvent) {
 }
 
 function onDragEnd() {
-  if (autoExpandTimer) {
-    clearTimeout(autoExpandTimer)
-    autoExpandTimer = null
+  if (autoExpandTimer.value) {
+    clearTimeout(autoExpandTimer.value)
+    autoExpandTimer.value = null
   }
   dragState.draggingId = null
   dragState.dropTarget = null
 }
 
 function onDragOver(e: DragEvent) {
-  // Reject self-drag and drags from outside this tree.
-  if (!dragState.draggingId || dragState.draggingId === props.node.id) return
+  // dragState 是 module-scope 共享(见 usePageTreeDrag.ts),source 行设的
+  // draggingId 在任何其他 PageTree 实例都能读到。这里必须 preventDefault,
+  // 否则浏览器不会触发 drop —— 这是原来 bug 的根因。
+  if (dragState.draggingId === null) return       // 没在拖
+  if (dragState.draggingId === props.node.id) return  // source 行(自己不管自己)
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   const row = e.currentTarget as HTMLElement
@@ -126,10 +119,10 @@ function onDragOver(e: DragEvent) {
     // 中区 hover 折叠节点 → 300ms 后自动展开(用户预知落点)
     if (position === 'child' && !isExpanded.value) {
       scheduleAutoExpand()
-    } else if (autoExpandTimer) {
+    } else if (autoExpandTimer.value) {
       // 移到了非中区,取消待执行的展开
-      clearTimeout(autoExpandTimer)
-      autoExpandTimer = null
+      clearTimeout(autoExpandTimer.value)
+      autoExpandTimer.value = null
     }
   }
 }
@@ -139,9 +132,9 @@ function onDragLeave(e: DragEvent) {
   if (e.relatedTarget && (e.currentTarget as Node).contains(e.relatedTarget as Node)) return
   if (dragState.dropTarget?.id === props.node.id) {
     dragState.dropTarget = null
-    if (autoExpandTimer) {
-      clearTimeout(autoExpandTimer)
-      autoExpandTimer = null
+    if (autoExpandTimer.value) {
+      clearTimeout(autoExpandTimer.value)
+      autoExpandTimer.value = null
     }
   }
 }
@@ -151,9 +144,9 @@ function onDragLeave(e: DragEvent) {
  * 看到目标节点的现有子节点,落点直观。
  */
 function scheduleAutoExpand() {
-  if (autoExpandTimer) clearTimeout(autoExpandTimer)
-  autoExpandTimer = setTimeout(async () => {
-    autoExpandTimer = null
+  if (autoExpandTimer.value) clearTimeout(autoExpandTimer.value)
+  autoExpandTimer.value = setTimeout(async () => {
+    autoExpandTimer.value = null
     // Re-check:用户在 300ms 内可能移到了 before/after 或离开了
     if (
       dragState.dropTarget?.id !== props.node.id ||
@@ -177,9 +170,9 @@ async function onDrop(e: DragEvent) {
   e.preventDefault()
   const target = dragState.dropTarget
   const draggedId = dragState.draggingId
-  if (autoExpandTimer) {
-    clearTimeout(autoExpandTimer)
-    autoExpandTimer = null
+  if (autoExpandTimer.value) {
+    clearTimeout(autoExpandTimer.value)
+    autoExpandTimer.value = null
   }
   dragState.draggingId = null
   dragState.dropTarget = null
@@ -195,8 +188,22 @@ async function onDrop(e: DragEvent) {
   // 'child' 位置 → 作为目标节点的子节点插入到该 parent 子列表末尾
   // before/after → 作为 target 的兄弟,target 的 parent 即新 parent
   const newParentId = target.position === 'child' ? target.id : targetPage.parentId
+  // Siblings 必须按 spaceId 过滤,不能只看 parentId —— pagesStore.pages 是
+  // 全局所有 space 的页(普通用户 + admin 都能见多个 space),如果只按
+  // parentId 过滤,跨 space 的根页会混进 siblings,findIndex 返回的是
+  // 全局索引。本地乐观更新会用这个全局索引当 order 写回,server clamp
+  // 后只覆盖移动页的 order,siblings 的高 order 不动 → 移动页变最顶。
+  // 源页和目标页必须同 space(跨 space 走 movePageToSpace,本路径不支持)。
+  const sourcePage = pagesStore.getPage(draggedId)
+  if (!sourcePage) return
+  const spaceId = sourcePage.spaceId
+  if (targetPage.spaceId !== spaceId) {
+    // 跨 space 拖拽:UI 没禁用,但语义上是另一个流程(发布到),这里静默拒绝
+    // 避免发出一个会被 server 拒掉的请求 + 一次无意义的乐观更新。
+    return
+  }
   const siblings = pagesStore.pages
-    .filter((p) => p.parentId === newParentId && p.id !== draggedId)
+    .filter((p) => p.spaceId === spaceId && p.parentId === newParentId && p.id !== draggedId)
     .sort((a, b) => a.order - b.order)
   let insertAt: number
   if (target.position === 'child') {

@@ -655,8 +655,18 @@ export const usePagesStore = defineStore('pages', () => {
     // Compute the new sort order for the moved page and its (former + new)
     // siblings in one pass. The server will rewrite the whole sibling list
     // atomically; we mirror it locally so the tree re-renders immediately.
+    // Siblings 必须按 spaceId 过滤 —— pages.value 是全局(多 space),只看
+    // parentId 会把跨 space 的根页混进来,findIndex 返全局索引,本地乐观
+    // 更新给兄弟分配全局索引当 order,server clamp 后只覆盖移动页 → 移动
+    // 页变最顶。源页的 spaceId 决定兄弟 scope(本路径同 space,跨 space 走
+    // movePageToSpace)。`snapshot.spaceId` 在 idx 查找时已经读到了,直接用。
     const targetSiblings = pages.value
-      .filter((p) => p.parentId === newParentId && p.id !== id)
+      .filter(
+        (p) =>
+          p.spaceId === snapshot.spaceId &&
+          p.parentId === newParentId &&
+          p.id !== id,
+      )
       .sort((a, b) => a.order - b.order)
     const insertAt = Math.max(
       0,
