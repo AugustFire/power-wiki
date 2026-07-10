@@ -49,6 +49,11 @@ export type PageRowWithAuthor = PageRow & {
   /** 点赞者 sample(前 5 人) —— LEFT JOIN users 拿 name/color,user 被
    *  disabled 时 name/color 为 null。Fallback 路径给 []。 */
   likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
+  /** M13 👁 当前用户是否关注此页。EXISTS correlated subquery,未传
+   *  viewerUserId 时 selectPagesWithAuthor 给 false。Fallback 给 false。 */
+  watchedByMe?: boolean
+  /** M13 👁 该页关注者总数。COUNT correlated,未走 join fallback 0。 */
+  watchersCount?: number
 }
 
 export function rowToPageNode(row: PageRowWithAuthor): PageNode {
@@ -70,7 +75,6 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     authorId: row.authorId,
     authorName: row.authorName,
     authorColor: row.authorColor,
-    starred: row.starred,
     labels: row.labels ?? [],
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,
@@ -78,6 +82,8 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     likesCount: row.likesCount ?? 0,
     likedByMe: row.likedByMe ?? false,
     likedBySample: row.likedBySample ?? [],
+    watchedByMe: row.watchedByMe ?? false,
+    watchersCount: row.watchersCount ?? 0,
   }
   if (row.icon !== null) node.icon = row.icon
   return node

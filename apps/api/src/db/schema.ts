@@ -190,8 +190,6 @@ export const pages = pgTable(
      */
     updatedBy: text('updated_by'),
 
-    starred: boolean('starred').notNull().default(false),
-
     /**
      * Stage 5 soft-delete. NULL = live page; non-NULL = trashed.
      * `deleted_by` records who moved it (admin restores via /api/pages/:id/restore;
@@ -270,15 +268,30 @@ export const comments = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
- *  Notifications — Stage 6
- *  One row per (recipient, event). Four event kinds:
+ *  Notifications — Stage 6 + M13
+ *  One row per (recipient, event). Ten event kinds:
+ *    Stage 6(既有):
  *    - 'mention'           → recipient was @mentioned in a comment
  *    - 'reply'             → recipient's comment got a reply
  *    - 'comment_on_my_page'→ recipient is the page author; a top-level
  *                            comment was added
  *    - 'page_like'         → recipient is the page author; someone liked
  *                            their page (POST /api/pages/:id/like)
- *                            commentId / mentionUserId null; pageTitle 快照
+ *
+ *    M13 watch fanout(新增):
+ *    - 'page_edit'         → snapshot 边界(idle 30s 自动 / 手动)通知全部 watcher
+ *    - 'page_renamed'      → title PATCH 通知全部 watcher
+ *    - 'page_moved'        → parentId / spaceId 变化通知全部 watcher
+ *    - 'page_restored'     → 回收站还原通知全部 watcher
+ *    - 'page_deleted'      → 软删通知全部 watcher(30 天内可还原)
+ *    - 'comment_add'       → 顶层评论插入通知全部 watcher;
+ *                            page 作者去重为 comment_on_my_page(避免双发)
+ *
+ *  fanout 规则:
+ *    - actor != user_id(自己不通知自己)
+ *    - 5 分钟同页同 actor 多事件去重(应用层 enqueueNotifications 内合并)
+ *    - mention / page_like 不在 watch fanout 路径里触发(避免与既有 kind 双发)
+ *
  *  Reads are filtered by userId === current user; there is no admin
  *  bypass. 30s poll for unread-count on the frontend (see
  *  composables/useNotifications.ts); SSE is v0.1.
@@ -297,7 +310,26 @@ export const notifications = pgTable(
     actorId: text('actor_id').notNull(),
 
     kind: text('kind', {
-      enum: ['mention', 'reply', 'comment_on_my_page', 'page_like'],
+      enum: [
+        // 既有四种(Stage 6):mention / reply / comment_on_my_page / page_like
+        'mention',
+        'reply',
+        'comment_on_my_page',
+        'page_like',
+        // M13 watch fanout 新增:被 watch 的页面发生事件时,通知所有 watcher(排除 actor 自己)
+        // - page_edit       :snapshot 边界(idle 30s 自动 / 手动 snapshot)
+        // - page_renamed    :title PATCH
+        // - page_moved      :parentId / spaceId 变化
+        // - page_restored   :回收站还原
+        // - page_deleted    :软删
+        // - comment_add     :顶层评论插入;page 作者去重为 comment_on_my_page,避免双发
+        'page_edit',
+        'page_renamed',
+        'page_moved',
+        'page_restored',
+        'page_deleted',
+        'comment_add',
+      ],
     }).notNull(),
 
     /** Landing target — clicking the notification jumps to /p/{pageId}
@@ -334,8 +366,9 @@ export const notifications = pgTable(
  *  Page versions — Stage 8 (history / version compare)
  *
  *  One row per PATCH that mutates content (title / contentJSON /
- *  contentHTML / icon). starred-only PATCHes do NOT create a version
- *  (metadata, not content). v0 retention = keep the latest 30 per page;
+ *  contentHTML / icon). metadata-only PATCHes (e.g. labels, future
+ *  watch/unwatch 之外的非内容字段)do NOT create a version. v0 retention
+ *  = keep the latest 30 per page;
  *  older rows are pruned in the same transaction that inserts the new
  *  version (see apps/api/src/routes/pageVersions.ts + pages.ts PATCH).
  *
@@ -493,6 +526,50 @@ export const pageLikes = pgTable(
 )
 
 /* ─────────────────────────────────────────────────────────────────
+ *  Page watched — M13 关注(👁 visibility)
+ *
+ *  一行 = 一个用户对一页的关注订阅。Toggle 语义:跟 page_likes 一样,
+ *  后端先 SELECT,存在就 DELETE,不在就 INSERT。复合主键 (page_id, user_id)
+ *  保证幂等;前端 toggle 后端同一个 endpoint 即可,无需 DELETE 单独路径。
+ *
+ *  与 page_likes 的关键区别:
+ *   - watched 触发 6 类通知 fanout(page_edit / renamed / moved /
+ *     restored / deleted / comment_add),见 notifications 表注释。
+ *   - page_deleted 不删 user_watched_pages 行:restore 后用户仍是
+ *     watch 状态(避免还原后忘记重新关注)。
+ *
+ *  索引设计跟 page_likes 对齐:
+ *   - 主键 (page_id, user_id):直接给"该页有多少人关注 / 该用户
+ *     是否关注"用。
+ *   - user_watched_user_idx (user_id):"我关注的页面"列表走这里,
+ *     倒序按 watched_at DESC。M13 Sidebar "我的关注" section 也走
+ *     这个索引。
+ *
+ *  No FK — page hard-delete 时由 pages.ts DELETE 递归 CTE 显式清理
+ *  user_watched_pages 行(见 apps/api/src/routes/pages.ts DELETE?purge=true)。
+ * ───────────────────────────────────────────────────────────────── */
+export const userWatchedPages = pgTable(
+  'user_watched_pages',
+  {
+    /** No FK — page hard-delete cleans up explicitly. */
+    pageId: text('page_id').notNull(),
+    /** No FK — disabled/deleted users get their rows swept by app code if needed. */
+    userId: text('user_id').notNull(),
+    /** Date.now() 毫秒,watch 时间。Sidebar / Dashboard 排序按 DESC 走这个字段。 */
+    watchedAt: bigint('watched_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    /** Composite PK = one watch per (page, user) — idempotent. */
+    primaryKey({ columns: [t.pageId, t.userId] }),
+    /** "我关注了哪些页面" 走 user_id 索引;Sidebar/Dashboard 主路径。 */
+    index('user_watched_user_idx').on(t.userId),
+    /** 单列 page_id 索引 — "该页多少人关注" 用 COUNT(*),跟 page_likes
+     *  page_id 单列索引命名 + 心智模型对齐。 */
+    index('user_watched_page_idx').on(t.pageId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Admin settings — P1-8 回收站保留期
  *
  *  key-value 表,只存全局 admin 配置。当前唯一 key:
@@ -548,6 +625,8 @@ export type AttachmentRow = typeof attachments.$inferSelect
 export type NewAttachmentRow = typeof attachments.$inferInsert
 export type PageLikeRow = typeof pageLikes.$inferSelect
 export type NewPageLikeRow = typeof pageLikes.$inferInsert
+export type UserWatchedPageRow = typeof userWatchedPages.$inferSelect
+export type NewUserWatchedPageRow = typeof userWatchedPages.$inferInsert
 export type AdminSettingRow = typeof adminSettings.$inferSelect
 export type NewAdminSettingRow = typeof adminSettings.$inferInsert
 
@@ -570,9 +649,9 @@ export type NewAdminSettingRow = typeof adminSettings.$inferInsert
  *   - **空间过滤索引 + 时间倒序索引**:`?space=<id>` 的核心 path 走
  *     (space_id, created_at DESC) 的复合索引,workspace-wide 走 created_at DESC
  *     单列索引。
- *   - **INSERT 不参与 page_versions 写入**:跟 starred toggle 同理,纯
- *     metadata 写不触发 PATCH / 写 version;这里我们显式 INSERT,跟那种
- *     「不动 page_version」是不同维度的事。
+ *   - **INSERT 不参与 page_versions 写入**:纯 metadata 写(label / watch toggle)
+ *     不触发 PATCH / 写 version;page_events 是独立维度,显式插行跟那种
+ *     「不动 page_version」是两回事。
  * ───────────────────────────────────────────────────────────────────── */
 export const pageEvents = pgTable(
   'page_events',

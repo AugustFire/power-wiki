@@ -57,9 +57,11 @@ import {
   PaginatedListSchema,
   SnapPageInputSchema,
   ToggleLikeResponseSchema,
+  ToggleWatchResponseSchema,
   UpdatePageInputSchema,
   MovePageInputSchema,
   PublishPageInputSchema,
+  WatcherSchema,
 } from '@power-wiki/shared/schemas'
 import { DEFAULT_TITLE } from '@power-wiki/shared'
 import type { PageVersion } from '@power-wiki/shared'
@@ -75,6 +77,7 @@ import {
   pageLabels,
   attachments,
   pageLikes,
+  userWatchedPages,
   pageEvents,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
@@ -82,131 +85,19 @@ import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { deleteObject } from '../lib/s3'
-import { enqueueNotifications } from '../lib/notify'
+import { enqueueNotifications, enqueueWatchFanout } from '../lib/notify'
 import { recordPageEvent, SUPPORTED_KINDS, type PageEventKind } from '../lib/pageEvents'
 import { purgeExpiredTrash } from '../lib/retention'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
+import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
 
 const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/src/lib/id.ts (10 chars)
 
 export const pagesRouter = new Hono<{ Variables: Variables }>()
 
-/**
- * `pages` + LEFT JOIN `users` for the author's name/color + LEFT JOIN
- * `page_labels` aggregated to a distinct label array. Used by every handler
- * that returns a page to the client so ReadView can render the creator
- * without a separate user lookup and the label pills without a second fetch.
- *
- * By default this ALSO filters out trashed rows (`deleted_at IS NULL`) so
- * every existing read path is automatically safe. Pass `includeDeleted: true`
- * to opt out — only the trash listing does this.
- *
- * Pass an optional WHERE clause; undefined = no extra filter beyond the
- * default deletedAt guard.
- *
- * The `labels` aggregation: COALESCE(json_agg(DISTINCT label) FILTER (...))
- * returns '[]' when the page has no labels, otherwise the distinct label
- * strings. The FILTER clause is needed because LEFT JOIN produces NULLs in
- * the join column for rows with no labels — those would otherwise land in
- * the agg as a NULL element. Drizzle's `.mapWith(...)` keeps the result
- * typed as `string[]` (parse the JSON if non-null, [] otherwise).
- *
- * 点赞:`likesCount` 是 COUNT(*) 走 page_likes 主键 (page_id, user_id),
- * `likedByMe` 是 EXISTS 配合 viewerUserId 算的布尔。Pass null when the
- * call site has no user context (none today — even GET /:id has `me`).
- */
-function selectPagesWithAuthor(
-  where?: SQL,
-  opts: { includeDeleted?: boolean; viewerUserId?: string | null } = {},
-) {
-  const labelsAgg = sql<string[]>`
-    COALESCE(
-      json_agg(DISTINCT ${pageLabels.label})
-        FILTER (WHERE ${pageLabels.label} IS NOT NULL),
-      '[]'::json
-    )
-  `.as('labels')
-  // EXISTS 子查询:对每行计算"是否有未删除的子页面"。Sidebar 用它判断 caret
-  // 显示 —— 懒加载模式下 children 数组在用户展开前为空,不能拿那个判断 leaf。
-  // 走 `pages_parent_idx`,百页级 sub-ms 成本。带 deleted_at IS NULL 过滤避免
-  // 回收站里的子页面误把父节点标记为 hasChildren。
-  const hasChildrenExpr = sql<boolean>`
-    EXISTS (
-      SELECT 1 FROM pages c
-      WHERE c.parent_id = ${pages.id}
-        AND c.deleted_at IS NULL
-    )
-  `.as('has_children')
-  // 点赞总数 — 走 page_likes 主键前缀,COUNT(*) GROUP BY page_id。
-  // 用 correlated subquery 而不是 LEFT JOIN + COUNT 避免破坏现有的
-  // GROUP BY(pages.id, users.name, users.color):多 LEFT JOIN 会让行数
-  // 翻倍,得再 DISTINCT,不如直接 correl。
-  const likesCountExpr = sql<number>`
-    (SELECT COUNT(*)::int
-     FROM page_likes pl
-     WHERE pl.page_id = ${pages.id})
-  `.as('likes_count')
-  // 当前用户是否已赞 — 取 viewerUserId,无用户(匿名 / 内部调用)时给 false。
-  // 用 COALESCE 包一层:viewerUserId 为 null 时 EXISTS(... AND user_id = NULL)
-  // 永远 false,EXISTS 直接返 false,COALESCE(false) 还是 false。
-  const likedByMeExpr = opts.viewerUserId != null
-    ? sql<boolean>`
-        COALESCE(
-          EXISTS (
-            SELECT 1 FROM page_likes plm
-            WHERE plm.page_id = ${pages.id}
-              AND plm.user_id = ${opts.viewerUserId}
-          ),
-          false
-        )
-      `.as('liked_by_me')
-    : sql<boolean>`false`.as('liked_by_me')
-  // 点赞者 sample(前 5 人,按 created_at 升序)—— 给 byline 行头像组用。
-  // Subquery + LIMIT 是 PostgreSQL 在 json_agg 里取前 N 的标准做法(LIMIT
-  // 不能直接放 json_agg 内层,但子查询包一层即可)。`likedBySample` 比
-  // `likesCount` 多取一份 JOIN,只有 COUNT > 0 才值得渲染头像组;
-  // 前端 v-if 会用 likesCount 守门,这里无脑算即可(N 表,N+1 一致)。
-  // JSON shape: [{ id, name, color }, ...],name/color 在 user 已 disabled
-  // 或从未建档(authorId='me' 那种 page 不是 liked)时为 null — LEFT JOIN 保留。
-  const likedBySampleExpr = sql<Array<{ id: string; name: string | null; color: string | null }>>`
-    COALESCE(
-      (
-        SELECT json_agg(
-          json_build_object('id', u.id, 'name', u.name, 'color', u.color)
-        )
-        FROM (
-          SELECT pl.user_id
-          FROM page_likes pl
-          WHERE pl.page_id = ${pages.id}
-          ORDER BY pl.created_at ASC
-          LIMIT 5
-        ) sub
-        LEFT JOIN users u ON u.id = sub.user_id
-      ),
-      '[]'::json
-    )
-  `.as('liked_by_sample')
-  const q = db
-    .select({
-      ...getTableColumns(pages),
-      authorName: users.name,
-      authorColor: users.color,
-      labels: labelsAgg,
-      hasChildren: hasChildrenExpr,
-      likesCount: likesCountExpr,
-      likedByMe: likedByMeExpr,
-      likedBySample: likedBySampleExpr,
-    })
-    .from(pages)
-    .leftJoin(users, eq(pages.authorId, users.id))
-    .leftJoin(pageLabels, eq(pageLabels.pageId, pages.id))
-    .groupBy(pages.id, users.name, users.color)
-  const filters: SQL[] = []
-  if (!opts.includeDeleted) filters.push(isNull(pages.deletedAt))
-  if (where) filters.push(where)
-  return filters.length ? q.where(and(...filters)) : q
-}
+// `pages` + LEFT JOIN users + LEFT JOIN page_labels — 抽到共享 lib,
+// users.ts /me/watched 也复用。详见 lib/selectPagesWithAuthor.ts。
 
 /* ─── GET /api/pages ─────────────────────────────────────────────────────
  *  Optional ?space=<id> scopes the list to a single space. The space must be
@@ -567,7 +458,6 @@ pagesRouter.patch('/:id', async (c) => {
   if (input.contentJSON !== undefined) patch.contentJson = input.contentJSON
   if (input.contentHTML !== undefined) patch.contentHtml = input.contentHTML
   if (input.icon !== undefined) patch.icon = input.icon
-  if (input.starred !== undefined) patch.starred = input.starred
 
   // PATCH 只更新 pages 行,**不再写 page_versions**。版本(checkpoint)由
   // 前端在 idle boundary / route leave 时主动打 POST /:id/snapshots 触发。
@@ -591,6 +481,23 @@ pagesRouter.patch('/:id', async (c) => {
     // No 'edited' event here — auto-save (every 500ms while typing) would
     // spam the activity feed. The 'edited' event is fired instead by
     // POST /pages/:id/snapshots (idle 30s / route-leave boundary).
+  }
+
+  // M13 watch fanout: title 变化触发 page_renamed 通知所有 watcher。
+  // 与 page_edit 区分:rename 是即时事件(用户主动改标题),不依赖
+  // snapshot 边界;连续 5 分钟多次 rename 走 5-min dedup。
+  const isRename =
+    input.title !== undefined && effTitle !== existing.title
+  if (isRename) {
+    await db.transaction(async (tx) => {
+      await enqueueWatchFanout(tx, {
+        kind: 'page_renamed',
+        actor: me,
+        pageId: id,
+        pageTitle: effTitle,
+        pageAuthorId: existing.authorId,
+      })
+    })
   }
 
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
@@ -670,6 +577,19 @@ pagesRouter.post('/:id/snapshots', async (c) => {
     spaceId: page.spaceId,
     kind: 'edited',
     actor: me,
+  })
+
+  // M13 watch fanout: snapshot 边界触发 page_edit 通知所有 watcher。
+  // 5 分钟同 actor 同 kind 去重(避免 idle 30s + route-leave 双触发)。
+  // 独立 tx 避免和 recordPageEvent 偶发部分写入。
+  await db.transaction(async (tx) => {
+    await enqueueWatchFanout(tx, {
+      kind: 'page_edit',
+      actor: me,
+      pageId: id,
+      pageTitle: page.title,
+      pageAuthorId: page.authorId,
+    })
   })
 
   // refetch + 渲染 DTO(LEFT JOIN users 拿编辑者姓名/颜色)
@@ -793,6 +713,167 @@ pagesRouter.post('/:id/like', async (c) => {
   const likesCount = Number(countResult.rows[0]?.count ?? 0)
 
   return c.json(ToggleLikeResponseSchema.parse({ liked, likesCount }))
+})
+
+/* ─── POST /api/pages/:id/watch ──────────────────────────────────────
+ *  M13 显式 subscribe —— 与 /like 的单端点 toggle 不同,watch 走显式
+ *  REST-style POST (subscribe) / DELETE (unsubscribe),响应共用
+ *  ToggleWatchResponseSchema。重复 POST 是 no-op(SELECT-then-INSERT
+ *  自带去重,复合主键 (page_id, user_id) 保证幂等)。
+ *
+ *  权限:同 /like,canAccessSpace(page.spaceId) 才能 watch;trashed page
+ *  → 404(watch 一个在 trash 的页是无意义语义)。
+ *
+ *  不写 page_versions / page_event:watch 自身是 metadata 操作,
+ *  CLAUDE.md 硬约束。watch 状态变更不出现于活动流。
+ *
+ *  不发通知:watch 自身不触发 notification,只有 subscribed 页发生
+ *  edit/move/rename/restore/delete/comment 时才 fanout(见 Phase 3
+ *  的 enqueueNotifications.watchFanout)。
+ */
+pagesRouter.post('/:id/watch', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  const [page] = await db
+    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .from(pages)
+    .where(eq(pages.id, id))
+    .limit(1)
+  if (!page || page.spaceId === null || page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  let watched = false
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ userId: userWatchedPages.userId })
+      .from(userWatchedPages)
+      .where(
+        and(
+          eq(userWatchedPages.pageId, id),
+          eq(userWatchedPages.userId, me.id),
+        ),
+      )
+      .limit(1)
+    if (existing.length === 0) {
+      await tx.insert(userWatchedPages).values({
+        pageId: id,
+        userId: me.id,
+        watchedAt: Date.now(),
+      })
+      watched = true
+    }
+    // else: 已订阅,SELECT-then-INSERT 自带幂等,不动 DB。
+  })
+
+  const countResult = await db.execute<{ count: number }>(sql`
+    SELECT COUNT(*)::int AS count FROM user_watched_pages WHERE page_id = ${id}
+  `)
+  const watchersCount = Number(countResult.rows[0]?.count ?? 0)
+  return c.json(ToggleWatchResponseSchema.parse({ watched, watchersCount }))
+})
+
+/* ─── DELETE /api/pages/:id/watch ────────────────────────────────────
+ *  M13 显式 unsubscribe —— 同 /watch 的访问检查链。DELETE 幂等:即使
+ *  行不存在也返 watched:false(客户端总能确定 post-call 状态是不 watch)。
+ *
+ *  page hard-delete 时由 pages.ts DELETE 递归 CTE 同事务清理
+ *  user_watched_pages(对应 page 没了所有 watch 也无意义);page 软删
+ *  (deletedAt 设值)保留本表行,restore 后用户仍是 watch 状态。
+ */
+pagesRouter.delete('/:id/watch', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  const [page] = await db
+    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .from(pages)
+    .where(eq(pages.id, id))
+    .limit(1)
+  if (!page || page.spaceId === null || page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  await db
+    .delete(userWatchedPages)
+    .where(
+      and(
+        eq(userWatchedPages.pageId, id),
+        eq(userWatchedPages.userId, me.id),
+      ),
+    )
+
+  const countResult = await db.execute<{ count: number }>(sql`
+    SELECT COUNT(*)::int AS count FROM user_watched_pages WHERE page_id = ${id}
+  `)
+  const watchersCount = Number(countResult.rows[0]?.count ?? 0)
+  return c.json(ToggleWatchResponseSchema.parse({ watched: false, watchersCount }))
+})
+
+/* ─── GET /api/pages/:id/watchers ────────────────────────────────────
+ *  M13 关注者列表 —— 公开于 page 可访问者(谁关注了这页,任何能 read
+ *  这页的人都能看到;可见性跟 like 头像组对齐)。LEFT JOIN users 拿
+ *  name/color —— 已 disabled 时 null,前端头像色块兜底。
+ *
+ *  排序按 watched_at ASC(关注越早越前,跟 likedBySample 心智模型一致)。
+ *  分页上限 1-200,无 limit = 全量走 LIMIT N+1。
+ */
+pagesRouter.get('/:id/watchers', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  const [page] = await db
+    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .from(pages)
+    .where(eq(pages.id, id))
+    .limit(1)
+  if (!page || page.spaceId === null || page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+
+  const baseQuery = db
+    .select({
+      id: userWatchedPages.userId,
+      name: users.name,
+      color: users.color,
+      watchedAt: userWatchedPages.watchedAt,
+    })
+    .from(userWatchedPages)
+    .leftJoin(users, eq(users.id, userWatchedPages.userId))
+    .where(eq(userWatchedPages.pageId, id))
+    .orderBy(sql`${userWatchedPages.watchedAt} ASC`)
+
+  const rows = limit === undefined
+    ? await baseQuery
+    : await baseQuery.limit(limit + 1).offset(offset)
+
+  const result = applyPagination(
+    rows.map((r) =>
+      WatcherSchema.parse({
+        id: r.id,
+        name: r.name,
+        color: r.color,
+        watchedAt: r.watchedAt,
+      }),
+    ),
+    limit,
+    offset,
+  )
+  return c.json(PaginatedListSchema(WatcherSchema).parse(result))
 })
 
 /* ─── PATCH /api/pages/:id/move ────────────────────────────────────── */
@@ -978,6 +1059,20 @@ pagesRouter.patch('/:id/move', async (c) => {
     },
   })
 
+  // M13 watch fanout: move 触发 page_moved 通知所有 watcher(发到 *原*
+  // 订阅者集合 —— move 不改变 user_watched_pages 行,但 watcher 可能
+  // 因为新空间访问权丢失而后续看不到页)。独立 tx 避免 recordPageEvent
+  // 失败连带。pageAuthorId 从 existing 拿(move 时 authorId 不变)。
+  await db.transaction(async (tx) => {
+    await enqueueWatchFanout(tx, {
+      kind: 'page_moved',
+      actor: me,
+      pageId: id,
+      pageTitle: existing.title,
+      pageAuthorId: existing.authorId,
+    })
+  })
+
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)))
@@ -1135,7 +1230,7 @@ pagesRouter.post('/:id/publish', async (c) => {
  *  In-place sibling copy: creates a fresh page in the SAME space and SAME
  *  parent as the source, immediately AFTER the source in sibling order.
  *  Title is prefixed with `复制自` (per spec). Content (Tiptap JSON + HTML
- *  + icon) is copied verbatim; starred / labels are intentionally NOT
+ *  + icon) is copied verbatim; labels / watch subscriptions are intentionally NOT
  *  inherited — they're user-level opinions that don't follow a copy.
  *
  *  Mirrors `/publish` for read+copy+refetch and `/move` for the sibling
@@ -1227,7 +1322,7 @@ pagesRouter.post('/:id/duplicate', async (c) => {
       updatedAt: now,
       updatedBy: me.id,
       authorId: me.id, // the duplicator becomes the new page's author
-      // starred / labels / deleted_* intentionally NOT copied — fresh page.
+      // watch subscriptions / labels / deleted_* intentionally NOT copied — fresh page.
     })
     // Sequentially rewrite sortOrder 0..N with newId at position insertAt.
     // Await every update (don't fire-and-forget) so the post-tx SELECT
@@ -1313,6 +1408,19 @@ pagesRouter.post('/:id/restore', async (c) => {
     actor: me,
   })
 
+  // M13 watch fanout: restore 触发 page_restored 通知所有 watcher。
+  // 重要:user_watched_pages 行在 soft-delete 期间保留,restore 后用户
+  // 仍是 watch 状态,所以此时 fanout 是有意义的(否则用户看不到恢复通知)。
+  await db.transaction(async (tx) => {
+    await enqueueWatchFanout(tx, {
+      kind: 'page_restored',
+      actor: me,
+      pageId: id,
+      pageTitle: existing.title,
+      pageAuthorId: existing.authorId,
+    })
+  })
+
   return c.body(null, 204)
 })
 
@@ -1344,11 +1452,14 @@ pagesRouter.delete('/:id', async (c) => {
 
   // Pre-check: load row regardless of trash state — purge needs to see
   // already-trashed rows. Soft-delete filters them out so we don't
-  // double-trash.
+  // double-trash. M13 watch fanout needs title + authorId for the
+  // page_deleted notification snapshot.
   const existing = (await db
     .select({
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
+      title: pages.title,
+      authorId: pages.authorId,
     })
     .from(pages)
     .where(eq(pages.id, id))
@@ -1461,6 +1572,20 @@ pagesRouter.delete('/:id', async (c) => {
     spaceId: existing.spaceId,
     kind: 'trashed',
     actor: me,
+  })
+
+  // M13 watch fanout: 软删触发 page_deleted 通知所有 watcher。
+  // user_watched_pages 行**不删** —— restore 后用户仍是 watch 状态(详见
+  // 0007 migration 的 schema 注释 + pages.ts DELETE 的 hard-delete 路径
+  // 才会级联清理)。
+  await db.transaction(async (tx) => {
+    await enqueueWatchFanout(tx, {
+      kind: 'page_deleted',
+      actor: me,
+      pageId: id,
+      pageTitle: existing.title,
+      pageAuthorId: existing.authorId,
+    })
   })
 
   return c.body(null, 204)

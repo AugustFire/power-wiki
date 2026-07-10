@@ -642,6 +642,14 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+/* 把关注按钮推到 byline 行最右 —— 视觉上跟作者信息组(左)+ 操作(右)两端对齐 */
+
+.edit-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .edit-footer .footer-meta {
   display: flex;
   align-items: center;

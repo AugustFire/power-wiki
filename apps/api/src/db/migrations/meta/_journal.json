@@ -64,6 +64,13 @@
       "when": 1783200000000,
       "tag": "0009_add_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783500000000,
+      "tag": "0019_user_watched_pages",
+      "breakpoints": true
     }
   ]
 }

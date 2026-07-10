@@ -277,6 +277,15 @@
 }
 .sidebar-section-title button:hover { background: var(--bg-subtle); color: var(--text-1); }
 
+/* section 标题前缀 icon — 全局,Sidebar.vue / WatchedSidebar.vue 共用。
+   scoped 写在 Sidebar.vue 时 WatchedSidebar 不生效,会导致两处 icon 字号不一致。 */
+.section-icon {
+    font-size: 14px !important;
+    color: var(--text-3);
+    vertical-align: -2px;
+    margin-right: 4px;
+}
+
 .tree {
     display: flex;
     flex-direction: column;

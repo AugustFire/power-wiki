@@ -48,7 +48,6 @@ export const PageNodeSchema = z.object({
    *  authorId='me' (legacy seed) or refers to a now-deleted user. */
   authorName: z.string().nullable(),
   authorColor: z.string().nullable(),
-  starred: z.boolean().optional(),
   /** Material Symbols ligature name (e.g. `menu_book`, `edit_note`,
    *  `arrow_back_ios_new`). Capped at 40 to match `SpaceSchema.icon` —
    *  the previous `max(8)` silently broke Material Symbols names like
@@ -87,6 +86,16 @@ export const PageNodeSchema = z.object({
       }),
     )
     .optional(),
+  /**
+   * M13 👁 visibility — 当前用户是否关注此页。EXISTS(user_watched_pages
+   * WHERE page_id=? AND user_id=me)。Join 路径是 selectPagesWithAuthor,
+   * 没传 viewerUserId 时返回 false。Fallback 路径给 false。
+   * Optional:种子页 / 老 cache 没填时为 undefined,UI fallback 到 false。 */
+  watchedByMe: z.boolean().optional(),
+  /** M13 👁 该页被关注总数 —— 由 user_watched_pages 表 COUNT(*) GROUP BY
+   *  page_id 出。Joined rows 一定有(0 / 数字),未走 join 的 fallback 路径
+   *  在 rowToPageNode 里 fallback 成 0。 */
+  watchersCount: z.number().int().nonnegative().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */
@@ -255,7 +264,21 @@ export const NotificationSchema = z.object({
   actorId: z.string().min(1),
   actorName: z.string().nullable(),
   actorColor: z.string().nullable(),
-  kind: z.enum(['mention', 'reply', 'comment_on_my_page', 'page_like']),
+  // M13 扩 6 类 watch fanout kind。app 层 enum,Drizzle 端 text(无 DB native enum)。
+  // page 作者同时满足 watcher 时,comment_add → comment_on_my_page(author 去重)。
+  kind: z.enum([
+    'mention',
+    'reply',
+    'comment_on_my_page',
+    'page_like',
+    // M13 watch fanout(给所有 watcher,actor != user_id)
+    'page_edit',
+    'page_renamed',
+    'page_moved',
+    'page_restored',
+    'page_deleted',
+    'comment_add',
+  ]),
   pageId: z.string().min(1),
   pageTitle: z.string().nullable(),
   commentId: z.string().min(1).nullable(),
@@ -356,7 +379,6 @@ export const UpdatePageInputSchema = z
     contentHTML: HtmlSchema.optional(),
     /** Same 40-char cap as CreatePageInput — see PageNodeSchema for rationale. */
     icon: z.string().max(40).optional(),
-    starred: z.boolean().optional(),
   })
   .refine(
     (data) => Object.values(data).some((v) => v !== undefined),
@@ -544,10 +566,37 @@ export interface RequestUploadResponse {
   expiresAt: number
 }
 
+/* ---------- Page watched — 👁 visibility (M13) ----------
+ * 与 ToggleLike 同构:watch 状态变更响应只返 watched + watchersCount
+ * 两个最小字段。前端 store 已经在缓存 PageNode,只需要合并。Server 端
+ * 复合主键 (page_id, user_id) 自带幂等;SELECT-then-INSERT/DELETE 顺序。
+ */
+export const ToggleWatchResponseSchema = z.object({
+  /** 切换后当前用户的 watch 状态 —— true=已关注, false=已取消 */
+  watched: z.boolean(),
+  /** 该页最新的关注者总数 >= 0,变更后立即同步。
+   *  并发竞态下后端 SERIALIZABLE 事务保证准确,前端不再乐观推算。 */
+  watchersCount: z.number().int().nonnegative(),
+})
+
+/** GET /api/pages/:id/watchers 单条 DTO — LEFT JOIN users 拿 name/color,
+ *  user 已 disabled 时为 null。`watchedAt` 用于排序 / tooltip。 */
+export const WatcherSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().nullable(),
+  color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/)
+    .nullable(),
+  watchedAt: z.number().int().positive(),
+})
+
 /* ---------- Stage 8 type exports ---------- */
 export type PageVersion = z.infer<typeof PageVersionSchema>
 export type AddLabelInput = z.infer<typeof AddLabelInputSchema>
 export type ToggleLikeResponse = z.infer<typeof ToggleLikeResponseSchema>
+export type ToggleWatchResponse = z.infer<typeof ToggleWatchResponseSchema>
+export type Watcher = z.infer<typeof WatcherSchema>
 
 /* ─────────────────────────────────────────────────────────────────
  *  P1-3 Activity feed (v2)

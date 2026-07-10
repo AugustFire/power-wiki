@@ -39,11 +39,13 @@ import {
   SignInInputSchema,
   SpaceSchema,
   ToggleLikeResponseSchema,
+  ToggleWatchResponseSchema,
   UnreadCountResponseSchema,
   UpdateAdminSettingInputSchema,
   UpdateCommentInputSchema,
   UserGroupSchema,
   UserSchema,
+  WatcherSchema,
 } from '@power-wiki/shared/schemas'
 import type {
   ActivityEvent,
@@ -73,6 +75,7 @@ import type {
   SignInInput,
   Space,
   ToggleLikeResponse,
+  ToggleWatchResponse,
   UpdateAdminSettingInput,
   UpdateCommentInput,
   UpdateGroupInput,
@@ -81,6 +84,7 @@ import type {
   UpdateUserInput,
   User,
   UserGroup,
+  Watcher,
 } from '@power-wiki/shared'
 
 export class ApiError extends Error {
@@ -450,6 +454,44 @@ export const api = {
       invalidatePrefix('/pages')
       return ToggleLikeResponseSchema.parse(raw) as ToggleLikeResponse
     },
+    /**
+     * M13 👁 关注(visibility)—— 显式 REST 风格:POST 订阅,DELETE 取消。
+     * 响应是最小回执 { watched, watchersCount },与 ToggleLike 同构。
+     * Sidebar「我的关注」section 和 PageTree node indicator 都消费这个。
+     */
+    watch: async (id: string): Promise<ToggleWatchResponse> => {
+      const raw = await request<ToggleWatchResponse>(
+        `/pages/${encodeURIComponent(id)}/watch`,
+        { method: 'POST' },
+      )
+      invalidatePrefix('/pages')
+      invalidatePrefix('/users/me/watched')
+      return ToggleWatchResponseSchema.parse(raw) as ToggleWatchResponse
+    },
+    unwatch: async (id: string): Promise<ToggleWatchResponse> => {
+      const raw = await request<ToggleWatchResponse>(
+        `/pages/${encodeURIComponent(id)}/watch`,
+        { method: 'DELETE' },
+      )
+      invalidatePrefix('/pages')
+      invalidatePrefix('/users/me/watched')
+      return ToggleWatchResponseSchema.parse(raw) as ToggleWatchResponse
+    },
+    /**
+     * 关注者列表 —— 给右 TOC「页面关注者」section 渲染头像组。`limit` 上限
+     * 200,`offset` 翻页。首屏只取前 N 个 + 「+M」溢出,无需大批量翻页,
+     * 通用 GET 缓存 30s 够用。
+     */
+    watchers: (id: string, q?: PaginatedQuery): Promise<Paginated<Watcher>> => {
+      const params = new URLSearchParams()
+      if (q?.limit !== undefined) params.set('limit', String(q.limit))
+      if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      const qs = params.toString() ? `?${params.toString()}` : ''
+      return getManyPaginated(
+        `/pages/${encodeURIComponent(id)}/watchers${qs}`,
+        WatcherSchema,
+      )
+    },
   },
 
   spaces: {
@@ -562,6 +604,21 @@ export const api = {
         // GETs for FETCH_CACHE_TTL_MS — see api.ts top).
         invalidatePrefix('/users/me')
         return UserSchema.parse(raw) as User
+      },
+      /**
+       * M13 当前用户的关注页面列表 —— Sidebar「我的关注」section 传
+       * `spaceId: activeSpaceId` 走空间过滤;Dashboard Watching tab 不传
+       * 拿全部。30s GET 缓存 + toggle 后 invalidatePrefix 配套。
+       */
+      watched: (
+        q?: PaginatedQuery & { spaceId?: string },
+      ): Promise<Paginated<PageNode>> => {
+        const params = new URLSearchParams()
+        if (q?.spaceId) params.set('space', q.spaceId)
+        if (q?.limit !== undefined) params.set('limit', String(q.limit))
+        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        return getManyPages(`/users/me/watched${qs}`)
       },
     },
   },

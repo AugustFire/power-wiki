@@ -28,6 +28,14 @@ export const usePagesStore = defineStore('pages', () => {
    */
   const trashed = ref<PageNode[]>([])
   const trashLoaded = ref(false)
+
+  /** Bumped on every successful watch/unwatch (or cache-less first toggle).
+   * Sidebar 的「我的关注」section 和右 TOC 的「页面关注者」都 watch 这个
+   * counter —— 单凭 page.watchedByMe / watchersCount 变化驱动不到跨组件
+   * 列表拉取(它们各自维护独立的 local state),需要一个稳定的 trigger 让
+   * 任何 watch 操作都触发两边重新 fetch。counter 比 timestamp 更可测,
+   * 也比深度 watch pages 数组(高频)便宜。 */
+  const watchVersion = ref(0)
   /** B.1: pagination state for trashed list. */
   const TRASH_PAGE_SIZE = 50
   const trashOffset = ref(0)
@@ -389,8 +397,8 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
-   * 更新内容字段(title / contentJSON / contentHTML / icon / starred)。
-   * 父级变更请走 `movePage`。
+   * 更新内容字段(title / contentJSON / contentHTML / icon)。
+   * 父级变更请走 `movePage`。订阅状态请走 watch/unwatch。
    */
   async function updatePage(id: string, patch: Partial<PageNode>): Promise<PageNode> {
     const idx = pages.value.findIndex((p) => p.id === id)
@@ -405,7 +413,6 @@ export const usePagesStore = defineStore('pages', () => {
     if (patch.contentJSON !== undefined) apiPatch.contentJSON = patch.contentJSON
     if (patch.contentHTML !== undefined) apiPatch.contentHTML = patch.contentHTML
     if (patch.icon !== undefined) apiPatch.icon = patch.icon
-    if (patch.starred !== undefined) apiPatch.starred = patch.starred
 
     try {
       const real = await api.pages.update(id, apiPatch)
@@ -572,6 +579,77 @@ export const usePagesStore = defineStore('pages', () => {
       return r
     } catch (e) {
       // 回滚
+      const i = pages.value.findIndex((p) => p.id === id)
+      if (i >= 0) pages.value[i] = snapshot
+      ui().setError(`操作失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
+   * M13 👁 关注 toggle —— 与 togglePageLike 同构但 endpoints 拆分:
+   *   - 已关注 → watch (POST) → 服务端 SELECT-then-INSERT(幂等)
+   *   - 未关注 → unwatch (DELETE) → 服务端 DELETE
+   * 不像 like 那样单端点 toggle,因为要遵循 SPEC 的 REST 风格(2026-07-10 锁定)。
+   *
+   * 乐观更新:本地先翻 watchedByMe + ±1 count;API 返回用 server 权威值覆盖。
+   * 失败回滚到 snapshot + banner。cache 里没有该 page 时直接走 server,
+   * 不乐观推算。返回 server 的 { watched, watchersCount } 给 caller。
+   */
+  async function togglePageWatch(
+    id: string,
+  ): Promise<{ watched: boolean; watchersCount: number }> {
+    const idx = pages.value.findIndex((p) => p.id === id)
+    if (idx < 0) {
+      // 没缓存 — 不知道当前状态,不能瞎走 watch 还是 unwatch。
+      // 第一次 click 走到这条路径基本就是 deep link 直达页面的场景;
+      // 先 getPage 拿一次真值,然后根据真值决定 call watch 还是 unwatch。
+      try {
+        const cur = await api.pages.get(id)
+        const wasWatched = cur.watchedByMe === true
+        const r = wasWatched
+          ? await api.pages.unwatch(id)
+          : await api.pages.watch(id)
+        // 也把这条 page 加进缓存(后续再 click 不用再 get)
+        syncPageFromServer({ ...cur, watchedByMe: r.watched, watchersCount: r.watchersCount })
+        watchVersion.value++
+        return r
+      } catch (e) {
+        ui().setError(`操作失败: ${errorMessage(e)}`)
+        throw e
+      }
+    }
+    const snapshot = { ...pages.value[idx]! }
+    const wasWatched = snapshot.watchedByMe === true
+    const beforeCount = snapshot.watchersCount ?? 0
+    pages.value[idx] = {
+      ...snapshot,
+      watchedByMe: !wasWatched,
+      watchersCount: beforeCount + (wasWatched ? -1 : 1),
+    }
+    try {
+      const r = wasWatched
+        ? await api.pages.unwatch(id)
+        : await api.pages.watch(id)
+      const i = pages.value.findIndex((p) => p.id === id)
+      if (i >= 0) {
+        pages.value[i] = {
+          ...pages.value[i]!,
+          watchedByMe: r.watched,
+          watchersCount: r.watchersCount,
+        }
+      }
+      const ti = trashed.value.findIndex((p) => p.id === id)
+      if (ti >= 0) {
+        trashed.value[ti] = {
+          ...trashed.value[ti]!,
+          watchedByMe: r.watched,
+          watchersCount: r.watchersCount,
+        }
+      }
+      watchVersion.value++
+      return r
+    } catch (e) {
       const i = pages.value.findIndex((p) => p.id === id)
       if (i >= 0) pages.value[i] = snapshot
       ui().setError(`操作失败: ${errorMessage(e)}`)
@@ -1071,6 +1149,8 @@ export const usePagesStore = defineStore('pages', () => {
     restorePage,
     purgePage,
     togglePageLike,
+    togglePageWatch,
+    watchVersion,
   }
 })
 

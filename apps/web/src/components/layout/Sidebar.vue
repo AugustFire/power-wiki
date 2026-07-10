@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui'
 import { newId } from '@/lib/id'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageTree from './PageTree.vue'
+import WatchedSidebar from './WatchedSidebar.vue'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -154,6 +155,9 @@ watch(
         <span class="active-count">{{ activePageCount }}</span>
       </button>
     </div>
+
+    <!-- M13 我的关注 —— 个人空间无 watch 语义,不渲染此 section。 -->
+    <WatchedSidebar v-if="!isActivePersonal" />
 
     <div class="sidebar-section">
       <div class="sidebar-section-title">
@@ -310,13 +314,6 @@ watch(
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 120px;
-}
-
-.section-icon {
-  font-size: 14px !important;
-  color: var(--text-3);
-  vertical-align: -2px;
-  margin-right: 4px;
 }
 
 .sidebar-section-title .count {

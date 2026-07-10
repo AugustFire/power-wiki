@@ -1,9 +1,18 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth'
+import { useSpacesStore } from '@/stores/spaces'
+import { usePagesStore } from '@/stores/pages'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
+import type { Watcher } from '@power-wiki/shared'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
+const spacesStore = useSpacesStore()
+const pagesStore = usePagesStore()
 
 const props = defineProps<{
   contentRef: HTMLElement | null
@@ -224,6 +233,89 @@ watch(
     setupMutationObserver()
   }
 )
+
+/* ─── M13 👁 关注者列表 ─────────────────────────────────────────────
+ *
+ * 数据来源:`GET /api/pages/:id/watchers?limit=5` —— 后端按 watched_at ASC
+ * 取前 5 个 watcher + user LEFT JOIN。
+ *
+ * 显隐规则:
+ *   - 0 个 watcher → 「+ 👁 关注此页」hinting link
+ *   - ≤ 5 个         → 全部显示
+ *   - > 5 个         → 前 5 个 + 「+N」溢出(不需要详情 modal,纯导航)
+ *
+ * watch pageKey 切换时重新拉;清空 prev state 避免 cross-page 闪显。
+ */
+const watchers = ref<Watcher[]>([])
+const watchersLoading = ref(false)
+const watchersTotal = ref(0)
+const WATCHERS_LIMIT = 5
+
+async function loadWatchers() {
+  const pageId = props.pageKey
+  if (!pageId || typeof pageId !== 'string') {
+    watchers.value = []
+    watchersTotal.value = 0
+    return
+  }
+  watchersLoading.value = true
+  try {
+    const r = await api.pages.watchers(pageId, {
+      limit: WATCHERS_LIMIT,
+      offset: 0,
+    })
+    watchers.value = r.items
+    // 后端 hasMore=true 表示 offset+items 之后还有;总量用上限 + 1 估算。
+    // 真实总量对右 TOC 不关键(只要显示「+N」溢出就行)。
+    watchersTotal.value = r.hasMore ? r.items.length + 1 : r.items.length
+  } catch {
+    // 失败静默,UI 仍可渲染其他 section
+    watchers.value = []
+    watchersTotal.value = 0
+  } finally {
+    watchersLoading.value = false
+  }
+}
+
+/** 当前页是否在个人空间 —— 个人空间无 watch 语义,右 TOC 不显示
+ * 「页面关注者」section。 */
+const isPersonalSpace = computed(() => {
+  const pid = authStore.personalSpaceId
+  if (!pid) return false
+  const page = props.pageKey ? pagesStore.getPage(String(props.pageKey)) : null
+  if (page?.spaceId === pid) return true
+  return spacesStore.activeSpaceId.value === pid
+})
+
+/** 当前用户是否在该页的 watcher 列表里 —— 用于显示「我」徽章高亮。 */
+const currentUserIsWatcher = computed(() =>
+  watchers.value.some((w) => w.id === authStore.user?.id),
+)
+
+/** 「+N」溢出数字:估算 ≥ limit+1 时显示;后端 hasMore 用 limit 而非真实 count。 */
+const overflowCount = computed(() => {
+  if (watchersTotal.value <= WATCHERS_LIMIT) return 0
+  return watchersTotal.value - WATCHERS_LIMIT
+})
+
+watch(
+  () => props.pageKey,
+  () => {
+    watchers.value = []
+    watchersTotal.value = 0
+    void loadWatchers()
+  },
+  { immediate: true },
+)
+
+// watch toggle 后立即重拉 —— pagesStore.watchVersion 在 togglePageWatch
+// 成功(或 cache-less fallback)路径末 +1,任何跨页面、跨用户的关注操作
+// 都会触发这次 refetch。watchers list 是独立 cache,pageKey 不变就不
+// 会自动重拉,需要这个 trigger。
+watch(
+  () => pagesStore.watchVersion,
+  () => void loadWatchers(),
+)
 </script>
 
 <template>
@@ -260,10 +352,32 @@ watch(
       </div>
     </div>
 
-    <div class="toc-followers">
-      <div class="toc-title">页面关注者</div>
-      <div class="av-stack">
-        <div class="av" style="background:#FF5630" title="我">ME</div>
+    <div v-if="!isPersonalSpace" class="toc-followers">
+      <div class="toc-title">
+        <span class="material-symbols-outlined toc-followers-icon" aria-hidden="true">
+          visibility
+        </span>
+        页面关注者
+        <span v-if="watchersTotal > 0" class="toc-followers-count">{{ watchersTotal }}</span>
+      </div>
+
+      <!-- 0 个 watcher:叫用户也来关注(自己 watch 上不用算,但提示动作可见) -->
+      <div v-if="watchersLoading" class="toc-followers-loading" aria-busy="true">加载中…</div>
+      <div v-else-if="watchersTotal === 0" class="toc-followers-empty">
+        还没有人关注此页
+      </div>
+      <div v-else class="toc-followers-stack">
+        <UserAvatar
+          v-for="w in watchers"
+          :key="w.id"
+          :size="20"
+          :color="w.color ?? 'var(--text-3)'"
+          :label="w.name ?? w.id"
+          :title="w.name ?? w.id"
+          class="toc-follower-av"
+          :class="{ 'is-me': w.id === authStore.user?.id }"
+        />
+        <span v-if="overflowCount > 0" class="toc-follower-overflow">+{{ overflowCount }}</span>
       </div>
     </div>
   </aside>
@@ -305,5 +419,67 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ─── M13 关注者 section ────────────────────────────────────────── */
+.toc-followers {
+  margin-top: 24px;
+}
+.toc-followers-icon {
+  font-size: 16px;
+  color: var(--text-3);
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+.toc-followers-count {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+.toc-followers-loading,
+.toc-followers-empty {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.toc-followers-loading {
+  font-style: italic;
+}
+.toc-followers-stack {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+}
+.toc-follower-av {
+  margin-left: -4px;
+  border: 1.5px solid var(--bg);
+  border-radius: 50%;
+  /* 自己特殊描边稍微亮一点,更容易识别「我也关注了」 */
+}
+.toc-follower-av:first-child {
+  margin-left: 0;
+}
+.toc-follower-av.is-me {
+  border-color: var(--accent);
+  border-width: 1.5px;
+}
+.toc-follower-overflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -4px;
+  border: 1.5px solid var(--bg);
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-subtle);
+  min-width: 20px;
+  height: 20px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

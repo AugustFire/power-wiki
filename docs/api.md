@@ -42,7 +42,7 @@
 | GET    | `/trash` | admin | 跨空间回收站(`?space=` 必填) |
 | GET    | `/:id` | 普通 | 不可见 space 返 404(防越权猜测) |
 | POST   | `/` | 普通 | body `{parentId?,title?,icon?,spaceId,...}`,`spaceId` 必填 |
-| PATCH  | `/:id` | 普通 | body `{title?,contentJSON?,contentHTML?,icon?,starred?}`;`starred` 是 metadata,不打 `page_versions` |
+| PATCH  | `/:id` | 普通 | body `{title?,contentJSON?,contentHTML?,icon?}`;metadata-only PATCH 不打 `page_versions` |
 | PATCH  | `/:id/move` | 普通 | body `{newParentId,newOrder?}`,循环返 409 `cycle` |
 | POST   | `/:id/snapshots` | 普通 | 手动 / 边界快照入口(EditView 30s idle + route leave 末段自动调),retention 30 行 |
 | POST   | `/:id/publish` | 普通 | body `{targetSpaceId}` → 201 + 新 `PageNode`(personal space → team space 的「发布到」语义:源页保留,新页标题自动加 `（来自 {userName} 的个人分享）` 后缀,源页只读于自己 personal space) |

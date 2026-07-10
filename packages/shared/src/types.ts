@@ -42,8 +42,6 @@ export interface PageNode {
   authorName: string | null
   /** 创建者头像色,同上 */
   authorColor: string | null
-  /** 用户手动收藏的页面,Sidebar 会高亮显示 */
-  starred?: boolean
   /**
    * Stage 8: page labels (Notion-style, global lowercase). Always present
    *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
@@ -76,6 +74,15 @@ export interface PageNode {
    *  user 已 disabled 时 name/color 为 null。Optional:未走 selectPagesWithAuthor
    *  的 fallback 路径给 []。 */
   likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
+  /**
+   * M13 👁 visibility — 当前用户是否关注此页。EXISTS(user_watched_pages
+   *  WHERE page_id=? AND user_id=me)。Optional:种子页 / 老 cache 没填时
+   *  为 undefined,UI fallback 到 false。schema 同步 PageNodeSchema。 */
+  watchedByMe?: boolean
+  /** M13 👁 该页被关注总数 —— user_watched_pages 表 COUNT(*) GROUP BY page_id。
+   *  Joined rows 一定有这个字段(0 / 数字),未走 join 的 fallback 路径给 0。
+   *  Optional:同 likedByMe。 */
+  watchersCount?: number
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */

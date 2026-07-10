@@ -57,7 +57,7 @@ import {
 } from '../lib/commentGuards'
 import { rowToComment } from '../lib/commentRowMappers'
 import { getMentionCandidates } from '../lib/mentionCandidates'
-import { enqueueNotifications } from '../lib/notify'
+import { enqueueNotifications, enqueueWatchFanout } from '../lib/notify'
 
 export const commentsRouter = new Hono<{ Variables: Variables }>()
 commentsRouter.use('*', requireAuth)
@@ -320,13 +320,25 @@ commentsRouter.post('/', async (c) => {
       })
     } else {
       // Top-level comment: notify the page author.
+      const pageAuthorId = await getPageAuthorId(tx, input.pageId)
       await enqueueNotifications(tx, {
         kind: 'comment_on_my_page',
         actor: me,
         pageId: input.pageId,
         pageTitle,
         commentId: id,
-        pageAuthorId: pageMeta?.title != null ? await getPageAuthorId(tx, input.pageId) : null,
+        pageAuthorId,
+      })
+      // M13 watch fanout: 顶层评论触发 comment_add 通知所有 watcher。
+      // 5-min dedup 同 actor + author dedup(由 enqueueWatchFanout 内部
+      // 处理 —— page 作者只收 comment_on_my_page,不双收 comment_add)。
+      await enqueueWatchFanout(tx, {
+        kind: 'comment_add',
+        actor: me,
+        pageId: input.pageId,
+        pageTitle,
+        pageAuthorId: pageAuthorId ?? '',
+        commentId: id,
       })
     }
 

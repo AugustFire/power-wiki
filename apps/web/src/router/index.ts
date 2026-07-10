@@ -86,6 +86,16 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
+  // M13: 全量关注页面。Sidebar「我的关注」section 的「查看全部」跳到这里。
+  // 独立成 /me/watched 而不是挂在 /me 下面 —— M2 的真 Dashboard 来之前不引入
+  // /me?tab=xxx 模式;Phase 7 给出最简可访问页,M2 时再考虑迁到 /me/watched。
+  {
+    path: '/me/watched',
+    name: 'watched',
+    component: () => import('@/views/WatchedView.vue'),
+    meta: { requiresAuth: true },
+  },
+
   // ─── Notifications inbox ──────────────────────────────────────────
   // 2026-07-01: 删除了原来的 `/notifications` 顶级路由 + NotificationsView.
   // 通知中心现在是 TopBar 铃铛 → 右侧抽屉, 没有独立页面.

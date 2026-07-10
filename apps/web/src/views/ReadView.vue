@@ -1,6 +1,8 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
+import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
@@ -8,6 +10,7 @@ import TocPanel from '@/components/layout/TocPanel.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import WhoLikedList from '@/components/page/WhoLikedList.vue'
+import PageWatchButton from '@/components/page/PageWatchButton.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
@@ -23,11 +26,23 @@ import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
+const spacesStore = useSpacesStore()
+const authStore = useAuthStore()
 const router = useRouter()
 const { recordVisit } = useRecentPages()
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
+
+/** 当前页是否在个人空间 —— 个人空间是用户私有草稿区,不暴露关注入口
+ * (无 watch 语义,也不向别人推送通知)。activeSpaceId 用作兜底,这样即使
+ * page 还没加载完也能正确隐藏按钮。 */
+const isPersonalSpace = computed(() => {
+  const pid = authStore.personalSpaceId
+  if (!pid) return false
+  if (page.value?.spaceId === pid) return true
+  return spacesStore.activeSpaceId.value === pid
+})
 
 /** 浏览器 tab 标题:页面名 + "· power-wiki";page 还没解析出时退回 BASE。
  * watchEffect 自动响应 page.value 的 reactive 变化。 */
@@ -102,16 +117,6 @@ function goPage(id: string) {
 
 function relativeTime(ts: number): string {
   return formatRelativeTime(ts)
-}
-
-/**
- * Star toggle: 后端 schema/PATCH/store 全通(starred: boolean),但前端一直没
- * 入口 — 字段写了不让人用,reviewer 一眼穿帮。这里补 ReadView 顶栏的图标按钮,
- * 点了走乐观更新(updatePage 内部已支持 starred),失败回滚 + banner。
- */
-async function toggleStar() {
-  if (!page.value) return
-  await pagesStore.updatePage(page.value.id, { starred: !page.value.starred })
 }
 
 /**
@@ -330,19 +335,6 @@ watch(
       <div class="page-actions">
 <!--        <button-->
 <!--          v-if="page"-->
-<!--          class="btn ghost star-btn"-->
-<!--          type="button"-->
-<!--          :class="{ 'is-starred': page.starred }"-->
-<!--          :aria-label="page.starred ? '取消收藏' : '收藏'"-->
-<!--          :title="page.starred ? '取消收藏' : '收藏'"-->
-<!--          @click="toggleStar"-->
-<!--        >-->
-<!--          <span class="material-symbols-outlined icon-lg">-->
-<!--            {{ page.starred ? 'star' : 'star_outline' }}-->
-<!--          </span>-->
-<!--        </button>-->
-<!--        <button-->
-<!--          v-if="page"-->
 <!--          class="btn ghost"-->
 <!--          type="button"-->
 <!--          aria-label="复制页面"-->
@@ -361,6 +353,10 @@ watch(
           <span class="material-symbols-outlined icon-md">history</span>
           页面历史
         </RouterLink>
+        <!-- M13 👁 关注按钮 —— 位置贴 design/wiki-read.html:311 的 subheader
+             page-actions 行,跟「页面历史 / 编辑」同款 `.btn`,表达「订阅此页
+             通知」。个人空间无 watch 语义,直接不渲染。 -->
+        <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
         <button class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
@@ -523,20 +519,6 @@ watch(
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
-}
-
-/* Star toggle:ghost 按钮常态中性色,激活后填充 amber 强调 */
-.star-btn .material-symbols-outlined {
-  color: var(--text-3);
-  transition: color 80ms ease;
-}
-.star-btn:hover .material-symbols-outlined {
-  color: var(--accent);
-}
-.star-btn.is-starred .material-symbols-outlined {
-  /* filled star — 走 amber 比 accent 蓝更像收藏语义,跟 Confluence 一致 */
-  color: #FFAB00;
-  font-variation-settings: 'FILL' 1;
 }
 
 /* `页面历史` RouterLink:跟 ExportMenu 的 `.btn` 同款(不用 ghost)—
