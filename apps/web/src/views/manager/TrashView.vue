@@ -19,6 +19,7 @@ import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { formatRelativeTime } from '@/lib/relativeTime'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import type { PageNode, User } from '@power-wiki/shared'
 
@@ -26,6 +27,7 @@ const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const uiStore = useUiStore()
 const { confirm } = useConfirm()
+useDocumentTitle(() => '回收站')
 
 /* ─── P1-8: 回收站保留期设置 ─────────────────────────────────────
  *   拉一次 GET /admin/settings/trash_retention_days,挂在 trash 列表上方

@@ -1,5 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+const route = useRoute()
+const router = useRouter()
 
 const props = defineProps<{
   contentRef: HTMLElement | null
@@ -30,6 +34,15 @@ const items = ref<TocItem[]>([])
 const activeId = ref<string>('')
 const manualId = ref<string | null>(null)
 let observer: IntersectionObserver | null = null
+
+/** 当前路由的 hash(去掉前导 #),用于高亮"刚点过 / 刚刷新定位到"的 heading。
+ * ReadView / EditView 都用同套 heading-id 格式(h- 前缀,见 headingAnchors.ts)。
+ * 优先级:route.hash 命中(用户刚点 / 刚刷新定位)> IntersectionObserver
+ * 看到的(用户主动滚动)。前者先压,后等到用户滚动后自然接管。 */
+const currentHashId = computed(() => {
+  const h = route.hash
+  return h && h.startsWith('#') ? h.slice(1) : ''
+})
 
 /**
  * 收集 heading 节点。
@@ -81,7 +94,10 @@ function readHeading(el: HTMLElement, idx: number): TocItem | null {
   const text = (clone.textContent || '').trim()
   if (!text) return null
   if (!el.id) {
-    el.id = `${tag}-${idx}-${text.replace(/\s+/g, '-').slice(0, 30)}`
+    // 兜底 id 也带 h- 前缀,与 headingAnchors.ts ensureId 对齐 —
+    // 万一 collectHeadings 比 addHeadingAnchors 先跑(罕见但偶发),
+    // 仍然保持 URL hash 语义一致,不会让 TocPanel 拿到不带前缀的 id。
+    el.id = `h-${tag}-${idx}-${text.replace(/\s+/g, '-').slice(0, 30)}`
   }
   return { id: el.id, text, level: lv }
 }
@@ -155,8 +171,14 @@ function setupObserver() {
 function scrollTo(id: string) {
   manualId.value = id
   activeId.value = id
-  const el = document.getElementById(id)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // router.replace → scrollBehavior 统一负责滚。
+  // 不直接 scrollIntoView 是因为:ReadView 里 heading ids 由 v-html 渲染
+  // 后 addHeadingAnchors 注入,replace 触发的 scrollBehavior 会用 Promise
+  // 轮询直到元素出现(见 router/index.ts),保证 TOC 点击 / 刷新 / 直链
+  // 共享同一段滚动逻辑,不会出现"点 TOC 滚了,但刷新后定位失败"的不一致。
+  router.replace({ hash: '#' + id }).catch(() => {
+    // 重复点击同一 hash / 同路由 navigation guard 中断 — 静默忽略
+  })
   window.setTimeout(() => {
     manualId.value = null
   }, 2000)
@@ -213,7 +235,9 @@ watch(
         v-for="item in items"
         :key="item.id"
         class="toc-item"
-        :class="[`level-${item.level}`, { active: activeId === item.id }]"
+        :class="[`level-${item.level}`, {
+          active: activeId === item.id || currentHashId === item.id,
+        }]"
         :title="item.text"
         type="button"
         @click="scrollTo(item.id)"

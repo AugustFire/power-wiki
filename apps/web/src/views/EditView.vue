@@ -12,6 +12,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
@@ -29,6 +30,17 @@ const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
 const localJSON = ref<Record<string, unknown>>(emptyDoc())
 const localHTML = ref<string>(EMPTY_HTML)
+
+/** 浏览器 tab 标题:编辑现有页 → "编辑: <title>";新建页(无 localId)
+ * 时,如果用户已经输入了标题,显示 "编辑: <输入中标题>",否则退回 BASE。 */
+useDocumentTitle(() => {
+  if (localId.value) {
+    const p = pagesStore.getPage(localId.value)
+    if (p) return `编辑: ${p.title}`
+  }
+  if (localTitle.value.trim()) return `编辑: ${localTitle.value}`
+  return null
+})
 /** Stage 8: dedup baseline. Whatever these refs hold is what the server
  *  most recently acknowledged for this page. `persistNow()` skips PATCH
  *  when the live editor state matches these — the 500ms debounce would

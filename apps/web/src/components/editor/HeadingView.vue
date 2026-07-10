@@ -28,8 +28,9 @@ const headingId = computed(() => {
   const pos = props.getPos()
   // slug 可能因为 CJK 文本相同(两个 `<h2>引言</h2>`)而重复,
   // 用节点位置做兜底,保证 id 唯一。
-  // 与阅读视图 headingAnchors.ts 的去重策略对齐。
-  return `${slugify(props.node.textContent || '', 'heading')}-${pos ?? 0}`
+  // 与阅读视图 headingAnchors.ts 的去重策略对齐。h- 前缀让 URL hash 与
+  // #comment-xxx 区分,TocPanel scrollTo / ReadView route.hash watcher 都靠这个。
+  return `h-${slugify(props.node.textContent || '', 'heading')}-${pos ?? 0}`
 })
 
 const copied = ref(false)

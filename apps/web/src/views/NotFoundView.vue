@@ -2,8 +2,10 @@
 import { useRouter } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 const router = useRouter()
+useDocumentTitle(() => '页面未找到')
 
 function goHome() {
   router.push('/')

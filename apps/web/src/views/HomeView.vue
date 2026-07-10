@@ -5,6 +5,7 @@ import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useRecentPages } from '@/composables/useRecentPages'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useRouter } from 'vue-router'
 import { newId } from '@/lib/id'
 import Sidebar from '@/components/layout/Sidebar.vue'
@@ -18,6 +19,7 @@ const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { list: recentList } = useRecentPages()
 const router = useRouter()
+useDocumentTitle(() => '首页')
 
 // Stage 4c: Home is scoped to the active space. Stats / root list / recents
 // all filter by activeSpaceId — switching spaces from the sidebar refreshes

@@ -27,6 +27,7 @@ import VersionList from '@/components/page/VersionList.vue'
 import VersionDiffView from '@/components/page/VersionDiffView.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { usePageVersions } from '@/composables/usePageVersions'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { PageVersion } from '@power-wiki/shared'
 
 const props = defineProps<{ id: string }>()
@@ -35,6 +36,9 @@ const router = useRouter()
 const versionsComposable = usePageVersions()
 
 const page = computed(() => pagesStore.getPage(props.id))
+
+/** 浏览器 tab 标题:"<页面名> · 历史版本 · power-wiki"。page 没解析出时退 BASE。 */
+useDocumentTitle(() => (page.value ? `${page.value.title} · 历史版本` : null))
 
 /**
  * `state` 直接调 versionsComposable.state(id) —— 不包 computed。

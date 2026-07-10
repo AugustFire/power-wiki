@@ -25,12 +25,15 @@ function slugify(text: string, fallback: string): string {
 
 function ensureId(el: HTMLElement, usedIds: Set<string>): string {
   let id = el.id
+  // 已存在的 id 不强制加 h- 前缀 — 让外部已经合理命名的元素保持原样,
+  // 但 ensureId 是兜底路径,新生成的 id 必须带 h- 前缀以便与 #comment-xxx 等
+  // 其它 anchor 区分(TocPanel scrollTo / ReadView route.hash watcher 都依赖
+  // 这个区分)。
   if (id && !usedIds.has(id)) {
     usedIds.add(id)
     return id
   }
-  // 重新生成
-  const base = slugify(el.textContent || '', `heading-${usedIds.size}`)
+  const base = `h-${slugify(el.textContent || '', `heading-${usedIds.size}`)}`
   let candidate = base
   let n = 1
   while (usedIds.has(candidate)) {

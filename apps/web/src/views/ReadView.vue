@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
@@ -19,15 +19,19 @@ import { recomputeLiveDates, startLiveDateInterval } from '@/lib/recomputeLiveDa
 import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
-const route = useRoute()
 const router = useRouter()
 const { recordVisit } = useRecentPages()
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
+
+/** 浏览器 tab 标题:页面名 + "· power-wiki";page 还没解析出时退回 BASE。
+ * watchEffect 自动响应 page.value 的 reactive 变化。 */
+useDocumentTitle(() => page.value?.title)
 
 /**
  * 折叠块 read 视图默认收起。
@@ -159,30 +163,12 @@ watch(
   { immediate: true },
 )
 
-/**
- * 通知点击跳过来的 hash 锚点(`/p/{id}#comment-{cid}`) → 滚到对应评论。
- * 评论是 CommentsSection 内部 fetch 后才挂载的,所以 retry 模式:100ms 一次,
- * 最多 10 次(1s)。评论可能不在第一页(loadMore 之前的),这种 case 超时后会
- * 自然停在列表顶端 —— 用户点通知已经跳到页面了,不会跳到完全无关位置。
- */
-watch(
-  () => route.hash,
-  (hash) => {
-    if (!hash || !hash.startsWith('#comment-')) return
-    const id = hash.slice(1)
-    let attempts = 0
-    const tryScroll = () => {
-      const el = document.getElementById(id)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        return
-      }
-      if (++attempts < 10) setTimeout(tryScroll, 100)
-    }
-    tryScroll()
-  },
-  { immediate: true, flush: 'post' },
-)
+// hash 锚点滚动统一交给 router scrollBehavior 处理(看 router/index.ts):
+//   - `#h-xxx`(heading 锚点):TocPanel click / 直链 / 刷新都走同一段逻辑,
+//     Promise 轮询等 heading 元素出现再 smooth-scroll。
+//   - `#comment-xxx`(通知跳过来):scrollBehavior 内部按 comment 特判
+//     block:'center' + 更长 poll(6s)适配评论异步 fetch。
+// 这里不再单独 watch route.hash,避免和 scrollBehavior 双重滚动。
 
 // v-html 之后跑一道语法高亮(read 端没有 decorations,需要手动补)
 // 监听 props.id:页面切换时,safeHtml 也会变,但 props.id 更稳定地反映路由切换。

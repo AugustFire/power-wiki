@@ -23,6 +23,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { User, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -38,6 +39,9 @@ const allUsers = ref<User[]>([])
 const memberIds = ref<Set<string>>(new Set())
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+
+/** 浏览器 tab 标题:"编辑组: <name>";group 没拉到时退 BASE。 */
+useDocumentTitle(() => (group.value ? `编辑组: ${group.value.name}` : null))
 
 const editName = ref('')
 const editDesc = ref('')

@@ -1,7 +1,7 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
-import { router } from './router'
+import { router, scrollToHashAsync } from './router'
 import { usePagesStore } from './stores/pages'
 import { useSpacesStore } from './stores/spaces'
 import { useAuthStore } from './stores/auth'
@@ -35,6 +35,28 @@ setUnauthorizedHandler(async () => {
   const redirect = router.currentRoute.value.fullPath
   await router.push({ name: 'login', query: { redirect } })
 })
+
+/**
+ * In-app same-path hash change → scroll to the new hash.
+ *
+ * vue-router 4 [doesn't fire `scrollBehavior` when only the hash changes
+ * on the same path](https://github.com/vuejs/router/issues/1929) (TocPanel
+ * click on `/p/abc#h-foo` → `/p/abc#h-bar`, NotificationBell jump to
+ * `#comment-…`, etc.). The shared `scrollToHashAsync` helper used by
+ * `router.scrollBehavior` does the element-poll + smooth-scroll, so we
+ * reuse it here to keep both paths consistent.
+ *
+ * We only fire when path is the same — cross-path navigations are routed
+ * through `scrollBehavior` already.
+ */
+watch(
+  () => router.currentRoute.value,
+  (to, from) => {
+    if (to.hash && to.path === from.path && to.hash !== from.hash) {
+      void scrollToHashAsync(to.hash)
+    }
+  },
+)
 
 // 先 mount,再异步加载页面数据 — 这样 RouterView 能立刻渲染骨架,
 // Store 的 loading 状态由 App.vue 内部的 <PageLoading> 接管。

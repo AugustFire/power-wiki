@@ -178,12 +178,76 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHashHistory(),
   routes,
+  /**
+   * 滚动行为:
+   *   1. 后退/前进 → 用浏览器保存的位置(savedPosition)
+   *   2. 有 hash → 等对应元素出现再 smooth-scroll。共享的
+   *      `scrollToHashAsync` 同时被 main.ts 的 `watch(router.currentRoute)`
+   *      调用 — 后者覆盖「同 path 切 hash」(vue-router 4 [issue #1929](https://github.com/vuejs/router/issues/1929)):
+   *      router.replace 不会触发 scrollBehavior,所以这里只负责「真导航」
+   *      场景(刷新页面进入带 hash 的 URL,前进/后退)。
+   *      - `#h-xxx` 50ms × 30 = 1.5s(headings 是 sync 渲染,够冷启动 +
+   *        Vue render)
+   *      - `#comment-xxx` 100ms × 60 = 6s(评论 fetch + load-more)
+   *   3. 无 hash → 顶部
+   *
+   * 注意:Vue Router 4 的 ScrollPosition 类型不暴露 `block` 字段(只能用
+   * `top` / `left` / `behavior` / `offset`)。所以 heading 和 comment 都走
+   * 默认 block:'start',靠 base.css 的 `scroll-padding-top` 让 TopBar 不挡。
+   */
   scrollBehavior(to, _from, savedPosition) {
     if (savedPosition) return savedPosition
-    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    if (to.hash) return scrollToHashAsync(to.hash)
     return { top: 0 }
   },
 })
+
+/**
+ * Poll for an element matching `hash` and scroll to it.
+ *
+ * Shared by:
+ *   1. `scrollBehavior` above — handles initial navigation (e.g. page
+ *      reload with `#h-…` in URL).
+ *   2. The `watch(router.currentRoute)` in main.ts — handles in-app
+ *      same-path hash changes (TOC click, `#comment-…` jumps from
+ *      notifications). vue-router 4 [doesn't fire scrollBehavior for
+ *      these](https://github.com/vuejs/router/issues/1929), so we
+ *      need a separate trigger that uses the exact same poll+scroll
+ *      logic to keep both paths consistent.
+ *
+ * Why a poll:
+ *   - `#h-…` heading ids are injected by `headingAnchors.ts` AFTER
+ *     ReadView's `v-html` commits, so the element isn't present in
+ *     the first frame after a hash change. 50ms × 30 = 1.5s covers
+ *     cold start + Vue render.
+ *   - `#comment-…` elements are mounted by `CommentsSection` after
+ *     an async fetch + initial load-more, so we give it 100ms × 60
+ *     = 6s to appear.
+ *
+ * Returns a `ScrollPosition`-compatible Promise so vue-router
+ * considers the navigation handled; resolve with `{ top: 0 }` on
+ * timeout so we don't strand the user at scrollY=0.
+ */
+export function scrollToHashAsync(hash: string) {
+  const isComment = hash.startsWith('#comment-')
+  const maxAttempts = isComment ? 60 : 30
+  const interval = isComment ? 100 : 50
+  return new Promise<{ el: string; behavior?: ScrollOptions['behavior'] } | { top: number }>((resolve) => {
+    let attempts = 0
+    const tryScroll = () => {
+      const el = document.querySelector(hash) as HTMLElement | null
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        resolve({ el: hash, behavior: 'smooth' })
+      } else if (attempts++ < maxAttempts) {
+        setTimeout(tryScroll, interval)
+      } else {
+        resolve({ top: 0 })
+      }
+    }
+    tryScroll()
+  })
+}
 
 /**
  * Per-route auth gate.

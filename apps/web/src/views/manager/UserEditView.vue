@@ -16,6 +16,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { User } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -28,6 +29,9 @@ const userId = computed(() => String(route.params.id ?? ''))
 const user = ref<User | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+
+/** 浏览器 tab 标题:"编辑成员: <name>";user 没拉到时退 BASE。 */
+useDocumentTitle(() => (user.value ? `编辑成员: ${user.value.name}` : null))
 
 const editName = ref('')
 const editColor = ref('#0052CC')

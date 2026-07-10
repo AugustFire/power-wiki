@@ -27,6 +27,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { Space, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -42,6 +43,9 @@ const allGroups = ref<UserGroup[]>([])
 const accessGroupIds = ref<Set<string>>(new Set())
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+
+/** 浏览器 tab 标题:"编辑空间: <name>";space 没拉到时退 BASE。 */
+useDocumentTitle(() => (space.value ? `编辑空间: ${space.value.name}` : null))
 
 const editName = ref('')
 const editDesc = ref('')

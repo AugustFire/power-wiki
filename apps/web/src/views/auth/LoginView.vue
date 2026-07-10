@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { ApiError } from '@/lib/api'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
 
 const router = useRouter()
@@ -12,6 +13,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
+useDocumentTitle(() => '登录')
 
 const email = ref('')
 const password = ref('')

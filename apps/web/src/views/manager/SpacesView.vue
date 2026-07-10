@@ -24,6 +24,7 @@ import { formatRelativeTime } from '@/lib/relativeTime'
 import { useManagerActions } from '@/composables/useManagerActions'
 import { useManagerStats } from '@/composables/useManagerStats'
 import { usePaginatedList } from '@/composables/usePaginatedList'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import type { Space, UserGroup } from '@power-wiki/shared'
 import type { User } from '@power-wiki/shared'
@@ -32,6 +33,7 @@ const router = useRouter()
 const uiStore = useUiStore()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
+useDocumentTitle(() => '空间管理')
 const { confirm: askConfirm } = useConfirm()
 
 /**

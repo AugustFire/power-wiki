@@ -17,11 +17,13 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 const auth = useAuthStore()
 const spaces = useSpacesStore()
 const pages = usePagesStore()
 const router = useRouter()
+useDocumentTitle(() => '我的空间')
 
 onMounted(async () => {
   // Ensure data is loaded — if the user lands on /me before spaces.init()

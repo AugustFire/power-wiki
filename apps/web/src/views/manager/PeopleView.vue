@@ -20,6 +20,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
 import { useManagerStats } from '@/composables/useManagerStats'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -30,6 +31,7 @@ const router = useRouter()
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
 const { confirm: askConfirm } = useConfirm()
+useDocumentTitle(() => '成员管理')
 
 /* ─── Tab routing ───────────────────────────────────────────────────── */
 type Tab = 'users' | 'groups'

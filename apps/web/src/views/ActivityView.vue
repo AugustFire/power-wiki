@@ -25,6 +25,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useRecentActivity } from '@/composables/useRecentActivity'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { formatRelativeTime } from '@/lib/relativeTime'
@@ -35,6 +36,7 @@ const route = useRoute()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const { state, load, loadMore } = useRecentActivity()
+useDocumentTitle(() => '活动流')
 
 /** 「所有空间」哨兵值。filter dropdown 用。 */
 const ALL_SPACES = '__all__'
