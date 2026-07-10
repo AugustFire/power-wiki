@@ -115,12 +115,8 @@ async function saveRetention() {
     })
     // 写 baseline,触发 dirty → false,按钮自动变回 disabled 状态
     originalDays.value = retentionDays.value
-    uiStore.notify(
-      retentionDays.value === 0
-        ? '回收站已设为「永不清」'
-        : `回收站保留期已更新为 ${retentionDays.value} 天`,
-      'success',
-    )
+    // 不出 toast — justSaved 按钮态(绿底「✓ 已保存」1.8s)已是反馈,
+    // 见 `docs/loading-ux.md` 第 17 节「反馈通道规约」。
     if (savedTimer != null) clearTimeout(savedTimer)
     justSaved.value = true
     savedTimer = setTimeout(() => {
@@ -128,10 +124,9 @@ async function saveRetention() {
       savedTimer = null
     }, 1800)
   } catch (e) {
-    uiStore.notify(
-      e instanceof ApiError ? `保存失败: ${e.code}` : '保存失败',
-      'error',
-    )
+    // 失败走 banner(阻塞性错误,admin 必须看到)而非 toast —
+    // 对齐其他 admin 视图(PeopleView / SpacesView / SpaceEditView 等)。
+    uiStore.setError(e instanceof ApiError ? `保存失败: ${e.code}` : '保存失败')
   } finally {
     retentionSaving.value = false
   }

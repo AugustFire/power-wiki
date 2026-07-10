@@ -22,7 +22,6 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
-import { useUiStore } from '@/stores/ui'
 import { api, ApiError } from '@/lib/api'
 import { debounce } from '@/lib/debounce'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -37,7 +36,6 @@ const emit = defineEmits<{
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
-const uiStore = useUiStore()
 const router = useRouter()
 
 const query = ref('')
@@ -62,6 +60,10 @@ const labelSuggestions = ref<string[]>([])
 // array = 后端响应(可能是空数组)
 const searchResults = ref<PageNode[] | null>(null)
 const searching = ref(false)
+/** 搜索失败时的 inline error — modal 内的反馈,不走 banner。
+ *  用户在 modal 内搜索,banner 会抢 chrome 视觉资源、阻塞 modal;
+ *  按 `docs/loading-ux.md` 第 17 节「反馈通道规约」,modal 内错误用 inline。 */
+const inlineError = ref<string | null>(null)
 let searchSeq = 0
 let labelSeq = 0
 
@@ -132,6 +134,7 @@ async function runSearch() {
   // 三维全空 → 走 browse 模式(store 最近页),不发请求
   if (!q && !label && !spaceId) {
     searchResults.value = null
+    inlineError.value = null
     return
   }
   const seq = ++searchSeq
@@ -145,9 +148,13 @@ async function runSearch() {
     })
     if (seq !== searchSeq) return
     searchResults.value = res.items
+    inlineError.value = null
   } catch (e) {
     if (seq !== searchSeq) return
-    uiStore.setError(e instanceof ApiError ? e.message : '搜索失败')
+    // modal 内 inline error(不走 banner,banner 阻塞 modal)。
+    inlineError.value = e instanceof ApiError ? e.message : '搜索失败'
+    // 保留 searchResults = [] — 进 search-mode 但无结果是正常形态,
+    // empty state 会自然显示「没有匹配 'xxx' 的页面」。
     searchResults.value = []
   } finally {
     if (seq === searchSeq) searching.value = false
@@ -155,6 +162,12 @@ async function runSearch() {
 }
 
 const debouncedRunSearch = debounce(runSearch, 300)
+
+/** 重试 — 跟 inlineError 同区域的按钮触发;用户改 q / chip 也会自动清错。 */
+function retrySearch() {
+  inlineError.value = null
+  void runSearch()
+}
 
 /** 「没结果」空态的标题(三种 sub-text 在此集中翻译)。 */
 const emptySearchTitle = computed(() => {
@@ -165,8 +178,15 @@ const emptySearchTitle = computed(() => {
 })
 
 // query 变化走防抖(打字场景);chip 变化立即重跑(点击场景,不需要 debounce)
-watch(query, () => debouncedRunSearch())
-watch([filterSpaceId, filterLabel], () => runSearch())
+// 改动同时清掉 stale inlineError — 用户开始搜新的,旧错误就过时了。
+watch(query, () => {
+  inlineError.value = null
+  debouncedRunSearch()
+})
+watch([filterSpaceId, filterLabel], () => {
+  inlineError.value = null
+  runSearch()
+})
 
 // ── 打开 / 关闭生命周期 ───────────────────────────────────────────────
 watch(
@@ -181,6 +201,7 @@ watch(
       spacePickerOpen.value = false
       labelPickerOpen.value = false
       searchResults.value = null
+      inlineError.value = null
       searchSeq++ // invalidate any in-flight from before close
       if (!pagesStore.loaded && !pagesStore.loading) {
         void pagesStore.init()
@@ -471,6 +492,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
         </div>
         <div v-else-if="searching && results.length === 0" class="ts-skeleton">
           <Skeleton :count="4" height="36px" radius="var(--radius-md)" />
+        </div>
+        <div v-else-if="inlineError" class="ts-error" role="alert">
+          <span class="material-symbols-outlined">error</span>
+          <div class="ts-error-text">
+            <strong>搜索失败</strong>
+            <span>{{ inlineError }}</span>
+          </div>
+          <button type="button" class="ts-error-retry" @click="retrySearch">重试</button>
         </div>
         <div v-else-if="results.length === 0">
           <EmptyState
@@ -901,6 +930,57 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   gap: 6px;
   padding: 10px;
 }
+
+/* Inline error — modal 内搜索失败的反馈通道,不走 banner。
+ * 视觉对齐 EmptyState 同族(token / radius / padding),红底 + icon +
+ * 双行文字(标题 / 详情)+ 浅蓝重试按钮。 */
+.ts-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  margin: 10px;
+  background: var(--danger-soft);
+  border-radius: var(--radius-md);
+}
+.ts-error > .material-symbols-outlined {
+  font-size: 24px;
+  color: var(--danger);
+  flex-shrink: 0;
+}
+.ts-error-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ts-error-text strong {
+  font-size: 13px;
+  color: var(--text-1);
+  font-weight: 600;
+}
+.ts-error-text span {
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-error-retry {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ts-error-retry:hover { background: var(--accent-soft); }
 
 .ts-footer {
   display: flex;

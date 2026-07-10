@@ -42,6 +42,45 @@
 
 16. **404 / 错误保留 chrome** — 任何「未找到 / 加载失败」分支都至少保留 topbar + 返回上级路径,不白屏。
 
+## 反馈通道规约(操作完成 → 用户怎么知道)
+
+数据进来走 Skeleton、URL 即刻跳,操作出去也要走对的通道 —— 同一个动作有 4 种反馈方式,**选错 = 错配 = 用户骂街**。规则如下:
+
+### 4 个反馈通道
+
+| 通道 | API | 何时用 |
+|---|---|---|
+| **按钮态** | `disabled` + spinner / icon swap 1-2s | 操作进行中或刚完成,**用户视线还停在按钮上**。典型:`保存` → 绿底 `✓ 已保存` 1.8s 后回落 disable |
+| **Toast** | `uiStore.notify(msg, kind)` | 操作在别处完成 / 视线已移开,**短暂 4s 报告**。典型:从顶栏触发了一个动作,反馈出现在右下角 |
+| **Banner** | `uiStore.setError(msg)` | **阻塞性错误**,用户必须看到才能继续。典型:session 失效、后端不可达、保存失败必须重试 |
+| **Modal** | `useConfirm` / 自研弹窗 | 用户必须做选择才能继续(确认 / 取消) |
+
+### 决策树
+
+```
+操作完成 → 用户必须看到才能继续吗？
+├─ 是 → Banner (setError)
+└─ 否 → 用户还在看着按钮吗？
+       ├─ 是 → 按钮态 (icon swap / spinner)
+       └─ 否 → Toast (notify)
+```
+
+### 通道选择自查
+
+- ✅ 按钮态 ≠ 没反馈 —— `<button disabled>` + 文字变成「已保存」就是反馈,加 toast 是冗余
+- ✅ Toast 不是万能的 —— 用户在 modal 内搜索,搜索失败用 banner = 抢占顶部 banner,阻塞 modal;正确是 modal 内 inline error
+- ✅ Banner 只用于阻塞 —— session 失效用 banner(用户必须看),保存失败用 banner(用户必须改);复制成功用 toast(用户无需做选择)
+- ✅ Modal 是确认,不是反馈 —— 删除前 confirm 是决策(「确定删?」),删完用 toast 是反馈
+
+### 反例(违反规约)
+
+- ❌ 「复制链接」成功用 toast → 应该按钮态(icon swap,比如 clipboard 变 check)
+- ❌ 「session 失效」用 toast → 应该 banner
+- ❌ 「发布成功跳新页」用 banner → 应该 toast(用户已在新页面)
+- ❌ 「TopSearch 搜索失败」用 banner → 用户还在 modal 内,应该 modal 内 inline error + retry
+- ❌ 「SettingsDrawer 改密成功」用 toast → 用户就在抽屉里看着,应该折叠 details + 清空 input
+- ❌ 「SettingsDrawer 改设置成功」用 toast → 用户就在抽屉里看着,应该按钮态(绿底「✓ 已保存」)
+
 ## 验收标准(改任何 view 都要跑这个)
 
 - `pnpm typecheck` 三 workspace 全过

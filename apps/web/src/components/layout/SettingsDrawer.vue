@@ -62,6 +62,11 @@ const livePreview = ref<User | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const errorMsg = ref<string | null>(null)
+/** 保存成功后的「✓ 已保存」按钮态 — 1.8s 绿底,然后回落 disable。
+ *  对齐 TrashView 保留期按钮的反馈通道:`docs/loading-ux.md` 第 17 节
+ *  说「用户在按钮上看着」就用按钮态,不弹 toast。 */
+const justSaved = ref(false)
+let savedTimer: ReturnType<typeof setTimeout> | null = null
 
 // 修改密码 — 独立 ref + 独立 error(改密失败不能污染 name/color 的
 // dirty/save 状态)。ResetPasswordInputSchema 已经在后端做了长度校验
@@ -86,6 +91,11 @@ watch(open, async (isOpen) => {
   if (isOpen) {
     loading.value = true
     errorMsg.value = null
+    justSaved.value = false
+    if (savedTimer != null) {
+      clearTimeout(savedTimer)
+      savedTimer = null
+    }
     try {
       const fresh = await api.users.me.get()
       syncFormFromUser(fresh)
@@ -101,6 +111,11 @@ watch(open, async (isOpen) => {
   } else {
     errorMsg.value = null
     saving.value = false
+    justSaved.value = false
+    if (savedTimer != null) {
+      clearTimeout(savedTimer)
+      savedTimer = null
+    }
   }
 })
 
@@ -159,7 +174,8 @@ async function onChangePassword() {
     currentPwd.value = ''
     newPwd.value = ''
     confirmPwd.value = ''
-    uiStore.notify('密码已更新')
+    // 不弹 toast:折叠 <details> + 清空 3 个 password input 就是反馈,
+    // 用户就在抽屉里看着,toast 是冗余。
     pwdOpen.value = false
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
@@ -185,7 +201,14 @@ async function onSave() {
     })
     authStore.user = updated
     syncFormFromUser(updated)
-    uiStore.notify('设置已保存')
+    // 不弹 toast:按钮态(绿底「✓ 已保存」1.8s)就是反馈,
+    // 用户就在抽屉里盯着保存按钮,toast 是冗余。
+    if (savedTimer != null) clearTimeout(savedTimer)
+    justSaved.value = true
+    savedTimer = setTimeout(() => {
+      justSaved.value = false
+      savedTimer = null
+    }, 1800)
   } catch (e) {
     if (e instanceof ApiError && e.status === 400) {
       errorMsg.value = '姓名 / 颜色格式不正确'
@@ -362,14 +385,19 @@ function onReset() {
         <button
           type="button"
           class="btn btn-primary"
-          :disabled="!dirty || nameInvalid || saving || loading"
+          :class="{ 'is-saved': justSaved }"
+          :disabled="!dirty || nameInvalid || saving || loading || justSaved"
           @click="onSave"
         >
-          <span
-            v-if="saving"
-            class="material-symbols-outlined icon-sm is-loading"
-          >progress_activity</span>
-          保存
+          <template v-if="saving">
+            <span class="material-symbols-outlined icon-sm is-loading">progress_activity</span>
+            保存中…
+          </template>
+          <template v-else-if="justSaved">
+            <span class="material-symbols-outlined icon-sm">check</span>
+            已保存
+          </template>
+          <template v-else>保存</template>
         </button>
       </div>
     </template>
@@ -540,6 +568,12 @@ function onReset() {
 }
 .btn-primary:hover:not(:disabled) { background: var(--accent-strong, #0747a6); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 已保存态 — 1.8s 绿底反馈,不弹 toast。视觉跟 TrashView 保留期按钮
+ * 的 .ret-save.is-saved 同款,统一 Atlassian 绿 #36B37E。 */
+.btn-primary.is-saved {
+  background: #36B37E;
+}
+.btn-primary.is-saved:hover:not(:disabled) { filter: brightness(0.95); }
 .btn-link {
   background: transparent;
   color: var(--accent, #0052cc);
