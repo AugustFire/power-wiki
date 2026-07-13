@@ -90,6 +90,24 @@ const dropHint = computed<DropHint | null>(
   () => (dragState.dropTarget?.id === props.node.id ? dragState.dropTarget.position : null),
 )
 
+/** 触发 PageTree ⋯ 菜单的「导入 Markdown 到子级」项 — 打开 import modal,
+ *  source = 当前 menu 打开的 row,无 sourceRow 时(defaultSpaceId 走 active
+ *  space 根)由 Sidebar 入口触发,modal 内自带 PathPicker 让用户选位置。 */
+function openImportModal(): void {
+  const sourceRow = pagesStore.getPage(props.node.id)
+  if (!sourceRow) return
+  uiStore.closeMenu()
+  uiStore.openImport({
+    sourceRow: {
+      id: sourceRow.id,
+      title: sourceRow.title,
+      parentId: sourceRow.parentId,
+      spaceId: sourceRow.spaceId,
+    },
+    defaultSpaceId: sourceRow.spaceId,
+  })
+}
+
 function onDragStart(e: DragEvent) {
   if (isRenaming.value) {
     e.preventDefault()
@@ -124,7 +142,7 @@ function onDragOver(e: DragEvent) {
   // dragState 是 module-scope 共享(见 usePageTreeDrag.ts),source 行设的
   // draggingId 在任何其他 PageTree 实例都能读到。这里必须 preventDefault,
   // 否则浏览器不会触发 drop —— 这是原来 bug 的根因。
-  if (dragState.draggingId === null) return       // 没在拖
+  if (dragState.draggingId === null) return
   if (dragState.draggingId === props.node.id) return  // source 行(自己不管自己)
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
@@ -581,6 +599,10 @@ watch(isRenaming, (val) => {
         <button class="menu-item" @click="startRename">
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
+        </button>
+        <button class="menu-item" @click="openImportModal">
+          <span class="material-symbols-outlined icon-md">upload_file</span>
+          <span>导入 Markdown 到子级</span>
         </button>
         <button class="menu-item" @click="duplicatePage(false)">
           <span class="material-symbols-outlined icon-md">content_copy</span>

@@ -223,6 +223,9 @@ export type {
   PageVersion,
   AddLabelInput,
   DuplicatePageInput,
+  // Markdown import (single .md → new page)
+  ImportPageInput,
+  ImportPageResult,
   // Page attachments (MinIO/S3)
   Attachment,
   RequestUploadInput,

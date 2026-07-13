@@ -11,6 +11,7 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 // P1-6: 自助修改姓名 / 颜色 — 顶层挂,uiStore 控制开关。
 import SettingsDrawer from '@/components/layout/SettingsDrawer.vue'
 import ScrollProgress from '@/components/layout/ScrollProgress.vue'
+import ImportMarkdownModal from '@/components/editor/ImportMarkdownModal.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
@@ -166,6 +167,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
     <CheatSheetModal />
     <ToastContainer />
     <SettingsDrawer />
+    <ImportMarkdownModal />
   </div>
 </template>
 

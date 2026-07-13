@@ -245,6 +245,29 @@ export const useUiStore = defineStore('ui', () => {
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }
 
+  /**
+   * MD 导入 modal 全局开关。`context.sourceRow` 可选 — 没传时落到
+   * active space 根(从 Sidebar 底部 icon button 唤起)。`payload` 是
+   * PageTree 拖文件入时预填的文本 + filename,modal 打开后回填。
+   */
+  const importModalOpen = ref(false)
+  const importContext = ref<{
+    sourceRow?: { id: string; title: string; parentId: string | null; spaceId: string }
+    defaultSpaceId: string
+    payload?: { text: string; filename: string }
+  } | null>(null)
+  function openImport(ctx: NonNullable<typeof importContext.value>): void {
+    importContext.value = ctx
+    importModalOpen.value = true
+  }
+  function closeImport(): void {
+    importModalOpen.value = false
+    // 保留 context 一帧,以便 close 动画期间 modal 仍能渲染。
+    setTimeout(() => {
+      if (!importModalOpen.value) importContext.value = null
+    }, 200)
+  }
+
   return {
     expanded,
     openMenuId,
@@ -279,5 +302,9 @@ export const useUiStore = defineStore('ui', () => {
     toasts,
     notify,
     dismiss,
+    importModalOpen,
+    importContext,
+    openImport,
+    closeImport,
   }
 })

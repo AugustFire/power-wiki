@@ -53,6 +53,8 @@ import {
   ActivityEventSchema,
   CreatePageInputSchema,
   DuplicatePageInputSchema,
+  ImportPageInputSchema,
+  ImportPageResultSchema,
   PageNodeSchema,
   PageVersionSchema,
   PaginatedListSchema,
@@ -90,6 +92,7 @@ import { deleteObject } from '../lib/s3'
 import { enqueueNotifications, enqueueWatchFanout } from '../lib/notify'
 import { recordPageEvent, SUPPORTED_KINDS, type PageEventKind } from '../lib/pageEvents'
 import { purgeExpiredTrash } from '../lib/retention'
+import { parseMarkdown } from '../lib/mdImport'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
@@ -1407,6 +1410,134 @@ pagesRouter.post('/:id/duplicate', async (c) => {
   const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
+})
+
+/* ─── POST /api/pages/import ─────────────────────────────────────────
+ *  从单个 .md 文件导入成新页(标题从 H1 解析,图片跳过只保留 alt)。
+ *  走 duplicate 的 sibling 组落点机制 — 落在 (spaceId, parentId)
+ *  bucket 末尾。冲突(同名)跳过,让用户改名后再来。
+ *
+ *  v1 只支持 paste + 单文件(source='paste' 或 'file');多文件 / 目录树
+ *  导入 / 图片上传 MinIO 留 v2。本端点只 INSERT 一行。
+ */
+pagesRouter.post('import', async (c) => {
+  const me = c.get('user')
+  const raw = await c.req.json().catch(() => null)
+  const parsed = ImportPageInputSchema.safeParse(raw)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+  const input = parsed.data
+
+  // 1. spaceId 访问权(独立空间或个人空间)+ admin 写保护
+  const accessible = await canAccessSpace(me.id, me.role === 'admin', input.spaceId)
+  if (!accessible) return c.json({ error: 'space_not_found' }, 404)
+
+  const guard = await assertAdminNotWritingPersonalSpace(c, me, input.spaceId)
+  if (guard) return guard
+
+  // 2. 空文本短路 → skipped(避免下游 parseMarkdown 走空 doc 分支)
+  if (!input.text.trim()) {
+    return c.json(
+      ImportPageResultSchema.parse({
+        created: null,
+        skipped: { filename: input.filename ?? '(unnamed)', reason: 'empty' },
+      }),
+      201,
+    )
+  }
+
+  // 3. MD → Tiptap JSON + HTML(stripImageSyntaxInText 已在内部跑过)
+  const { tiptapJSON, contentHTML, h1Title } = parseMarkdown(input.text)
+
+  // 4. 标题推导:用户改 > H1 > filename 去后缀 > DEFAULT_TITLE
+  const filenameBase = input.filename?.replace(/\.[^.]+$/, '') ?? null
+  const derivedTitle = input.title || h1Title || filenameBase || DEFAULT_TITLE
+
+  // 5. 冲突检测:同 (spaceId, parentId) 下已有同名 live 页 → skipped
+  const conflictWhere = and(
+    eq(pages.spaceId, input.spaceId),
+    input.parentId == null ? isNull(pages.parentId) : eq(pages.parentId, input.parentId),
+    eq(pages.title, derivedTitle),
+    isNull(pages.deletedAt),
+  )
+  const [conflict] = await db
+    .select({ id: pages.id })
+    .from(pages)
+    .where(conflictWhere)
+    .limit(1)
+  if (conflict) {
+    return c.json(
+      ImportPageResultSchema.parse({
+        created: null,
+        skipped: {
+          filename: input.filename ?? derivedTitle,
+          reason: 'duplicate_title',
+          existingId: conflict.id,
+        },
+      }),
+      201,
+    )
+  }
+
+  // 6. sortOrder = MAX(sort_order) + 1 落在 sibling group 末尾
+  //    (单一新页不需要 rewrite 整组 — MAX+1 即独占末尾槽位)
+  const sortOrderRow = await db
+    .select({ next: sql<number>`COALESCE(MAX(${pages.sortOrder}), -1) + 1` })
+    .from(pages)
+    .where(
+      and(
+        eq(pages.spaceId, input.spaceId),
+        input.parentId == null ? isNull(pages.parentId) : eq(pages.parentId, input.parentId),
+        isNull(pages.deletedAt),
+      ),
+    )
+    .limit(1)
+  const nextOrder = sortOrderRow[0]?.next ?? 0
+
+  // 7. INSERT 新页
+  const newId = generatePageId()
+  const now = Date.now()
+  await db.insert(pages).values({
+    id: newId,
+    parentId: input.parentId ?? null,
+    spaceId: input.spaceId,
+    title: derivedTitle,
+    contentJson: tiptapJSON as never,
+    contentHtml: contentHTML,
+    icon: null,
+    sortOrder: nextOrder,
+    createdAt: now,
+    updatedAt: now,
+    authorId: me.id,
+  })
+
+  // 8. 记录 page_event(created)
+  await recordPageEvent({
+    pageId: newId,
+    spaceId: input.spaceId,
+    kind: 'created',
+    actor: me,
+    payload: {
+      source: input.source,
+      filename: input.filename ?? null,
+      derivedFromH1: h1Title != null,
+    },
+  })
+
+  // 9. 回读 + DTO 序列化
+  const [createdRow] = await selectPagesWithAuthor(eq(pages.id, newId), {
+    viewerUserId: me.id,
+  }).limit(1)
+  if (!createdRow) return c.json({ error: 'not_found' }, 404)
+
+  return c.json(
+    ImportPageResultSchema.parse({
+      created: PageNodeSchema.parse(rowToPageNode(createdRow)),
+      skipped: null,
+    }),
+    201,
+  )
 })
 
 /* ─── POST /api/pages/:id/restore ─────────────────────────────────────

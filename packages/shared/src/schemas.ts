@@ -418,6 +418,34 @@ export const UpdatePageInputSchema = z
     { message: '至少需要更新一个字段' },
   )
 
+/** POST /api/pages/import 入参 — 单文件 / 单段粘贴文本导入成新页。
+ *  v1 仅支持单文件;多文件场景前端拆成多次调用。
+ *  - `source` 区分来源(文件 / 粘贴);影响 title fallback 链
+ *  - `text` raw markdown,服务端用 prosemirror-markdown 解析
+ *  - `title` 缺省时服务端从 H1 → filename → "未命名" 推导
+ *  - `filename` 仅 `source='file'` 时填,用于 title fallback
+ *  - 2MB 上限远低于 MAX_UPLOAD_BYTES 20MB(MD 文本平均密度 5KB/页) */
+export const ImportPageInputSchema = z.object({
+  source: z.enum(['paste', 'file']),
+  text: z.string().min(1).max(2_000_000),
+  spaceId: PageIdSchema,
+  parentId: PageIdSchema.nullable().optional(),
+  title: PageTitleSchema.optional(),
+  filename: z.string().min(1).max(200).optional(),
+})
+
+/** POST /api/pages/import 响应 — 成功创建的页 + 跳过的(同名)信息 */
+export const ImportPageResultSchema = z.object({
+  created: PageNodeSchema.nullable(),
+  skipped: z
+    .object({
+      filename: z.string(),
+      reason: z.enum(['duplicate_title', 'empty', 'too_large']),
+      existingId: z.string().optional(),
+    })
+    .nullable(),
+})
+
 /** PATCH /api/pages/:id/move 入参 */
 export const MovePageInputSchema = z.object({
   /** 新父页面 id,null = 移动到顶级 */
@@ -497,6 +525,8 @@ export type UserFromSchema = z.infer<typeof UserSchema>
 export type UserGroupFromSchema = z.infer<typeof UserGroupSchema>
 export type SpaceFromSchema = z.infer<typeof SpaceSchema>
 export type PaginatedQuery = z.infer<typeof PaginatedQuerySchema>
+export type ImportPageInput = z.infer<typeof ImportPageInputSchema>
+export type ImportPageResult = z.infer<typeof ImportPageResultSchema>
 export type Paginated<T> = { items: T[]; limit: number; offset: number; hasMore: boolean }
 export type CreatePageInput = z.infer<typeof CreatePageInputSchema>
 export type UpdatePageInput = z.infer<typeof UpdatePageInputSchema>

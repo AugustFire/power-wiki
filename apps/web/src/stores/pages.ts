@@ -13,6 +13,7 @@ import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
 import type {
   CreatePageInput,
+  ImportPageResult,
   PageNode,
   TreeNode,
 } from '@power-wiki/shared'
@@ -907,8 +908,12 @@ export const usePagesStore = defineStore('pages', () => {
       } else {
         pages.value = [...pages.value, real]
       }
-      // 发布到 → 目标空间的根节点列表多了 1 条
-      invalidateChildren(null, targetSpaceId)
+      // 发布到 → 目标空间根节点列表多了 1 条。不 invalidateChildren(null,
+      // targetSpaceId) — 那样会删 `${targetSpaceId}:root` 缓存,让
+      // isRootsLoaded(targetSpaceId) 翻 false → ReadView Skeleton gate
+      // 永久挂起(详见 importPage / duplicatePage 同款注释)。新页已 push
+      // 到 pages.value,tree builder 重算自动包含;后续 autoExpandAndLocate
+      // 切到目标空间时 ensureRootsLoaded 会正常跑。
       return real
     } catch (e) {
       pages.value = pages.value.filter((p) => p.id !== tempId)
@@ -991,11 +996,19 @@ export const usePagesStore = defineStore('pages', () => {
       const reorderedMap = new Map(reordered.map((p) => [p.id, p]))
 
       pages.value = withReal.map((p) => reorderedMap.get(p.id) ?? p)
-      // 复制后 source.parentId 的 children 列表变了(多了一个)
-      // 子树模式下,新源页下还多了一整棵子树 — 走 cache invalidation,
-      // 下次展开时让 ensureChildrenLoaded 拉真实列表(子页的占位 row
-      // 没在 store 里,这里只保证新源页 root 行立即可见)。
-      invalidateChildren(source.parentId, source.spaceId)
+      // 复制后 source.parentId 的 children 列表变了(多了一个)。子树模式
+      // 下,新源页下还多了一整棵子树 — 走 cache invalidation,下次展开时让
+      // ensureChildrenLoaded 拉真实列表(子页的占位 row 没在 store 里,这
+      // 里只保证新源页 root 行立即可见)。
+      //
+      // 只在 source 不是 root (parentId != null) 时 invalidate — root 路径
+      // 会删 `${spaceId}:root` 缓存标记,让 isRootsLoaded() 翻成 false,
+      // ReadView 的 Skeleton gate 命中后没人触发 reload,永久挂着(详见
+      // importPage 同款注释)。root 复制时新页已经 push 进 pages.value,
+      // tree builder 重算自动包含它,无需重 fetch 根。
+      if (source.parentId != null) {
+        invalidateChildren(source.parentId, source.spaceId)
+      }
       if (opts.withChildren) {
         invalidateChildren(real.id, real.spaceId)
       }
@@ -1003,6 +1016,50 @@ export const usePagesStore = defineStore('pages', () => {
     } catch (e) {
       pages.value = pages.value.filter((p) => p.id !== tempId)
       ui().setError(`复制失败: ${errorMessage(e)}`)
+      throw e
+    }
+  }
+
+  /**
+   * 从 Markdown 文本导入成新页(POST /api/pages/import)。后端走
+   * prosemirror-markdown 解析 + image 清洗 + sibling 组末尾落点。
+   *
+   * 走**非乐观路径**:
+   *  - 转换在后端(前端拿不到"实时 Tiptap JSON",乐观插一行 placeholder
+   *    也只是猜测内容,意义不大)。
+   *  - 大输入(2MB)解析 + DB 写入可能 100ms+,用骨架屏 + 「导入中...」按钮
+   *    禁用处理足够。
+   *
+   * 成功:
+   *  - created != null:push 到 pages[],invalidateChildren(parentId, spaceId),
+   *    返回 created PageNode(让 modal 跳转)。
+   *  - skipped != null:不抛错,modal 接住后弹 toast 让用户改名再试。
+   *
+   * 失败:`ui().setError(...)` + 重抛(modal 显示 banner)。
+   */
+  async function importPage(
+    input: Parameters<typeof api.pages.import>[0],
+  ): Promise<ImportPageResult> {
+    try {
+      const result = await api.pages.import(input)
+      if (result.created) {
+        const withReal = pages.value.some((p) => p.id === result.created!.id)
+          ? pages.value.map((p) => (p.id === result.created!.id ? result.created! : p))
+          : [...pages.value, result.created]
+        pages.value = withReal
+        // 只 invalidate parent 的 children 缓存(child import 路径)。root 导入
+        // (parentId=null) 不要 invalidateChildren(null, spaceId) — 那会删掉
+        // `${spaceId}:root` 这个 childrenLoaded Set 项,让 isRootsLoaded() 翻成
+        // false。ReadView 用 !isRootsLoaded(activeSpaceId) gate 出 Skeleton,
+        // 没有触发 reload 的路径,会一直挂着到用户手动 F5。新页已经 push 到
+        // pages.value,tree builder 重算自动包含它,不需要重 fetch 根。
+        if (input.parentId != null) {
+          invalidateChildren(input.parentId, input.spaceId)
+        }
+      }
+      return result
+    } catch (e) {
+      ui().setError(`导入失败: ${errorMessage(e)}`)
       throw e
     }
   }
@@ -1225,6 +1282,7 @@ export const usePagesStore = defineStore('pages', () => {
     movePageToSpace,
     publishPageToSpace,
     duplicatePage,
+    importPage,
     snapshotPage,
     getTree,
     getTreeForSpace,

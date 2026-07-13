@@ -19,10 +19,14 @@
     "@hono/node-server": "^2.0.6",
     "@node-rs/argon2": "^2.0.2",
     "@power-wiki/shared": "workspace:*",
+    "@types/markdown-it": "^14.1.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.27",
+    "markdown-it": "^14.0.0",
     "nanoid": "^5.0.9",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "prosemirror-markdown": "^1.13.4",
+    "prosemirror-model": "^1.22.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

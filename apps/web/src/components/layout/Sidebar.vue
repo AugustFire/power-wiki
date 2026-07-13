@@ -77,6 +77,16 @@ async function createRoot() {
   }
 }
 
+/**
+ * Sidebar 底部的「导入 Markdown」入口 — 无 sourceRow 时直接打开 modal,
+ * 落到 active space 根(parentId = null)。
+ */
+function openImportRoot(): void {
+  if (!active.value) return
+  uiStore.closeMenu()
+  uiStore.openImport({ defaultSpaceId: active.value.id })
+}
+
 function goHome() {
   // Active space's home — the `/` route renders HomeView for whatever
   // activeSpaceId is set. Clicking the chip while already on '/' is a no-op.
@@ -263,6 +273,14 @@ watch(
         创建页面
         <kbd>/</kbd>
       </button>
+      <button
+        class="import-md-btn"
+        title="导入 Markdown (.md) 到当前空间根"
+        aria-label="导入 Markdown"
+        @click="openImportRoot"
+      >
+        <span class="material-symbols-outlined icon-md">file_upload</span>
+      </button>
     </div>
   </aside>
 </template>
@@ -419,6 +437,30 @@ watch(
 .create-page-btn {
   position: relative;
   font-weight: 500;
+  flex: 1 1 auto;
+}
+.sidebar-bottom {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.import-md-btn {
+  flex: 0 0 auto;
+  width: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+.import-md-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .create-page-btn kbd {
   margin-left: auto;

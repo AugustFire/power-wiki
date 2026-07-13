@@ -61,6 +61,8 @@ import type {
   CreateUserInput,
   DashboardPayload,
   FinalizeUploadInput,
+  ImportPageInput,
+  ImportPageResult,
   MarkReadInput,
   MentionCandidate,
   MovePageInput,
@@ -386,6 +388,18 @@ export const api = {
       getOnePage(`/pages/${encodeURIComponent(id)}/duplicate`, {
         method: 'POST',
         body: JSON.stringify(input ?? {}),
+      }),
+    /**
+     * 从单个 .md 文件(或粘贴文本)导入成新页。后端走 prosemirror-markdown
+     * 解析、清洗 image、落到 sibling group 末尾。`source: 'paste' | 'file'`
+     * 决定走哪种 modal 路径;两者 body 形状一致(`text` + 可选 `filename`)。
+     * Response shape:`{ created: PageNode | null, skipped: { reason, ... } | null }` —
+     * 二选一非空。后端永远返 201(即使 skipped 也 201,语义上是"请求处理了")。
+     */
+    import: (input: ImportPageInput): Promise<ImportPageResult> =>
+      request<ImportPageResult>('/pages/import', {
+        method: 'POST',
+        body: JSON.stringify(input),
       }),
     /**
      * P1-3: workspace-wide 活动流。`?space=<id>` 过滤;`limit` / `offset` 分页,
