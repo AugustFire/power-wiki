@@ -56,13 +56,10 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 
 /* ─── Drag & drop ──────────────────────────────────────────────────────
  *  HTML5 drag API, scoped to row drags inside the tree. Drop semantics
- *  (Confluence / Notion 3-zone):
+ *  (Confluence / Notion 3-zone),适用于任何行 — root 行也能接收子节点:
  *    - top 1/3 of row    → insert BEFORE this row (same parent)
  *    - middle 1/3 of row → drop AS CHILD of this row (newParentId = target)
  *    - bottom 1/3 of row → insert AFTER this row (same parent)
- *
- *  根节点(parentId === null)禁用中区 — 没有「根的子」这种语义,中 1/3 也
- *  当 before/after 处理(用 height/2 作分界)。
  *
  *  dragState / autoExpandTimer 来自 usePageTreeDrag(module-scope 共享,
  *  详见 composables/usePageTreeDrag.ts)。如果放回 <script setup> 内部
@@ -107,13 +104,14 @@ function onDragOver(e: DragEvent) {
   const rect = row.getBoundingClientRect()
   const third = rect.height / 3
   const relY = e.clientY - rect.top
-  // 根节点(parentId === null)禁用 child 概念,中 1/3 也按 before/after 处理
-  let position: DropHint
-  if (props.node.parentId === null) {
-    position = relY < rect.height / 2 ? 'before' : 'after'
-  } else {
-    position = relY < third ? 'before' : relY > 2 * third ? 'after' : 'child'
-  }
+  // 任何行(root 或嵌套)都可以接收"成为其子节点"。中 1/3 = child,前后 1/3 = 兄弟。
+  // 早先版本对 parentId === null 的 root 行把中 1/3 强制当 before/after,理由是
+  // "root 没有 parent 所以没有 child 概念"——但 target 行的 parentId 与它能否
+  // 接收子节点无关,root 行完全可以有子(子节点的 parentId 就是 root.id,非 null)。
+  // 那条规则让 case 1(无子的 root 行之间互拖)和 case 2(root 上的非空折叠父节点
+  // 接收新子)都失效 —— 用户把 page 拖到中 1/3 期待"成为子",实际变成"插入后面"。
+  const position: DropHint =
+    relY < third ? 'before' : relY > 2 * third ? 'after' : 'child'
   if (dragState.dropTarget?.id !== props.node.id || dragState.dropTarget.position !== position) {
     dragState.dropTarget = { id: props.node.id, position }
     // 中区 hover 折叠节点 → 300ms 后自动展开(用户预知落点)
