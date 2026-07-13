@@ -93,6 +93,12 @@ void authStore
  *   2. 若当前页不在活动空间,把活动空间切过去(侧栏才会渲染对应树)
  *   3. 逐个展开祖先,并把每个祖先的完整子列表拉全(树能渲染出整条路径)
  *   4. `nextTick` 后按 `data-page-id` 找到当前行,滚进视野
+ *
+ * 空间切换后的竞态:当用户点跨空间链接,`setActiveSpace` 是同步翻
+ * `activeSpaceId.value`,但下面 `ensureAncestorsLoaded` / `ensureChildrenLoaded`
+ * 在 `pages.value` 里找节点 —— 新空间的根可能还没进缓存。`ensureRootsLoaded`
+ * 必须先 await,把新空间根加载完,否则树渲染是空的,scroll 进视野也
+ * `.tree-row[data-page-id=...]` 找不到节点 → no-op。
  */
 async function autoExpandAndLocate(pageId: string): Promise<void> {
   const chain = await pagesStore.ensureAncestorsLoaded(pageId)
@@ -103,6 +109,10 @@ async function autoExpandAndLocate(pageId: string): Promise<void> {
     spacesStore.setActiveSpace(page.spaceId)
   }
   const sid = page.spaceId ?? spacesStore.activeSpaceId.value ?? ''
+  // 跨空间跳转时,新空间的根可能还没加载(`pagesStore.init()` 只加载
+  // active space 的根)。先 await 根加载,保证下面 ensureChildrenLoaded 找
+  // 节点时 ancestors 已经在 pages.value 里,scroll-into-view 也能找到 row。
+  if (sid) await pagesStore.ensureRootsLoaded(sid)
   // 展开每个祖先(不含当前页自身)。ensureChildrenLoaded 把该祖先的完整子
   // 列表拉全并标记缓存,这样展开后看到的是全部兄弟,而不只是路径上的一个。
   for (const anc of chain.slice(0, -1)) {
@@ -119,13 +129,34 @@ async function autoExpandAndLocate(pageId: string): Promise<void> {
     ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 
-// 路由页面切换 / 首次加载完成时触发。等 `loaded` 为真才跑 —— 否则 init()
-// 的 `pages.value = items` 全量替换会把我们提前 sync 进来的祖先冲掉。loaded
-// 翻真后 watcher 会再触发一次补跑。
+/**
+ * active space 变化时,确保该空间的根节点已加载。
+ *
+ * 覆盖 3 个场景:
+ *   1. Sidebar mount 时(浏览器刷新 + 已 authed + 落 `/`)—— activeSpaceId
+ *      已被 main.ts 的 spacesStore.init() 设好,这里兜底拉根;
+ *   2. SpaceSwitcher 切换空间 —— setActiveSpace 同步翻值,这里按需拉新空间根;
+ *   3. autoExpandAndLocate 跨空间跳转 —— 同上。
+ *
+ * `immediate: true` 让 Sidebar mount 时立刻跑一次(覆盖场景 1)。
+ * ensureRootsLoaded 自身 idempotent + inflight dedup,无副作用。
+ */
 watch(
-  [() => route.params.id, () => pagesStore.loaded],
-  ([id, loaded]) => {
-    if (!loaded) return
+  () => spacesStore.activeSpaceId.value,
+  (id) => {
+    if (id) void pagesStore.ensureRootsLoaded(id)
+  },
+  { immediate: true },
+)
+
+// 路由页面切换 / 首次加载完成时触发。等 *active space 的根* 加载完才跑 ——
+// 否则 autoExpandAndLocate 里的 ensureAncestorsLoaded 拿到祖先,但树根
+// 还没在 pages.value 里(空间没切的话;新空间的话 sid 的根未加载),scroll-
+// into-view 找不到 row。rootsLoaded 翻真后 watcher 会再触发一次补跑。
+watch(
+  [() => route.params.id, () => spacesStore.activeSpaceId.value, () => pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value)],
+  ([id, _sid, rootsReady]) => {
+    if (!rootsReady) return
     if (typeof id === 'string' && id) void autoExpandAndLocate(id)
   },
   { immediate: true },

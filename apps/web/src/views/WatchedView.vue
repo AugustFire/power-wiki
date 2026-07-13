@@ -89,8 +89,11 @@ onMounted(async () => {
   if (!spacesStore.loaded) {
     try { await spacesStore.init() } catch { /* 留待 UI 渲染错误 */ }
   }
-  if (!pagesStore.loaded) {
-    try { await pagesStore.init() } catch { /* 同上 */ }
+  // 按 active space 拉根 —— WatchedView 的 browse 模式可能用 pages.value。
+  // 没有 activeSpaceId(罕见)就跳过,search 模式仍可工作。
+  const sid = spacesStore.activeSpaceId.value
+  if (sid) {
+    try { await pagesStore.ensureRootsLoaded(sid) } catch { /* 同上 */ }
   }
   await loadFirstPage()
 })

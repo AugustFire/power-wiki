@@ -389,8 +389,10 @@ watch(
           <!-- 冷启动 / store 还没 fetch 完时显示 Skeleton(直链 / 刷新场景)。
                遵守 docs/loading-ux.md:33 "首次加载用 Skeleton,不用「加载中…」文本"。
                Skeleton 形状模仿真实内容(title + byline + 多行正文 + callout-ish),
-               chrome 高度稳定,load 后是 fade 而不是空白闪一下。 -->
-          <div v-if="!pagesStore.loaded" class="read-skeleton" aria-busy="true" aria-live="polite">
+               chrome 高度稳定,load 后是 fade 而不是空白闪一下。
+               按 active space 判断根是否就绪 —— 全局 `loaded` 是「至少一个空间
+               加载完」太宽,在跨空间跳转或刚切空间时会过早取消 skeleton。 -->
+          <div v-if="!pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value)" class="read-skeleton" aria-busy="true" aria-live="polite">
             <Skeleton height="36px" width="70%" />
             <div class="read-skeleton-byline">
               <Skeleton width="32px" height="32px" radius="50%" />

@@ -89,9 +89,14 @@ function pathOf(id: string | null): string {
 }
 
 // 仅在 pagesStore 还没初始化时显示初始 Skeleton(进入时)。搜索自己的
-// loading 用 searching 标志位,见下面 results 处的分支。
+// loading 用 searching 标志位,见下面 results 处的分支。按 active space 的
+// 根缓存判断 —— 跨空间浏览结果来自 `pagesStore.pages`,后者在切空间后
+// 短暂为空,显示 skeleton 比"什么都没"好。
 const showInitialSkeleton = computed(
-  () => pagesStore.loading || (!pagesStore.loaded && pagesStore.pages.length === 0),
+  () =>
+    pagesStore.loading ||
+    (!pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value) &&
+      pagesStore.pages.length === 0),
 )
 
 // 当前结果列表。优先级:searchResults 覆盖 browse 模式。
@@ -203,9 +208,11 @@ watch(
       searchResults.value = null
       inlineError.value = null
       searchSeq++ // invalidate any in-flight from before close
-      if (!pagesStore.loaded && !pagesStore.loading) {
-        void pagesStore.init()
-      }
+      // 按空间 lazy-load 根,不再调 init()(那是全局的,且会 reset)。如果
+      // activeSpaceId 还没设置(sidebar 还没 mount),跳过 — 用户在搜索
+      // 框里看不到任何 browse 数据,但 search 模式仍可工作。
+      const sid = spacesStore.activeSpaceId.value
+      if (sid) void pagesStore.ensureRootsLoaded(sid)
       await nextTick()
       inputEl.value?.focus()
     }

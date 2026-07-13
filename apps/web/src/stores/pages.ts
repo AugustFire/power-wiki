@@ -54,10 +54,12 @@ export const usePagesStore = defineStore('pages', () => {
   const trashLoading = ref(false)
 
   /**
-   * 懒加载缓存状态。`pages.value` 现在是稀疏缓存:`init()` 只拉根节点
-   * (`parentId IS NULL`),子节点按需通过 `ensureChildrenLoaded(parentId)`
+   * 懒加载缓存状态。`pages.value` 现在是稀疏缓存:每个空间的根节点按
+   * `ensureRootsLoaded(spaceId)` 拉取,子节点按需通过 `ensureChildrenLoaded`
    * 拉取。Cache key 用 `${spaceId}:${parentId}` — 避免跨空间场景(管理员
    * 在空间 A 展开过某节点,然后切到空间 B 看到同名节点)互相污染。
+   * 根节点的 key 是 `${spaceId}:root`(`parentId=null`),与子节点共享同一
+   * 个 `childrenLoaded` Set,所以清空子节点缓存时也连带清空根缓存。
    */
   const childrenLoaded = reactive(new Set<string>())
   const loadingPromises = new Map<string, Promise<void>>()
@@ -69,6 +71,12 @@ export const usePagesStore = defineStore('pages', () => {
   /** 是否已尝试加载过某 parent 的 children(无论成功与否)。 */
   function isChildrenLoaded(parentId: string | null, spaceId: string | null): boolean {
     return childrenLoaded.has(parentKey(parentId, spaceId))
+  }
+
+  /** 该空间的根节点是否已加载(对应 cache key `${spaceId}:root`)。 */
+  function isRootsLoaded(spaceId: string | null): boolean {
+    if (!spaceId) return false
+    return childrenLoaded.has(parentKey(null, spaceId))
   }
 
   function ui() {
@@ -95,22 +103,37 @@ export const usePagesStore = defineStore('pages', () => {
     loadingPromises.clear()
   }
 
+  /**
+   * 把 `loaded` 翻成 true 但不触发任何 fetch。
+   *
+   * /manager/* 路由的 cold-boot 需要这个:ManagerLayout 不显示 page-tree
+   * sidebar,不需要 /api/pages 的根缓存。但 App.vue 的 RouterView gate
+   * 依赖 `loaded` 为 true 才渲染 —— 否则 manager 视图全黑屏。
+   *
+   * 这是 `init()` 的一个瘦身版:同样把 loaded 翻成 true,跳过
+   * ensureRootsLoaded。`init()` 里的活跃空间拉根由 Sidebar 接管(它的
+   * activeSpaceId watch 在 spaces init 后触发,按需 ensureRootsLoaded),
+   * 不依赖 init()。
+   */
+  function markLoaded(): void {
+    if (loaded.value || loading.value) return
+    loaded.value = true
+  }
+
   async function init(): Promise<void> {
     if (loaded.value || loading.value) return
     loading.value = true
     loadError.value = null
     try {
-      // 懒加载模式:只拉根节点(parentId IS NULL)。子节点按需通过
-      // ensureChildrenLoaded() 拉。一次性拉全集会让 500+ 页空间在冷启动
-      // 时一次塞 500 条 DOM + 一次大往返,改成根级 10-50 条后,展开才
-      // 触发对应 parent 的子节点请求。
-      const { items } = await api.pages.list({ parentId: null })
-      pages.value = items
-      // 重置懒加载缓存(切换用户时 reset() 会清,这里再保一次幂等)
-      childrenLoaded.clear()
-      loadingPromises.clear()
-      // 一次性回填存量页面的 contentJSON(种子页只有 HTML 没有 JSON,Editor 需要 JSON)
-      migrateEmptyJson()
+      // 按空间加载根节点(默认 activeSpaceId)—— 之前是无 space 过滤的
+      // 跨空间拉取,登录时一次性把所有可见空间的根塞进 pages.value,
+      // Admin 还会拉所有个人空间的根。改成按空间后,登录只拉 1 个空间
+      // 的根(10-50 条),其它空间在 Sidebar 切空间时按需 ensureRootsLoaded。
+      const sid = useSpacesStore().activeSpaceId.value
+      if (sid) await ensureRootsLoaded(sid)
+      // activeSpaceId 为 null(还没初始化 spaces 或用户无任何空间)时,
+      // 标记 loaded 让 shell 渲染空状态;Sidebar 的 activeSpaceId watch
+      // 会在 sid 设置后兜底拉根。
       loaded.value = true
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '未知错误'
@@ -127,15 +150,19 @@ export const usePagesStore = defineStore('pages', () => {
    * (space access change, group delete, etc.) that may have changed the
    * user's visible-space set.
    *
+   * **Cross-space refresh** —— Manager views (GroupsView / SpaceEditView /
+   * PeopleView / SpacesView) call this after admin operations and need to
+   * resync EVERY visible space's roots, not just the active one. Space
+   * switching uses `ensureRootsLoaded(newSpaceId)` instead, which is scoped.
+   *
    * Assumes `init()` has already run. If it hasn't, the refresh call still
    * updates pages.value, but `loaded` stays false — that's the caller's bug.
    */
   async function refresh(): Promise<void> {
     try {
-      // 懒加载模式下,刷新根节点即可 — 已加载的子节点不重新拉(管理员的
-      // 空间访问变更不会改子树,改了根用户重进会 init 走全量)。
-      // 已加载的子树不会因为这次刷新丢失;任何被外部修改的子树会在用户
-      // 重新进入该 parent 时通过 staleness 检查被重新拉。
+      // 跨空间刷新所有可见空间的根 —— 与 init() 不同,manager 操作可能改
+      // 任何空间的可见性,需要重新拿一遍。已加载的子节点不重新拉(管理员
+      // 的空间访问变更不会改子树,改了根用户重进会 init 走全量)。
       const { items } = await api.pages.list({ parentId: null })
       // 合并:用新的根覆盖现有根;保留 pages.value 中所有非根节点(它们
       // 是已加载的子树,这里不清)。
@@ -152,6 +179,47 @@ export const usePagesStore = defineStore('pages', () => {
         `刷新失败: ${e instanceof ApiError ? e.message : '未知错误'}`,
       )
     }
+  }
+
+  /**
+   * 确保某空间的根节点(parentId IS NULL)已加载。
+   *
+   * 与 `ensureChildrenLoaded(null)` 的关系:`ensureChildrenLoaded(null)`
+   * 会用 `activeSpaceId` 作 fallback 拿根,但不能指定「为空间 X 加载根」。
+   * 本方法显式接 spaceId,服务于:
+   *   - LoginView:登录后只加载 active space 的根(替代原全空间加载)
+   *   - Sidebar watch:activeSpaceId 变化时按需加载新空间的根
+   *   - SpaceSwitcher:切换空间时加载目标空间根
+   *   - restorePage:只重建被恢复页所在空间的根缓存
+   *
+   * 复用 `childrenLoaded` Set + `loadingPromises` Map 的 `${spaceId}:root`
+   * key —— 与 `ensureChildrenLoaded` 的子节点 cache 同结构,reset 时一并
+   * 清空。
+   */
+  async function ensureRootsLoaded(spaceId: string): Promise<void> {
+    if (!spaceId) return
+    const key = parentKey(null, spaceId)
+    if (childrenLoaded.has(key)) return
+    const inflight = loadingPromises.get(key)
+    if (inflight) return inflight
+
+    const promise = (async () => {
+      try {
+        const { items } = await api.pages.list({ space: spaceId, parentId: null })
+        // 按空间合并:把该空间的旧根清掉(如有),再加入新根;其它空间的页
+        // 完全不动 —— 它们的子树或根不该被这次刷新影响。
+        pages.value = [
+          ...pages.value.filter((p) => p.spaceId !== spaceId),
+          ...items,
+        ]
+        migrateEmptyJson()
+        childrenLoaded.add(key)
+      } finally {
+        loadingPromises.delete(key)
+      }
+    })()
+    loadingPromises.set(key, promise)
+    return promise
   }
 
   /**
@@ -491,18 +559,13 @@ export const usePagesStore = defineStore('pages', () => {
     try {
       await api.pages.restore(id)
       // Restore 可能恢复一整棵子树(后端在某种条件下会级联恢复),但我们
-      // 只知道根 id;最安全的做法是让所有已加载的 parent 缓存失效,
-      // 下次展开时统一重新拉。同时刷一下根节点列表(被恢复的页可能
-      // 直接是根)。
+      // 只知道根 id。最安全做法:让所有已加载的 parent 缓存失效,下次展
+      // 开时统一重新拉。同时刷新活动空间的根(被恢复的页可能直接是根)。
+      // 只刷活动空间,不再做无 space 过滤的全空间拉取 —— Manager 的
+      // 恢复操作只在自己管理的空间跑,活动空间就是目标空间。
       childrenLoaded.clear()
-      const { items } = await api.pages.list({ parentId: null })
-      // 合并:保留 pages.value 中所有非根节点(已加载的子树),根用新的。
-      const rootIds = new Set(items.map((p) => p.id))
-      pages.value = [
-        ...items,
-        ...pages.value.filter((p) => !rootIds.has(p.id)),
-      ]
-      migrateEmptyJson()
+      const sid = useSpacesStore().activeSpaceId.value
+      if (sid) await ensureRootsLoaded(sid)
     } catch (e) {
       // Re-fetch trash to resync the optimistic drop with truth.
       await loadTrashForCurrent()
@@ -1130,10 +1193,13 @@ export const usePagesStore = defineStore('pages', () => {
     init,
     refresh,
     reset,
+    markLoaded,
     ensureChildrenLoaded,
     ensureAncestorsLoaded,
+    ensureRootsLoaded,
     invalidateChildren,
     isChildrenLoaded,
+    isRootsLoaded,
     createPage,
     getPage,
     getChildren,

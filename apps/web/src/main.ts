@@ -71,5 +71,16 @@ router.isReady().then(async () => {
   // Stage 4c: spaces must load before pages so HomeView can show the active
   // space's root pages. Order matters — spaces first, then pages.
   await useSpacesStore().init()
-  await usePagesStore().init()
+  // /manager/* 用 ManagerLayout,没有 page-tree sidebar —— 跳过页面根拉取
+  // 避免无用的 cold-boot fetch。但 App.vue 的 RouterView gate 依赖
+  // `pagesStore.loaded` 为 true 才渲染 manager 视图,所以用 `markLoaded()`
+  // 把 flag 翻成 true 但不触发任何 fetch。LoginView 的 onSubmit 已有同样
+  // gate(登录后落地),这里覆盖 reload-on-/manager 路径。用户从 /manager
+  // 切到 wiki view 时,Sidebar 的 activeSpaceId watch 会兜底 ensureRootsLoaded。
+  const onManagerRoute = router.currentRoute.value.path.startsWith('/manager')
+  if (onManagerRoute) {
+    usePagesStore().markLoaded()
+  } else {
+    await usePagesStore().init()
+  }
 })

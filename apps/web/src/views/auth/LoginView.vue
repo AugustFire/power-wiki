@@ -58,12 +58,18 @@ async function onSubmit() {
     // flash blank. Cleared in the finally after router.replace resolves +
     // one tick, so the destination view has at least started mounting.
     authStore.transitioning = true
-    // Always init the data stores (not just non-admin dests). The topbar's
-    // SpaceSwitcher reads spacesStore.spaces regardless of which route the
-    // user lands on, so skipping init for /manager/* left the topbar empty
-    // for admins.
+    // Always init the spaces store. The topbar's SpaceSwitcher reads
+    // spacesStore.spaces regardless of which route the user lands on, so
+    // skipping init would leave the topbar empty.
     await spacesStore.init()
-    await pagesStore.init()
+    // Skip page-tree init for /manager/* dests (ManagerLayout has no page
+    // sidebar). For wiki dests (/, /p/..., /watched, /me, /activity), init
+    // pulls the active space's roots only — `pagesStore.init()` is space-
+    // scoped, not the old cross-space fetch.
+    // Mirror ResetPasswordView.vue:59-62 (same pattern for the post-reset flow).
+    if (!dest.startsWith('/manager')) {
+      await pagesStore.init()
+    }
     await router.replace(dest)
     await new Promise((r) => setTimeout(r, 80))
   } catch (e) {

@@ -22,13 +22,14 @@
  *     "选择团队空间" placeholder + caret; click opens the dropdown so the
  *     user can enter the team space.
  *   - Multiple team spaces → caret + dropdown listing every team space
- *     visible to the user, with avatar / name / page count.
+ *     visible to the user, with avatar / name / active check.
  *
  * Picking a space:
  *   1. setActiveSpace(id) — flips the activeSpaceId store value (persisted).
- *   2. pagesStore.refresh() — re-fetches the page tree scoped to the new
- *      space; server already filters by accessibility, but the local list
- *      may still hold pages from the previous space.
+ *   2. pagesStore.ensureRootsLoaded(id) — space-scoped lazy root fetch for
+ *      the new space. (Previously `pagesStore.refresh()` re-fetched roots
+ *      for ALL visible spaces — Admin would've re-pulled every personal
+ *      space too. ensureRootsLoaded is scoped to the target space.)
  *   3. router.push('/') — always jump to the new space's home, even if the
  *      user was already there. This guarantees we never strand the user on
  *      a stale page that doesn't exist in the new space (e.g. reading /p/X
@@ -77,14 +78,6 @@ const triggerLabel = computed(() =>
   isActiveShared.value && active.value ? active.value.name : '选择团队空间',
 )
 
-const pageCountBySpace = computed(() => {
-  const map = new Map<string, number>()
-  for (const p of pagesStore.pages) {
-    map.set(p.spaceId, (map.get(p.spaceId) ?? 0) + 1)
-  }
-  return map
-})
-
 function toggle() {
   if (!canOpen.value) return
   open.value = !open.value
@@ -97,7 +90,7 @@ async function pick(id: string) {
   }
   spacesStore.setActiveSpace(id)
   open.value = false
-  void pagesStore.refresh()
+  void pagesStore.ensureRootsLoaded(id)
   // 总是跳到新空间的首页 — 否则用户可能停留在旧空间的某个页面(在新空间里
   // 不存在 → 404)。已在首页时 router.push('/') 是 no-op,reactive 计算
   // 会用新 activeSpaceId 自动重渲染。
@@ -184,10 +177,7 @@ onBeforeUnmount(() => {
           <span v-if="s.icon" class="material-symbols-outlined ss-avatar-icon">{{ s.icon }}</span>
           <span v-else class="ss-initials">{{ s.name.slice(0, 2) }}</span>
         </span>
-        <span class="ss-menu-info">
-          <span class="ss-menu-name">{{ s.name }}</span>
-          <span class="ss-menu-meta">{{ pageCountBySpace.get(s.id) ?? 0 }} 个页面</span>
-        </span>
+        <span class="ss-menu-name">{{ s.name }}</span>
         <span
           v-if="s.id === active?.id"
           class="material-symbols-outlined ss-check"
@@ -327,14 +317,9 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.ss-menu-info {
+.ss-menu-name {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.ss-menu-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
@@ -343,10 +328,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .ss-menu-item-active .ss-menu-name { color: var(--accent); }
-.ss-menu-meta {
-  font-size: 11px;
-  color: var(--text-3);
-}
 .ss-check {
   font-size: var(--icon-lg, 18px) !important;
   color: var(--accent);
