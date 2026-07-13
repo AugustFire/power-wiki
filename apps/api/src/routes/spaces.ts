@@ -29,8 +29,8 @@ export const spacesRouter = new Hono<{ Variables: Variables }>()
 
 /**
  * Build space list response.
- *  - Admin → all spaces, each with its `accessGroupIds`
- *  - Non-admin → only spaces in `accessible`, no `accessGroupIds`
+ *  - Admin → all spaces, each with its `accessGroupIds`.
+ *  - Non-admin → only spaces in `accessible`, no `accessGroupIds`.
  *
  * `limit` undefined = 全量(向后兼容 stores);否则取前 limit+1 行用于
  * hasMore 探测,accessRows 仍然一次性拉全(只为聚合 accessGroupIds),
@@ -56,8 +56,6 @@ async function listVisibleSpaces(
       list.push(r.groupId)
       accessBySpace.set(r.spaceId, list)
     }
-    // Per-space page stats in one GROUP BY — replaces N frontend pages.list
-    // calls when the manager UI renders space cards.
     const statsBySpace = await getSpacePageStats(rows.map((r) => r.id))
     // Owner names for personal spaces — admin path only. Non-admin never
     // sees other users' personal space names (info leak protection).
@@ -84,8 +82,6 @@ async function listVisibleSpaces(
     .$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
-  // Non-admin: also include stats so any client building a list view from this
-  // payload (e.g. spaces store consumers) doesn't need extra round-trips.
   const statsBySpace = await getSpacePageStats(rows.map((r) => r.id))
   return rows.map((row) =>
     SpaceSchema.parse({

@@ -23,6 +23,7 @@ import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { EMPTY_HTML } from '@/lib/constants'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
@@ -68,6 +69,22 @@ const safeHtml = computed(() =>
   collapseTogglesByDefault(sanitizeAndHardenLinks(page.value?.contentHTML ?? '')),
 )
 const contentEl = ref<HTMLElement | null>(null)
+
+/**
+ * 「空内容」占位判定。pages.contentHTML 是 EMPTY_HTML('<>...空 doc
+ * shell')时,正文区跟 "暂无内容" 等价 —— author 刚创建还没写过任何东西。
+ * Confluence 风格是显示一行说明 + edit 引导(若有权限),而不是空白页面
+ * 让 reader 摸不着头脑。
+ *
+ * 判定策略:strip 后空字符串即视为空。sanitizeAndHardenLinks 会保留
+ * Tiptap 空 doc 的骨架 paragraph + heading,但纯文字 0 长度。
+ */
+const isEmptyContent = computed(() => {
+  const raw = page.value?.contentHTML ?? ''
+  if (!raw || raw === EMPTY_HTML) return true
+  const stripped = raw.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim()
+  return stripped.length === 0
+})
 
 /**
  * 作者展示名。
@@ -413,11 +430,27 @@ watch(
               </span>
               <span class="dot">·</span>
               <span>最后编辑于 {{ relativeTime(page.updatedAt) }}</span>
-              <span class="dot">·</span>
-              <span>{{ charCount(page.contentHTML) }} 字</span>
+              <template v-if="!isEmptyContent">
+                <span class="dot">·</span>
+                <span>{{ charCount(page.contentHTML) }} 字</span>
+              </template>
             </div>
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>
+
+            <!-- M2: 空内容占位 —— 页面存在但 published 内容是空(作者还在
+                 草稿阶段 / 刚创建未写)。显示 Confluence 风格 "暂无内容"
+                 提示,不让 reader 面对空白页迷茫。文字计数也跟着隐藏,
+                 避免 "0 字" 这种不友好的展示。 -->
+            <div v-if="isEmptyContent" class="empty-content-placeholder">
+              <span class="material-symbols-outlined empty-content-icon" aria-hidden="true">
+                edit_document
+              </span>
+              <div class="empty-content-title">暂无内容</div>
+              <div class="empty-content-hint">
+                此页面尚未发布内容,等待作者编辑发布。
+              </div>
+            </div>
 
             <!-- 点赞区:放在正文下方(Labels 之上),左对齐,跟 .labels
                  同 margin / 同左起点,视觉上跟标签条同一类"行内元数据"。 -->
@@ -494,6 +527,38 @@ watch(
 <style scoped>
 .read-shell { min-height: calc(100vh - var(--topbar-h)); }
 .read-page { padding-top: 24px; }
+
+/* M2: 空内容占位 —— Confluence 风格的居中提示块,跟 page-reactions 之
+   间留 32px 视觉缓冲。文字 + icon 上下结构居中,跟设计基准同款柔和
+   色 + bg-subtle 容器,避免大空白块让 reader 误以为页面坏了。 */
+.empty-content-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 24px;
+  margin-top: 32px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.empty-content-icon {
+  font-size: 48px;
+  color: var(--text-3);
+  margin-bottom: 16px;
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
+.empty-content-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.empty-content-hint {
+  font-size: 13px;
+  color: var(--text-3);
+  max-width: 360px;
+}
 
 .page-tags {
   display: flex;

@@ -1,4 +1,17 @@
 ﻿<script setup lang="ts">
+/**
+ * HomeView — `/` 路由对应的页面。
+ *
+ * 关键设计(2026-07-11 M2 后):
+ *   - 团队空间(shared): 默认统计 + 根页面网格 + 我最近访问,跟以前一样
+ *   - 个人空间(personal): 不再渲染 page tree —— 切到 MeDashboardView
+ *     「我的空间」awareness 视图。理由见 plan `M2 个人 Dashboard`。
+ *
+ * 路由 src:`/`。UserMenu「我的空间」走 `setActiveSpace(personal) + push('/')`,
+ * HomeView 检测 activeSpace.kind 决定具体渲染哪一支。这样保留所有页面
+ * 体积在同一个 HomeView 内的 coordinate(子菜单 / activeSpaceId 变化 / etc.)
+ * 而不需要为了 personal 单独注册一条路由。
+ */
 import { computed } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -9,6 +22,7 @@ import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useRouter } from 'vue-router'
 import { newId } from '@/lib/id'
 import Sidebar from '@/components/layout/Sidebar.vue'
+import MeDashboardView from '@/views/MeDashboardView.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
@@ -26,6 +40,15 @@ useDocumentTitle(() => '首页')
 // the home view without a network call.
 const activeSpaceId = computed(() => spacesStore.activeSpaceId.value)
 const activeSpace = computed(() => spacesStore.activeSpace.value)
+
+/**
+ * 个人空间走 Dashboard 而不是 page tree。「空间的概念」在 personal 里就是
+ * awareness(被 @ / 草稿 / 我创建 / 关注 / 最近)而不是 root page tree;
+ * 个人空间的 page tree 仍可由 sidebar 展开 / 点击某个根页进入。
+ */
+const isPersonalSpace = computed(
+  () => activeSpace.value?.kind === 'personal',
+)
 
 const inSpace = computed(() =>
   pagesStore.pages.filter((p) => p.spaceId === activeSpaceId.value),
@@ -122,18 +145,28 @@ function excerpt(html: string): string {
 </script>
 
 <template>
-  <div class="home-shell">
-    <div class="subheader">
-      <div class="breadcrumb">
-        <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
+  <!-- 单根 wrapper —— App.vue 的 RouterView 包了 transition mode="out-in",
+       过渡要求被包的组件根 DOM 稳定。如果根是两个 sibling(MeDashboardView vs
+       .home-shell),openPage 内 setActiveSpace 触发 isPersonalSpace 反转时,
+       HomeView 的根 DOM 会从一种换成另一种,transition 卡住、新路由组件
+       (ReadView) 不 mount,只渲染 Vue 空 comment 占位符。包一层稳定 div 即可。 -->
+  <div class="home-route-root">
+    <!-- 个人空间 → M2 Dashboard 完全替换 page tree。MeDashboardView 渲染完整
+         .dash-layout(自含 sidebar + right rail + main),不套 .home-shell chrome。 -->
+    <MeDashboardView v-if="isPersonalSpace" />
+
+    <div v-else class="home-shell">
+      <div class="subheader">
+        <div class="breadcrumb">
+          <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
+        </div>
+        <div class="page-actions">
+          <button class="btn primary" @click="createRoot">
+            <span class="material-symbols-outlined icon-lg">add</span>
+            新建页面
+          </button>
+        </div>
       </div>
-      <div class="page-actions">
-        <button class="btn primary" @click="createRoot">
-          <span class="material-symbols-outlined icon-lg">add</span>
-          新建页面
-        </button>
-      </div>
-    </div>
 
     <div class="layout no-toc">
       <Sidebar />
@@ -300,6 +333,7 @@ function excerpt(html: string): string {
           </template>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>

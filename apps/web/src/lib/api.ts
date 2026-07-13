@@ -26,6 +26,7 @@ import {
   CommentSchema,
   CreateCommentInputSchema,
   CreatePageInputSchema,
+  DashboardPayloadSchema,
   FinalizeUploadInputSchema,
   MarkReadInputSchema,
   MentionCandidateSchema,
@@ -58,11 +59,13 @@ import type {
   CreatePageInput,
   CreateSpaceInput,
   CreateUserInput,
+  DashboardPayload,
   FinalizeUploadInput,
   MarkReadInput,
   MentionCandidate,
   MovePageInput,
   Notification,
+  NotificationKind,
   PageNode,
   PageVersion,
   Paginated,
@@ -620,6 +623,65 @@ export const api = {
         const qs = params.toString() ? `?${params.toString()}` : ''
         return getManyPages(`/users/me/watched${qs}`)
       },
+      /**
+       * M2 服务端「最近浏览」(cross-device 同步)。
+       *   - `list()` 拉当前用户的 recent list,?limit 控制(默认 50 cap)。
+       *     Dashboard "最近浏览" section / ReadView 顶上"你最近看过"
+       *     都消费这个。
+       *   - `record(pageId, title)` fire-and-forget 上报一次访问,
+       *     ReadView mount 时调。title 冗余(server 也有),避免 server
+       *     还得额外 GET page 拿标题。
+       *   - `clear()` 清空当前用户的整 recent history(UI 不暴露,保留
+       *     端点完整性)。
+       *
+       * 30s GET 缓存 + record 后 invalidatePrefix 失效缓存,
+       * 下次 list() 拉最新。
+       */
+      recent: {
+        list: (q?: PaginatedQuery): Promise<Paginated<PageNode>> => {
+          const params = new URLSearchParams()
+          if (q?.limit !== undefined) params.set('limit', String(q.limit))
+          if (q?.offset !== undefined) params.set('offset', String(q.offset))
+          const qs = params.toString() ? `?${params.toString()}` : ''
+          return getManyPages(`/users/me/recent${qs}`)
+        },
+        record: async (pageId: string, title: string): Promise<void> => {
+          await request<void>(`/users/me/recent/${encodeURIComponent(pageId)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ title }),
+          })
+          // record 后 invalidate 缓存,下个 Dashboard 拉 recent 列表时
+          // 拿到包含本次访问的最新顺序;record 高频(每次 mount),但
+          // 缓存命中只有"第一次没 invalidate 之前的旧视图"被服务一次。
+          invalidatePrefix('/users/me/recent')
+        },
+        clear: async (): Promise<void> => {
+          await request<void>('/users/me/recent', { method: 'DELETE' })
+          invalidatePrefix('/users/me/recent')
+        },
+      },
+      /**
+       * 综合 Dashboard 端点 —— 「Your Work」式一次拉满 4 个 section:
+       *   mentions / personalSpace / created / watched / recent
+       * 后端在 apps/api/src/routes/users.ts。`?limit=` 控制每 section 上限,
+       * 默认 5,前端不传就走默认。
+       *
+       * Dashboard mount 时调一次,30s GET 缓存让 Tab 切换 / 重新进入不会
+       * 重复打 server。Mark-read 等 mutation 自己 invalidate
+       * 对应 prefix(`/users/me/dashboard` 不在 invalidate 列表里 —— 缓存
+       * 窗口内可以容忍「mention 标已读后 dashboard 还显示」,标已读后的
+       * 下次刷新(>30s)或者 30s 内手动 invalidatePath 都能拿到最新)。
+       *
+       * 不在 mutation 后主动 invalidate,因为 Dashboard 跨 5 个 section,
+       * 单个 mutation 触发全套刷新得不偿失。30s 缓存窗口够用。
+       */
+      dashboard: async (limit = 5): Promise<DashboardPayload> => {
+        const params = new URLSearchParams({ limit: String(limit) })
+        const raw = await request<DashboardPayload>(
+          `/users/me/dashboard?${params.toString()}`,
+        )
+        return DashboardPayloadSchema.parse(raw) as DashboardPayload
+      },
     },
   },
 
@@ -886,12 +948,23 @@ export const api = {
    * Stage 6 — Notifications. Recipient-private (no admin bypass). Bell poll
    * uses `unreadCount()` on a 30s interval from useNotifications composable.
    * `list` includes read rows so users can scroll their history.
+   *
+   * M2 服务端过滤 — Dashboard「@提到我」section 走 `kind: 'mention',
+   * unread: true` 一次拉满,避免 client 端全量拉再 filter:
+   *   - `kind` 走 shared `NotificationKind` enum 白名单(后端 safeParse,
+   *     错的值返 400 不 fallthrough)。
+   *   - `unread: true` 等同于 `isRead=false`,跟「@提到我未读」视图对齐。
+   * 不传过滤参数 = 全部 kind + 全状态,back-compat 给 Drawer / Bell。
    */
   notifications: {
-    list: (q?: PaginatedQuery): Promise<Paginated<Notification>> => {
+    list: (
+      q?: PaginatedQuery & { kind?: NotificationKind; unread?: boolean },
+    ): Promise<Paginated<Notification>> => {
       const params = new URLSearchParams()
       if (q?.limit !== undefined) params.set('limit', String(q.limit))
       if (q?.offset !== undefined) params.set('offset', String(q.offset))
+      if (q?.kind) params.set('kind', q.kind)
+      if (q?.unread) params.set('unread', 'true')
       const qs = params.toString() ? `?${params.toString()}` : ''
       return getManyPaginated(`/notifications${qs}`, NotificationSchema)
     },
@@ -906,12 +979,16 @@ export const api = {
         body: JSON.stringify(parsed),
       })
       invalidatePath('GET', '/notifications')
+      // M2: mention 标已读后 Dashboard "@提到我" section 也失效,
+      // 否则 30s 缓存窗口内已读 mention 还显示在 section 里。
+      invalidatePrefix('/users/me/dashboard')
     },
     clearAll: async (): Promise<{ deleted: number }> => {
       const r = await request<{ deleted: number }>('/notifications/clear-all', {
         method: 'POST',
       })
       invalidatePath('GET', '/notifications')
+      invalidatePrefix('/users/me/dashboard')
       return r
     },
   },

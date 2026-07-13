@@ -40,9 +40,6 @@ export async function getSpacePageStats(
   spaceIds: string[],
 ): Promise<SpacePageStatsById> {
   if (spaceIds.length === 0) return new Map()
-  // FILTER aggregates — `child_count` only counts children (pages with a
-  // parent). `last_page_updated_at` is null for spaces with no pages,
-  // which the caller coalesces to space.updatedAt for display.
   const rows = await db
     .select({
       spaceId: pages.spaceId,

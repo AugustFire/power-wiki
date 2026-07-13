@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * PublishToSpaceMenu — popover for **publishing** a personal-space draft to a
+ * PublishToSpaceMenu — popover for **publishing** a personal-space page to a
  * team space. Triggered from the PageTree ⋯ menu's "发布到..." item.
  *
- * 跟老的"移动到"不同:这里是**复制**一份新页到目标空间,原页保留在
+ * 跟"移动到"不同:这里是**复制**一份新页到目标空间,原页保留在
  * personal space 不动,新页的标题由后端自动加 "(来自 {userName} 的个人分享)"
  * 后缀。这样用户可以:
- *   - 草稿继续在 personal space 迭代,不破坏"想法/未完成工作"的归属
+ *   - 个人空间的页面继续迭代,不破坏"想法/未完成工作"的归属
  *   - 二次发布会再生成一份新的
- *   - 不会因为误操作把唯一一份草稿发布出去
+ *   - 不会因为误操作把唯一一份页面发布出去
  *
  * Source 必须是 current user's personal space — 后端会校验
  * `space.kind === 'personal' && space.ownerId === me.id`,前端在 `hasMoveTargets`

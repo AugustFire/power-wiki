@@ -3,8 +3,8 @@
 
   Used by /manager/spaces and /manager/trash to scope their data — admins see
   both kinds of spaces (Stage 6 personal-space feature), but the UX surface
-  cleanly partitions them so admins aren't sifting through every user's draft
-  space to find a shared one.
+  cleanly partitions them so admins aren't sifting through every user's
+  personal space to find a shared one.
 
   v-model is the active tab id ('shared' | 'personal'). The actual data
   filtering lives in the parent — this component is presentational only.

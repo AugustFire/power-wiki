@@ -39,6 +39,7 @@ import {
   primaryKey,
   text,
   uniqueIndex,
+  varchar,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
@@ -600,6 +601,58 @@ export const adminSettings = pgTable('admin_settings', {
 })
 
 /* ─────────────────────────────────────────────────────────────────
+ *  user_recent_pages — M2 服务端「最近浏览」(cross-device 同步)
+ *
+ *  之前 power-wiki 用 localStorage 记最近浏览,换浏览器 / 清除缓存就丢。
+ *  M2 改成服务端持久化:每用户对每页面最多一行 recent,visited_at 滚动更新。
+ *
+ *  关键约束:
+ *   - **per-user 隔离**:PK (user_id, page_id)。其他人的浏览历史不影响。
+ *   - **title 冗余存**:page 删了之后 recent 行仍有意义(「我看过 X」),
+ *     不需要 LEFT JOIN pages 也能渲染历史列表;同时避开「删了 page
+ *     但 recent 行留下孤儿 page_id」的体验空洞。`read` 路径仍走
+ *     `SELECT ... JOIN pages` 拿最新元数据,title 兜底。
+ *   - **page hard-delete 清 recent**:同 user_watched_pages 心智模型,
+ *     pages.ts DELETE 递归 CTE 同事务清理;soft_delete (deletedAt)
+ *     保留,restore 后 recent 历史不丢。
+ *   - **TTL**:90 天前的 visited_at 由 read 路径 lazy 清理(无 cron) —
+ *     跟 page_events 不一样,recent 不需要永久保留。
+ *   - **No FK** —— CLAUDE.md 硬约束。page hard-delete 走显式 DELETE。
+ *
+ *  索引:
+ *   - (user_id, visited_at DESC)复合:list 主路径 ORDER BY + LIMIT,无需
+ *     全表扫。SQL `DESC` 在 PG 里需要显式声明才有专用索引方向。
+ *   - (page_id)单列:page hard-delete 时 DELETE 走这里(跟 user_watched
+ *     索引命名对齐)。
+ * ───────────────────────────────────────────────────────────────── */
+export const userRecentPages = pgTable(
+  'user_recent_pages',
+  {
+    /** No FK — page hard-delete cleans via pages.ts DELETE. */
+    pageId: text('page_id').notNull(),
+    /** No FK — disabled/deleted users get their rows swept by app code. */
+    userId: text('user_id').notNull(),
+    /** Date.now() ms,最近一次访问时间。list 路径 ORDER BY DESC 走它,
+     *  每访问一次 (PUT /recent/:id) 刷新。 */
+    visitedAt: bigint('visited_at', { mode: 'number' }).notNull(),
+    /** 冗余存的 page title。page 删了之后 recent row 仍有 title 可显示;
+     *  也避免 join pages。list 路径优先用 page 的最新 title(LEFT JOIN),
+     *  这个 title 只作为 page 缺失时的兜底。 */
+    title: text('title').notNull(),
+  },
+  (t) => [
+    /** PK: 每用户对每页面最多一行 recent(upsert 语义)。 */
+    primaryKey({ columns: [t.pageId, t.userId] }),
+    /** 复合索引(user_id, visited_at DESC)给 list 主路径;PG 里 DESC 要
+     *  显式声明才有专用方向,否则只是 ASC 索引 + 反向扫描。 */
+    index('user_recent_user_visited_idx').on(t.userId, sql`${t.visitedAt} DESC`),
+    /** 单列 page_id 给 hard-delete 路径清理;命名跟 user_watched_page_idx
+     *  对齐便于记忆。 */
+    index('user_recent_page_idx').on(t.pageId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
  *  Row types
  * ───────────────────────────────────────────────────────────────── */
 
@@ -627,6 +680,8 @@ export type PageLikeRow = typeof pageLikes.$inferSelect
 export type NewPageLikeRow = typeof pageLikes.$inferInsert
 export type UserWatchedPageRow = typeof userWatchedPages.$inferSelect
 export type NewUserWatchedPageRow = typeof userWatchedPages.$inferInsert
+export type UserRecentPageRow = typeof userRecentPages.$inferSelect
+export type NewUserRecentPageRow = typeof userRecentPages.$inferInsert
 export type AdminSettingRow = typeof adminSettings.$inferSelect
 export type NewAdminSettingRow = typeof adminSettings.$inferInsert
 

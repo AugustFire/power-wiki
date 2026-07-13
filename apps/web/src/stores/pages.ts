@@ -11,7 +11,11 @@ import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/const
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
-import type { CreatePageInput, PageNode, TreeNode } from '@power-wiki/shared'
+import type {
+  CreatePageInput,
+  PageNode,
+  TreeNode,
+} from '@power-wiki/shared'
 
 /** Single source of truth — apps/api (Postgres) via the typed client. */
 export const usePagesStore = defineStore('pages', () => {
@@ -945,7 +949,7 @@ export const usePagesStore = defineStore('pages', () => {
   /**
    * Cross-space move: relocate a page (with its subtree) from its current
    * space into a different space as a root-level page. Used by the sidebar
-   * "移动到..." menu to publish a personal-space draft into a team space.
+   * "移动到..." menu to move a personal-space page into a team space.
    *
    * The backend enforces newParentId === null on cross-space moves (cannot
    * nest under an arbitrary page in another space, because that parent

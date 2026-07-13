@@ -120,6 +120,24 @@ const isDirty = ref(false)
 const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
 
 /**
+ * case 2 修复:hydration 一次性抑制。
+ *
+ * onMounted 把 published 内容灌进 local refs 时会触发
+ * `watch([localTitle, localJSON, localHTML])` —— 那是本视图**唯一**排
+ * auto-save 的地方。此刻用户还没编辑,若照常排 auto-save,`persistNow` 读到
+ * 的是 editor 归一化后的 getJSON()/getHTML()(跟 stored baseline 有细微差异)
+ * → dedup 落空 → 凭空写一份「没改过」的 PATCH。置真后,watcher 首次
+ * (hydration)触发被消费掉;后续真实编辑才正常排 auto-save。
+ */
+let justHydrated = false
+
+/** Tiptap 编辑器 :key —— 切换编辑对象 / 强制刷新时 +1 让 RichEditor
+ *  重挂载,确保 ProseMirror 内部状态跟 model-value 一致。Tiptap 的
+ *  internal content 不会主动重读 model-value(只 watch 初次),必须
+ *  unmount + mount 才能换骨架。 */
+const editorKey = ref(0)
+
+/**
  * Stage 8: precise dirty check. The optimistic `isDirty` flag stays true once
  * the user types anything, even if they then undo back to the original —
  * that flag is just a fast "user touched the editor" marker. For save
@@ -154,6 +172,9 @@ const bylineCreatedAt = computed(() => {
 })
 
 onMounted(async () => {
+  // hydration 抑制:local refs 被首次灌值前置真,消费掉 watcher 的第一次
+  // (hydration)触发,避免空打开凭空 PATCH 出 noise UPDATE。
+  justHydrated = true
   if (props.id) {
     const p = pagesStore.getPage(props.id)
     if (p) {
@@ -278,29 +299,17 @@ async function persistNow(): Promise<boolean> {
     lastSavedJSON.value = json
     lastSavedHTML.value = html
     isDirty.value = false
-    // PATCH 成功后:标记「还有未打 checkpoint 的改动」,由 idle 计时器
-    // 或 route leave hook 触发 boundary snapshot(POST /:id/snapshots)。
-    // 把 schedule 紧贴 success 之后,让 timer 从「上次编辑时间」重新起算。
+    // PATCH 之后标记「还有未打 checkpoint 的改动」,由 idle 计时器或
+    // route leave hook 触发 boundary snapshot(POST /:id/snapshots)。
+    // Auto-save 永远静默,不直接写 page_versions —— version 只在 idle
+    // / route leave 边界自动打。
     hasUnsnapshottedEdits.value = true
     scheduleIdleSnapshot()
     return true
   } catch {
-    // 失败时 store 已经回滚 + uiStore.setError 弹了 banner,这里只翻状态
+    // 失败时 store 已经弹 banner,这里只翻状态
     saveState.value = 'error'
     return false
-  }
-}
-
-async function publish() {
-  if (!localId.value) return
-  saveState.value = 'saving'
-  const ok = await persistNow()
-  if (ok) {
-    flashSaved()
-    // Toast 在路由跳之后仍然存活 —— ToastContainer 挂在 App.vue shell 里,
-    // 不受 EditView 卸载影响。提前一秒发,用户读 ReadView 头部时 toast 还在飘。
-    uiStore.notify('已发布', 'success')
-    router.push(`/p/${localId.value}`)
   }
 }
 
@@ -312,24 +321,8 @@ function flashSaved() {
   }, 1600)
 }
 
-function closeEditor() {
-  if (isDirty.value) {
-    confirm({
-      title: '有未保存的修改',
-      message: '关闭后当前编辑内容将丢失,确认要关闭吗?',
-      danger: true,
-      confirmText: '关闭',
-      cancelText: '继续编辑',
-    }).then((ok) => {
-      if (!ok) return
-      if (localId.value) {
-        router.push(`/p/${localId.value}`)
-      } else {
-        router.push('/')
-      }
-    })
-    return
-  }
+async function closeEditor() {
+  // route-leave hook 会负责 flush;这里只导航。
   if (localId.value) {
     router.push(`/p/${localId.value}`)
   } else {
@@ -436,7 +429,7 @@ async function flushPendingSave(): Promise<void> {
     window.clearTimeout(idleSnapshotTimer)
     idleSnapshotTimer = null
   }
-  // 早返条件:**不**用 `!isDirty` 一刀切 —— publish 在调 persistNow 时
+  // 早返条件:**不**用 `!isDirty` 一刀切 —— auto-save 防抖 fire 时
   // 已经把 isDirty 翻回 false,但 hasUnsnapshottedEdits 还是 true(刚刚那次
   // PATCH 没打 boundary snapshot)。这时进 flushPendingSave 仍应补一个
   // checkpoint,所以两个 flag 都要看。
@@ -448,7 +441,8 @@ async function flushPendingSave(): Promise<void> {
     const ok = await persistNow()
     if (ok) flashSaved()
   }
-  // publish 已经替我们跑过 persistNow 时(此时 isDirty=false),只补 snapshot 这一段。
+  // 走到这里时 isDirty=false 但 hasUnsnapshottedEdits=true:刚刚那次
+  // PATCH 已经成功,只需补 boundary snapshot 这一段。
   if (hasUnsnapshottedEdits.value) {
     try {
       await pagesStore.snapshotPage(localId.value)
@@ -466,6 +460,12 @@ onBeforeRouteLeave(async (_to, _from) => {
 })
 
 watch([localTitle, localJSON, localHTML], () => {
+  // 首次触发一定是 hydration(onMounted 灌 local refs)。此刻用户没编辑,
+  // 消费掉不排 auto-save —— 否则凭空写「没改过」的 PATCH(case 2)。
+  if (justHydrated) {
+    justHydrated = false
+    return
+  }
   if (localId.value) {
     isDirty.value = true
     scheduleAutoSave()
@@ -530,10 +530,6 @@ onBeforeUnmount(() => {
           已同步
         </div>
         <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
-        <button class="btn primary" type="button" @click="publish">
-          <span class="material-symbols-outlined icon-md">publish</span>
-          发布
-        </button>
       </div>
     </div>
 
@@ -542,7 +538,7 @@ onBeforeUnmount(() => {
 
       <div class="content">
         <div class="content-inner edit-page">
-          <EditorToolbar :editor="editorRef" @close="closeEditor" @publish="publish" />
+          <EditorToolbar :editor="editorRef" @close="closeEditor" />
 
           <input
             ref="titleInputRef"
@@ -556,11 +552,12 @@ onBeforeUnmount(() => {
           <div class="edit-byline">
             <UserAvatar :size="24" :label="page?.authorName ?? page?.authorId ?? '我'" />
             <span><strong>{{ page?.authorName ?? '我' }}</strong> · 创建于 {{ bylineCreatedAt }}</span>
-            <span class="byline-hint">·</span>
+<span class="byline-hint">·</span>
             <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>
           </div>
 
           <RichEditor
+            :key="editorKey"
             :model-value="localJSON"
             @update:model-value="onEditorJSON"
             @update:html="onEditorHTML"
@@ -648,6 +645,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .edit-footer .footer-meta {

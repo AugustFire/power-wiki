@@ -174,7 +174,7 @@ adminGroupsRouter.patch('/:id', async (c) => {
 
 // DELETE /api/admin/groups/:id — refuses to delete personal groups (system
 // artifact; the owning user's personal space depends on this row, deleting
-// it would silently lock them out of their drafts).
+// it would silently lock them out of their personal space).
 adminGroupsRouter.delete('/:id', async (c) => {
   const id = c.req.param('id')
   if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)

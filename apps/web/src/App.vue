@@ -152,11 +152,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
         <p class="pe-hint">确认 <code>apps/api</code> 服务已启动(<code>pnpm dev</code> 会同时起 web + api)。</p>
         <button type="button" class="pe-retry" @click="pagesStore.init()">重试</button>
       </div>
-
       <RouterView v-else-if="loaded" v-slot="{ Component }">
-        <transition name="fade" mode="out-in">
-          <component :is="Component" />
-        </transition>
+        <!-- 取消 transition wrapper — 在 HomeView 内嵌 MeDashboardView(v-if)
+             切换到 /p/:id 时,transition mode="out-in" 会让 leave 阶段的根 DOM
+             与 enter 阶段不一致,新组件进不来,只渲染空注释。直接 component 渲染,
+             RouterView 自己负责按路由切组件。 -->
+        <component :is="Component" />
       </RouterView>
     </main>
 

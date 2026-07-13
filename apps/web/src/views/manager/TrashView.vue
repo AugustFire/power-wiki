@@ -139,8 +139,8 @@ const kindTab = ref<KindTab>('shared')
 
 // Space list filtered by the active tab — drives both the count badges on
 // the tabs and the `<select>` dropdown. admins see both kinds, but the UX
-// cleanly partitions them so they aren't sifting through every user's draft
-// space to find a shared one.
+// cleanly partitions them so they aren't sifting through every user's
+// personal space to find a shared one.
 const sharedSpaces = computed(() => spacesStore.spaces.value.filter((s) => s.kind === 'shared'))
 const personalSpaces = computed(() => spacesStore.spaces.value.filter((s) => s.kind === 'personal'))
 const tabSpaces = computed(() =>

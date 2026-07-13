@@ -1,9 +1,12 @@
 /**
- * Self-service user routes — Stage P1-6 + M13.
+ * Self-service user routes — Stage P1-6 + M13 + M2.
  *
- *   GET   /api/users/me          current user
- *   PATCH /api/users/me          update current user's name / color
- *   GET   /api/users/me/watched  M13 personal watched pages list
+ *   GET    /api/users/me                 current user
+ *   PATCH  /api/users/me                 update current user's name / color
+ *   GET    /api/users/me/watched         M13 personal watched pages list
+ *   GET    /api/users/me/recent          M2 server-side recent visits list
+ *   PUT    /api/users/me/recent/:pageId  M2 upsert visit (called from ReadView mount)
+ *   DELETE /api/users/me/recent          M2 clear all recent (optional UI)
  *
  * Auth: requireAuth (not admin-only — every authenticated user can edit
  * their own profile). Mounted at `/api/users` in apps/api/src/index.ts,
@@ -27,21 +30,35 @@
  * "提交吧" before any git commit/push.
  */
 import { Hono } from 'hono'
-import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import {
+  DashboardPayloadSchema,
+  NotificationSchema,
   PageNodeSchema,
+  PageTitleSchema,
   PaginatedListSchema,
   UpdateUserInputSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { pages, users, userWatchedPages } from '../db/schema'
+import {
+  notifications,
+  pages,
+  spaces,
+  users,
+  userRecentPages,
+  userWatchedPages,
+} from '../db/schema'
 import { requireAuth, type Variables } from '../auth/middleware'
 import { rowToUser } from '../lib/rowMappers'
+import { rowToNotification } from '../lib/commentRowMappers'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
+
+/** 90 天之前的 visited_at 视为过期,read 路径 lazy 清理掉。 */
+const RECENT_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 export const usersRouter = new Hono<{ Variables: Variables }>()
 
@@ -176,4 +193,378 @@ usersRouter.get('/me/watched', async (c) => {
     offset,
   )
   return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
+})
+
+// ─── GET /api/users/me/recent ─────────────────────────────────────────────
+// M2: 服务端「最近浏览」列表 —— 替代 v0 的 localStorage 方案,跨设备同步。
+//
+// Query:
+//   ?limit=&offset=  1-200 标准分页;无 limit = 走"全量"分支(单用户
+//                   recent 不可能无限大,默认 cap 50 行硬限)
+//
+// 权限与可见性:
+//   - admin: 看见自己访问过的所有 recent(全空间)
+//   - 非 admin: 自动过滤到当前 canAccess 的空间集合 —— 跟 /me/watched
+//     同构,用户事后被移出空间时 recent 行不被清(list 响应里不暴露
+//     inaccessible 空间的 row)
+//
+// TTL 清理:90 天前的 visited_at 视为过期,read 路径 lazy DELETE。
+// 无 cron —— 跟 page_events 不一样,recent 不需要永久保留。
+//
+// 数据形状:返回 PageNode 列表(LEFT JOIN users + spaces 拿 author 名字
+// / 空间元数据),而不是裸 recent 行。Dashboard 「最近浏览」section 直接
+// 复用 PageNode 渲染,无需另写一个 row 类型。
+usersRouter.get('/me/recent', async (c) => {
+  const me = c.get('user')
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+  // 无 limit → cap 50,避免「全量」分支偶然拉出几万行历史
+  const effectiveLimit = limit ?? 50
+
+  // Lazy TTL cleanup:每次进来顺手清 90 天前的行。极轻(单 user),
+  // 不需要 cron —— 跟 user_watched_pages / page_events 不一样,recent
+  // 是「近期」概念,陈旧数据无业务价值。
+  await db
+    .delete(userRecentPages)
+    .where(
+      and(
+        eq(userRecentPages.userId, me.id),
+        sql`${userRecentPages.visitedAt} < ${Date.now() - RECENT_TTL_MS}`,
+      ),
+    )
+
+  // Step 1: 全量拉 me 的 recent(visited_at DESC)。单用户 recent 上限
+  // 由 TTL=90d + 每页最多 1 行天然收敛,几百行封顶,全量 fetch 安全。
+  // 这里不预先 limit —— visibility 过滤后会丢行,预 limit 会导致
+  // "用户其实有 N 个可见 recent 但只看到 K 个" 的 hasMore 误报。
+  const recentRows = await db
+    .select({
+      pageId: userRecentPages.pageId,
+      visitedAt: userRecentPages.visitedAt,
+    })
+    .from(userRecentPages)
+    .where(eq(userRecentPages.userId, me.id))
+    .orderBy(sql`${userRecentPages.visitedAt} DESC`)
+
+  if (recentRows.length === 0) {
+    return c.json(
+      PaginatedListSchema(PageNodeSchema).parse({
+        items: [],
+        limit: effectiveLimit,
+        offset,
+        hasMore: false,
+      }),
+    )
+  }
+  // 保留原始 visited_at 顺序,后面 JS reorder 用
+  const orderedIds = recentRows.map((r) => r.pageId)
+
+  // Step 2: visibility + deletedAt 过滤(同 /me/watched)。
+  // selectPagesWithAuthor 拿 LEFT JOIN 字段;不在 SELECT 里 ORDER BY —
+  // 我们用 order map 在 JS 端按 visited_at 顺序排,避开 raw SQL 拼接
+  // (array_position + 手写 escape 的注入风险)。
+  const filters: SQL[] = [inArray(pages.id, orderedIds), isNull(pages.deletedAt)]
+  if (me.role !== 'admin') {
+    const visible = await getAccessibleSpaceIds(me.id, false)
+    if (visible === '*' || visible.length === 0) {
+      return c.json(
+        PaginatedListSchema(PageNodeSchema).parse({
+          items: [],
+          limit: effectiveLimit,
+          offset,
+          hasMore: false,
+        }),
+      )
+    }
+    filters.push(inArray(pages.spaceId, visible))
+  }
+
+  const combined = filters.length === 1 ? filters[0] : and(...filters)!
+  const rows = await selectPagesWithAuthor(combined, { viewerUserId: me.id })
+
+  // Step 3: 按 visited_at DESC 重排,visibility 过滤后的 id 顺序保留
+  // 原 visited_at 优先级。这是 JS 端 map lookup,O(N) 无 DB roundtrip。
+  const rowById = new Map(rows.map((r) => [r.id, r]))
+  const visibleInOrder = orderedIds.filter((id) => rowById.has(id))
+
+  // 在已 filter 的序列上做分页,limit+1 探测 hasMore。
+  const pageSlice = visibleInOrder.slice(offset, offset + effectiveLimit + 1)
+  const hasMore = pageSlice.length > effectiveLimit
+  const items = pageSlice.slice(0, effectiveLimit).map((id) =>
+    PageNodeSchema.parse(rowToPageNode(rowById.get(id)!)),
+  )
+  return c.json(
+    PaginatedListSchema(PageNodeSchema).parse({
+      items,
+      limit: effectiveLimit,
+      offset,
+      hasMore,
+    }),
+  )
+})
+
+// ─── PUT /api/users/me/recent/:pageId ─────────────────────────────────────
+// M2: 上报一次访问(ReadView mount 时调)。
+//
+// 幂等 UPSERT(PK 复合 page_id + user_id),visited_at = now,title 冗余。
+// page 不存在 / 已软删 → 404,不写 recent(避免孤儿 page_id)。可访问性
+// 检查同 PATCH /:id(personal-space 闸门 admin 也走标准流程)。
+//
+// 失败容忍:ReadView 的 mount 流程 fire-and-forget,前端不阻塞等响应;
+// server 端这里仍 throw 500 让 frontend toast,前端可以选择 retry。
+usersRouter.put('/me/recent/:pageId', async (c) => {
+  const me = c.get('user')
+  const pageId = c.req.param('pageId')
+  const body = await c.req.json().catch(() => ({}))
+  // title 是可选 —— 客户端传 title 时 server 冗余存,客户端不传就拿当前
+  // page.title(避免 fallback 时还得发两次请求)
+  const rawTitle =
+    typeof (body as { title?: unknown }).title === 'string'
+      ? ((body as { title: string }).title).trim()
+      : ''
+  const now = Date.now()
+
+  // 拿 page 元数据(校验存在 + 拿 title 兜底)
+  const [page] = await db
+    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt, title: pages.title })
+    .from(pages)
+    .where(eq(pages.id, pageId))
+    .limit(1)
+  if (!page || page.spaceId === null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+  if (page.deletedAt !== null) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  const title = rawTitle || page.title || ''
+  // 截断 title 到 PageTitleSchema 长度,避免超长输入污染 recent 表
+  const safeTitle = PageTitleSchema.safeParse(title).success
+    ? title
+    : title.slice(0, 200)
+
+  await db
+    .insert(userRecentPages)
+    .values({
+      pageId,
+      userId: me.id,
+      visitedAt: now,
+      title: safeTitle,
+    })
+    .onConflictDoUpdate({
+      target: [userRecentPages.pageId, userRecentPages.userId],
+      set: {
+        visitedAt: now,
+        title: safeTitle,
+      },
+    })
+
+  return c.body(null, 204)
+})
+
+// ─── DELETE /api/users/me/recent ──────────────────────────────────────────
+// M2: 清空当前用户的全部 recent history。UI 不暴露入口,留给未来「清空
+// 浏览历史」按钮;目前前端不调,保留端点完整性。
+usersRouter.delete('/me/recent', async (c) => {
+  const me = c.get('user')
+  await db.delete(userRecentPages).where(eq(userRecentPages.userId, me.id))
+  return c.body(null, 204)
+})
+
+/* ─────────────────────────────────────────────────────────────────
+ *  GET /api/users/me/dashboard — M2「Your Work」综合端点。
+ *
+ *  4 个 section 并行查询,一次 RTT 喂给前端 Dashboard:
+ *    1. mentions:未读 @ 提我通知(kind=mention, isRead=false, top N)
+ *    2. personalSpace:我的个人空间最近编辑(pages WHERE author=me
+ *       AND space.kind='personal', top N) —— 个人空间作「私人记事本 /
+ *       草稿本」使用,跨空间移页前在这里起草
+ *    3. created:我创建的页面(pages WHERE author_id=me, top N)
+ *    4. watched:我关注的页面(user_watched_pages JOIN pages, top N)
+ *    5. recent:最近浏览(user_recent_pages JOIN pages, top N)
+ *
+ *  权限 / 可见性:
+ *    - admin:看全部
+ *    - 非 admin:personalSpace / created / watched / recent 四个 section
+ *      都要附加 spaceId ∈ accessibleSpaceIds 过滤(防泄漏);mentions
+ *      是通知中心,无 space 维度,直接给。
+ *
+ *  ?limit:每 section 上限,默认 5,范围 1-20。前端 5 默认,「查看全部」链
+ *  接走完整分页路径,不调这个端点。
+ *
+ *  trashed pages:在 selectPagesWithAuthor 默认 isNull(deleted_at),除了
+ *  mentions(通知本身是历史快照,page 可能后来被 trash —— LEFT JOIN users
+ *  + 标题兜底「已删除页面」,跟 ActivityEvent 同构)。
+ *
+ *  并行执行:5 个 Promise.all 一次跑完 —— Postgres 连接池允许的并发
+ *  完全够用,典型 latency ~30-50ms(比 5 个串行 ~150ms 快 3-4 倍)。
+ * ───────────────────────────────────────────────────────────────── */
+usersRouter.get('/me/dashboard', async (c) => {
+  const me = c.get('user')
+  const rawLimit = Number(c.req.query('limit') ?? '5')
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(20, Math.floor(rawLimit)))
+    : 5
+
+  // 1) 非 admin 拿可见空间集合(短路 admin,免去 SQL)
+  let visibleSpaceIds: string[] | '*'
+  if (me.role === 'admin') {
+    visibleSpaceIds = '*'
+  } else {
+    const ids = await getAccessibleSpaceIds(me.id, false)
+    visibleSpaceIds = ids === '*' ? [] : ids
+  }
+
+  // ─── 子查询 1:未读 @ 提我通知 ────────────────────────────────────
+  // SELECT notifications + LEFT JOIN users 拿 actor 头像字段
+  const mentionsPromise = (async () => {
+    const rows = await db
+      .select({
+        id: notifications.id,
+        userId: notifications.userId,
+        actorId: notifications.actorId,
+        kind: notifications.kind,
+        pageId: notifications.pageId,
+        pageTitle: notifications.pageTitle,
+        commentId: notifications.commentId,
+        mentionUserId: notifications.mentionUserId,
+        isRead: notifications.isRead,
+        readAt: notifications.readAt,
+        createdAt: notifications.createdAt,
+        actorName: users.name,
+        actorColor: users.color,
+      })
+      .from(notifications)
+      .leftJoin(users, eq(notifications.actorId, users.id))
+      .where(
+        and(
+          eq(notifications.userId, me.id),
+          eq(notifications.kind, 'mention'),
+          eq(notifications.isRead, false),
+        ),
+      )
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit)
+    return rows.map((r) =>
+      NotificationSchema.parse(
+        rowToNotification(r, { actorName: r.actorName, actorColor: r.actorColor }),
+      ),
+    )
+  })()
+
+  // ─── 子查询 2:我的个人空间最近编辑 ────────────────────────────
+  // Confluence model:个人空间 = 「私人记事本 / 草稿本」。这个 section 展示
+  // 当前用户在所有个人空间里的页面(updated_at DESC, top N)—— 跨空间移页
+  // 前在这里起草。多用户共享 personal 空间不存在(只能 owner 自己访问 +
+  // admin 监督,见 docs/data-model.md §个人空间),所以这里 author=me
+  // 隐含 owner=me。
+  //
+  // Step 1: 拿个人空间 ids。
+  // Step 2: pages WHERE author=me AND spaceId IN (...) 取 top N page ids。
+  // Step 3: selectPagesWithAuthor 拿完整 page 元数据。
+  const personalSpacePromise = (async () => {
+    const personalSpaceRows = await db
+      .select({ id: spaces.id })
+      .from(spaces)
+      .where(and(eq(spaces.kind, 'personal'), eq(spaces.ownerId, me.id)))
+    const personalIds = personalSpaceRows.map((r) => r.id)
+    if (personalIds.length === 0) return []
+
+    const idRows = await db
+      .select({ id: pages.id })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.authorId, me.id),
+          isNull(pages.deletedAt),
+          inArray(pages.spaceId, personalIds),
+        ),
+      )
+      .orderBy(desc(pages.updatedAt))
+      .limit(limit)
+    return pagesByIdsOrdered(idRows.map((r) => r.id), limit)
+  })()
+
+  // ─── 通用子查询 helper:按 ids 拉 page 列表(配合可见性过滤) ──────
+  // watched / recent 都先拿 ids 子集,再走 selectPagesWithAuthor。
+  // watched 跟 recent 需要重排(JOIN 不保证原顺序)。
+  async function pagesByIdsOrdered(
+    idsInOrder: string[],
+    fallbackLimit: number,
+  ): Promise<ReturnType<typeof rowToPageNode>[]> {
+    if (idsInOrder.length === 0) return []
+    const filters: SQL[] = [inArray(pages.id, idsInOrder), isNull(pages.deletedAt)]
+    if (visibleSpaceIds !== '*') {
+      if (visibleSpaceIds.length === 0) return []
+      filters.push(inArray(pages.spaceId, visibleSpaceIds))
+    }
+    const where = filters.length === 1 ? filters[0] : and(...filters)!
+    const rows = await selectPagesWithAuthor(where, { viewerUserId: me.id })
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    return idsInOrder.flatMap((id) => {
+      const row = byId.get(id)
+      return row ? [rowToPageNode(row)] : []
+    }).slice(0, fallbackLimit)
+  }
+
+  // ─── 子查询 3:我创建的页面 ──────────────────────────────────────
+  // SELECT pages WHERE author_id = me, ORDER BY updated_at DESC, LIMIT N
+  // 不走 selectPagesWithAuthor —— 这一节直接拿 ids,再走 pagesByIdsOrdered
+  // 拼接 page 实体(LEFT JOIN users / labels / likes 全在 selectPagesWithAuthor 里)
+  const createdPromise = (async () => {
+    const idRows = await db
+      .select({ id: pages.id })
+      .from(pages)
+      .where(and(eq(pages.authorId, me.id), isNull(pages.deletedAt)))
+      .orderBy(desc(pages.updatedAt))
+      .limit(limit)
+    return pagesByIdsOrdered(idRows.map((r) => r.id), limit)
+  })()
+
+  // ─── 子查询 4:我关注的页面 ──────────────────────────────────────
+  // SELECT user_watched_pages JOIN pages 拿 (id, watched_at) DESC top N
+  const watchedPromise = (async () => {
+    const idRows = await db
+      .select({ pageId: userWatchedPages.pageId })
+      .from(userWatchedPages)
+      .where(eq(userWatchedPages.userId, me.id))
+      .orderBy(desc(userWatchedPages.watchedAt))
+      .limit(limit)
+    return pagesByIdsOrdered(idRows.map((r) => r.pageId), limit)
+  })()
+
+  // ─── 子查询 5:最近浏览 ──────────────────────────────────────────
+  const recentPromise = (async () => {
+    const idRows = await db
+      .select({ pageId: userRecentPages.pageId })
+      .from(userRecentPages)
+      .where(eq(userRecentPages.userId, me.id))
+      .orderBy(desc(userRecentPages.visitedAt))
+      .limit(limit)
+    return pagesByIdsOrdered(idRows.map((r) => r.pageId), limit)
+  })()
+
+  const [mentions, personalSpace, created, watched, recent] = await Promise.all([
+    mentionsPromise,
+    personalSpacePromise,
+    createdPromise,
+    watchedPromise,
+    recentPromise,
+  ])
+
+  // zod parse at the boundary —— 同时把 PageNode(interface,labels?:string[])
+  // 收成 PageNodeSchema 派生类型(labels:string[],default []),跟 schemas 的
+  // 类型对齐。`created` 等字段是 `rowToPageNode(...)` 直接构造的 PageNode,
+  // runtime 已有 default [],但 TS 类型上 labels 是 optional —— 走 parse
+  // 一次拿严格类型,避免下游 z.array(PageNodeSchema) 抱怨。
+  return c.json(
+    DashboardPayloadSchema.parse({
+      mentions,
+      personalSpace,
+      created,
+      watched,
+      recent,
+    }),
+  )
 })

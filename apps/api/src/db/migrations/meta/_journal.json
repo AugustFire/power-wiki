@@ -71,6 +71,13 @@
       "when": 1783500000000,
       "tag": "0019_user_watched_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783700000000,
+      "tag": "0021_user_recent_pages",
+      "breakpoints": true
     }
   ]
 }

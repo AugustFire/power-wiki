@@ -38,8 +38,8 @@ const activePageCount = computed(() => {
 })
 
 // Personal-space shortcut: separate from the active-space chip so users have
-// a one-click path back to their drafts when they're working in a shared
-// space. Rendered as a small bottom-anchor link — not a primary nav item.
+// a one-click path back to their personal space when they're working in a
+// shared space. Rendered as a small bottom-anchor link — not a primary nav item.
 const personalSpace = computed(() => spacesStore.personalSpace.value)
 const showMySpaceShortcut = computed(
   () => personalSpace.value && active.value && !isActivePersonal.value,

@@ -96,6 +96,17 @@ export const PageNodeSchema = z.object({
    *  page_id 出。Joined rows 一定有(0 / 数字),未走 join 的 fallback 路径
    *  在 rowToPageNode 里 fallback 成 0。 */
   watchersCount: z.number().int().nonnegative().optional(),
+  /**
+   * M2 case 3:首次发布时间(Date.now() ms),null/undefined = 从未发布。
+   *
+   * 读者列表路径(`selectPagesWithAuthor` + viewerUserId)会自动过滤
+   * `firstPublishedAt IS NULL OR authorId = viewer` —— 非作者根本看不
+   * 见未发布页面,所以 client 端拿到的 PageNode 这个字段**几乎永远**
+   * 不为 null。Undefined 仅在 fallback 路径或老 cache 没填时出现,UI
+   * fallback 成「未发布」。Dashboard 「我创建的」section 会渲染该
+   * 字段让作者区分已发布 vs 草稿(给个「未发布」chip),Sidebar 默认不
+   * 显示该字段(列表里只剩已发布的 row,没必要重复)。 */
+  firstPublishedAt: z.number().int().positive().nullable().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */
@@ -255,6 +266,40 @@ export const MentionCandidateSchema = z.object({
   email: z.string().email(),
 })
 
+/** M2: 通知 kind 白名单 —— 跟 NotificationSchema.kind 同源,服务端
+ * `GET /api/notifications?kind=mention` 走这个做 400 校验,避免错的值
+ * 悄悄 fallthrough 到 "全部"。Drift 风险:`apps/api/src/db/schema.ts`
+ * `notifications.kind` 文本 enum 列也要保持一致 — 见该处的 JSDoc。 */
+export const NotificationKindSchema = z.enum([
+  'mention',
+  'reply',
+  'comment_on_my_page',
+  'page_like',
+  // M13 watch fanout(给所有 watcher,actor != user_id)
+  'page_edit',
+  'page_renamed',
+  'page_moved',
+  'page_restored',
+  'page_deleted',
+  'comment_add',
+])
+
+/** M2: 每个 kind 的中文显示标签 —— DashboardCard 等前端组件消费,
+ * 集中放在 shared 包避免每处组件重复 Record<string, string> 跟 enum drift。
+ * 顺序跟 NotificationKindSchema 一致便于审阅。 */
+export const NotificationKindLabels: Record<z.infer<typeof NotificationKindSchema>, string> = {
+  mention: '@ 提及',
+  reply: '回复',
+  comment_on_my_page: '评论我的页',
+  page_like: '赞',
+  page_edit: '编辑',
+  page_renamed: '改名',
+  page_moved: '移动',
+  page_restored: '恢复',
+  page_deleted: '删除',
+  comment_add: '评论',
+}
+
 /** 单条通知 — 响应 DTO。
  *
  * 通知是 recipient-private:WHERE user_id=me.id 强约束,没有 admin bypass。 */
@@ -266,19 +311,7 @@ export const NotificationSchema = z.object({
   actorColor: z.string().nullable(),
   // M13 扩 6 类 watch fanout kind。app 层 enum,Drizzle 端 text(无 DB native enum)。
   // page 作者同时满足 watcher 时,comment_add → comment_on_my_page(author 去重)。
-  kind: z.enum([
-    'mention',
-    'reply',
-    'comment_on_my_page',
-    'page_like',
-    // M13 watch fanout(给所有 watcher,actor != user_id)
-    'page_edit',
-    'page_renamed',
-    'page_moved',
-    'page_restored',
-    'page_deleted',
-    'comment_add',
-  ]),
+  kind: NotificationKindSchema,
   pageId: z.string().min(1),
   pageTitle: z.string().nullable(),
   commentId: z.string().min(1).nullable(),
@@ -473,10 +506,24 @@ export type CreateSpaceInput = z.infer<typeof CreateSpaceInputSchema>
 export type UpdateSpaceInput = z.infer<typeof UpdateSpaceInputSchema>
 export type SetSpaceAccessInput = z.infer<typeof SetSpaceAccessInputSchema>
 
+/* ---------- Dashboard ---------- */
+export const DashboardPayloadSchema = z.object({
+  mentions: z.array(NotificationSchema),
+  /** Confluence 模型:个人空间 = 「私人记事本 / 草稿本」。这里展示当前用户
+   * 在所有 personal 空间里的最近编辑页面(updated_at DESC, top N)。跨空间
+   * 移页前在这里起草。 */
+  personalSpace: z.array(PageNodeSchema),
+  created: z.array(PageNodeSchema),
+  watched: z.array(PageNodeSchema),
+  recent: z.array(PageNodeSchema),
+})
+export type DashboardPayload = z.infer<typeof DashboardPayloadSchema>
+
 /* ---------- Stage 6 type exports ---------- */
 export type Comment = z.infer<typeof CommentSchema>
 export type MentionCandidate = z.infer<typeof MentionCandidateSchema>
 export type Notification = z.infer<typeof NotificationSchema>
+export type NotificationKind = z.infer<typeof NotificationKindSchema>
 export type CreateCommentInput = z.infer<typeof CreateCommentInputSchema>
 export type UpdateCommentInput = z.infer<typeof UpdateCommentInputSchema>
 export type MentionCandidatesQuery = z.infer<typeof MentionCandidatesQuerySchema>

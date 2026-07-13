@@ -73,7 +73,8 @@ export function useSpacesStore() {
       //      personal space, land them on it so they see the welcome page.
       //   2. Persisted ID, if still visible.
       //   3. Personal space (defensive: if no persisted, prefer personal
-      //      over arbitrary first space — keeps the user's drafts at hand).
+      //      over arbitrary first space — keeps the user's personal space
+      //      at hand).
       //   4. First space in the list.
       //   5. null (no accessible spaces).
       const persisted = activeSpaceId.value

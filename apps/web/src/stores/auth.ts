@@ -76,10 +76,9 @@ export const useAuthStore = defineStore('auth', () => {
     // leave status alone, otherwise App.vue's `showBoot` computed (which
     // keys off status === 'loading') flips to true and unmounts the entire
     // RouterView, replacing it with the auth-boot spinner. That mid-route
-    // unmount interrupts any in-flight MySpaceView/EditView lifecycle
-    // (e.g. `router.replace('/')` from MySpaceView's onMounted) and causes
-    // an infinite mount → unmount → re-mount loop, manifesting as a hang
-    // when clicking the personal-space sidebar entry.
+    // unmount interrupts any in-flight EditView / Dashboard lifecycle and
+    // causes an infinite mount → unmount → re-mount loop, manifesting as
+    // a hang when navigating during auth init.
     if (status.value === 'idle') status.value = 'loading'
     initRef.current = (async () => {
       try {
@@ -91,6 +90,10 @@ export const useAuthStore = defineStore('auth', () => {
           personalSpaceId.value = psid
           status.value = 'ready'
           loadError.value = null
+          // M2: 拿到 user 后立刻从 server 拉一次 recents,覆盖 localStorage 离线
+          // 缓存,实现跨设备同步。fire-and-forget —— 网络失败时本地缓存仍能用。
+          // (login() 也会在登入后调一次。)
+          if (user.value) void useRecentPages().syncFromServer()
         } catch (e) {
           // 401 = not signed in; any other error is a real failure.
           const err = e as { status?: number; message?: string }
@@ -125,6 +128,9 @@ export const useAuthStore = defineStore('auth', () => {
     personalSpaceId.value = psid
     status.value = 'ready'
     loadError.value = null
+    // M2: 登入后从 server 拉一次 recents 覆盖 localStorage,实现跨设备
+    // 同步。fire-and-forget。
+    void useRecentPages().syncFromServer()
   }
 
   async function logout(): Promise<void> {

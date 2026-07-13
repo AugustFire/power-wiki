@@ -83,6 +83,15 @@ export interface PageNode {
    *  Joined rows 一定有这个字段(0 / 数字),未走 join 的 fallback 路径给 0。
    *  Optional:同 likedByMe。 */
   watchersCount?: number
+  /**
+   * M2 case 3:首次发布时间(Date.now() ms),null/undefined = 从未发布。
+   *
+   * 读者列表路径(`selectPagesWithAuthor` + viewerUserId)会自动过滤
+   * `firstPublishedAt IS NULL OR authorId = viewer` —— 非作者根本看不
+   * 见未发布页面。Optional:fallback 路径 / 老 cache 没填时为 undefined。
+   * Dashboard「我创建的」section 用这个字段给作者的草稿页加「未发布」chip。
+   */
+  firstPublishedAt?: number | null
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */
@@ -205,6 +214,7 @@ export type {
   Comment,
   MentionCandidate,
   Notification,
+  NotificationKind,
   CreateCommentInput,
   UpdateCommentInput,
   MarkReadInput,
@@ -218,4 +228,6 @@ export type {
   RequestUploadInput,
   FinalizeUploadInput,
   RequestUploadResponse,
+  // Dashboard (Confluence model — personal space = scratchpad)
+  DashboardPayload,
 } from './schemas'

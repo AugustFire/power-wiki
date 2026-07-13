@@ -1,23 +1,24 @@
 /**
- * Pages API — 12 routes (Stage 5 — soft-delete / trash / restore; Stage 8 —
- * history / labels / duplicate; v2 — auto-save 静默 / snapshot 边界触发):
+ * Pages API — 14 routes (Stage 5 — soft-delete / trash / restore; Stage 8 —
+ * history / labels / duplicate; v2 — auto-save 静默 / snapshot 边界触发;
+ * M13 watch fanout):
  *
- *   GET    /api/pages                  → PageNode[] (filtered by visible spaces, excludes trashed)
- *   GET    /api/pages/trash?space=     → PageNode[] (admin only, trashed pages in space)
- *   GET    /api/pages/:id              → PageNode (404 if not in visible space, excludes trashed)
- *   POST   /api/pages                  → 201 + PageNode (spaceId required + access check)
- *   PATCH  /api/pages/:id              → PageNode (404 if not in visible space, excludes trashed)
- *                                         内容更新 — **不**写 page_versions(version 由
- *                                         前端在 idle boundary / route leave 时主动打
- *                                         POST /:id/snapshots 触发)
- *   POST   /api/pages/:id/snapshots    → 201 + PageVersion (边界 / idle checkpoint,manual)
- *   POST   /api/pages/:id/like         → 200 + { liked, likesCount } (toggle 单端点)
- *   PATCH  /api/pages/:id/move         → PageNode (404 if not in visible space, excludes trashed)
- *   POST   /api/pages/:id/publish      → 201 + PageNode (personal → team space copy)
- *   POST   /api/pages/:id/duplicate    → 201 + PageNode (in-place sibling copy, title "复制自+原标题")
- *   POST   /api/pages/:id/restore      → 204 (admin only, 409 parent_trashed / not_trashed)
- *   DELETE /api/pages/:id              → 204 soft-delete (409 has_children, 404 not accessible)
- *   DELETE /api/pages/:id?purge=true   → 204 hard-delete (admin only, must already be trashed)
+ *   GET    /api/pages                       → PageNode[] (filtered by visible spaces, excludes trashed)
+ *   GET    /api/pages/trash?space=          → PageNode[] (admin only, trashed pages in space)
+ *   GET    /api/pages/:id                   → PageNode (404 if not in visible space, excludes trashed)
+ *   POST   /api/pages                       → 201 + PageNode (spaceId required + access check)
+ *   PATCH  /api/pages/:id                   → PageNode (404 if not in visible space, excludes trashed)
+ *                                             内容更新 — **不**写 page_versions(version 由
+ *                                             前端在 idle boundary / route leave 时主动打
+ *                                             POST /:id/snapshots 触发)
+ *   POST   /api/pages/:id/snapshots         → 201 + PageVersion (边界 / idle checkpoint,manual)
+ *   POST   /api/pages/:id/like              → 200 + { liked, likesCount } (toggle 单端点)
+ *   PATCH  /api/pages/:id/move              → PageNode (404 if not in visible space, excludes trashed)
+ *   POST   /api/pages/:id/publish           → 201 + PageNode (personal → team space copy)
+ *   POST   /api/pages/:id/duplicate         → 201 + PageNode (in-place sibling copy, title "复制自+原标题")
+ *   POST   /api/pages/:id/restore           → 204 (admin only, 409 parent_trashed / not_trashed)
+ *   DELETE /api/pages/:id                   → 204 soft-delete (409 has_children, 404 not accessible)
+ *   DELETE /api/pages/:id?purge=true        → 204 hard-delete (admin only, must already be trashed)
  *
  * Space scoping (Stage 4c):
  *   - Admin sees all spaces and all pages.
@@ -79,6 +80,7 @@ import {
   pageLikes,
   userWatchedPages,
   pageEvents,
+  userRecentPages,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
@@ -645,7 +647,7 @@ pagesRouter.post('/:id/snapshots', async (c) => {
  *  Admin 写 personal space 的反向保护:assertAdminNotWritingPersonalSpace
  *  不应用在这里 —— like 是**读语义**,不修改 page 行,不污染作者。
  *  只挡 admin 通过写路径 PATCH/publish/duplicate。这条保留 admin 也能
- *  赞别人 personal draft 的语义(虽然罕见)。
+ *  赞别人 personal 空间页面的语义(虽然罕见)。
  *
  *  通知:like → 给页面作者发一条 page_like;unlike → 静默(不补发通知,
  *  也不发"取消赞"通知,Notion / Confluence 都这么做)。自己赞自己的页
@@ -914,12 +916,12 @@ pagesRouter.patch('/:id/move', async (c) => {
       )
     }
     // Source-side guard: cross-space moves are only allowed from a personal
-    // space (草稿→发布). Team-to-team moves are not part of the personal-space
-    // design — a user wanting to share a page should be in their personal
-    // space first (drag from personal to a team space), not moving between
-    // shared spaces. This keeps the "personal = draft, shared = publish"
-    // mental model intact at the API boundary; the frontend gates the same
-    // condition via `hasMoveTargets` for UX, but the API enforces it.
+    // space. Team-to-team moves are not part of the personal-space design —
+    // a user wanting to share a page should be in their personal space first
+    // (drag from personal to a team space), not moving between shared spaces.
+    // This keeps the personal/private mental model intact at the API boundary;
+    // the frontend gates the same condition via `hasMoveTargets` for UX, but
+    // the API enforces it.
     const [sourceSpace] = await db
       .select({ kind: spaces.kind })
       .from(spaces)
@@ -1239,7 +1241,7 @@ pagesRouter.post('/:id/publish', async (c) => {
  *
  *  Personal-space guard (assertAdminNotWritingPersonalSpace) applies the
  *  same way as PATCH/DELETE — an admin duplicating someone else's personal
- *  draft gets 403 `personal_space_readonly` instead of leaking content.
+ *  space page gets 403 `personal_space_readonly` instead of leaking content.
  */
 pagesRouter.post('/:id/duplicate', async (c) => {
   const me = c.get('user')
@@ -1269,7 +1271,7 @@ pagesRouter.post('/:id/duplicate', async (c) => {
 
   // Personal-space reverse-guard: same rule as PATCH / DELETE / move for
   // non-owner admins. The new page lives in the source's space, so an admin
-  // duplicating someone else's personal-space draft is rejected here.
+  // duplicating someone else's personal-space page is rejected here.
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, source.spaceId)
   if (blocked) return blocked
 
@@ -1513,6 +1515,15 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(pageLikes)
         .where(inArray(pageLikes.pageId, subtreeIds))
+      // 服务端最近浏览:page hard-delete 时显式清理 user_recent_pages
+      // (软删保留,recent 历史在 restore 后仍可见;详见 0021 migration 注释)
+      await tx
+        .delete(userRecentPages)
+        .where(inArray(userRecentPages.pageId, subtreeIds))
+      // (软删保留,recent 历史在 restore 后仍可见;详见 0021 migration 注释)
+      await tx
+        .delete(userRecentPages)
+        .where(inArray(userRecentPages.pageId, subtreeIds))
       await tx
         .delete(attachments)
         .where(inArray(attachments.pageId, subtreeIds))

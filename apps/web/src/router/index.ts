@@ -32,12 +32,15 @@ const routes: RouteRecordRaw[] = [
 
   // ─── Authed app ─────────────────────────────────────────────────────
   {
-    // Stable URL for the current user's personal space. Mounts a thin
-    // redirect-to-"/" component that flips the active space; registered
-    // before `/` so /me always matches this route, not the catch-all.
+    // M2: /me is now the personal Dashboard ("Your Work") — cross-space
+    // personal awareness, NOT the user's personal space page tree. The
+    // personal space is still accessible via SpaceSwitcher / direct nav.
+    //
+    // Registered before `/` so /me always matches this route, not the
+    // catch-all.
     path: '/me',
-    name: 'my-space',
-    component: () => import('@/views/MySpaceView.vue'),
+    name: 'me-dashboard',
+    component: () => import('@/views/MeDashboardView.vue'),
     meta: { requiresAuth: true },
   },
   {
