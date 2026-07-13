@@ -376,13 +376,16 @@ export const api = {
     },
     /**
      * In-place sibling copy. Empty body is fine — the backend schema is
-     * `z.object({}).optional()`. Response is the freshly-created PageNode;
-     * the store uses that to splice into the local pages[] + siblings.
+     * `z.object({ withChildren?: boolean }).optional()`. Pass
+     * `{ withChildren: true }` to recursively duplicate the source's
+     * whole subtree (Confluence "Duplicate with subtree"). Response is
+     * the freshly-created PageNode; the store uses that to splice into
+     * the local pages[] + siblings.
      */
-    duplicate: (id: string) =>
+    duplicate: (id: string, input?: { withChildren?: boolean }) =>
       getOnePage(`/pages/${encodeURIComponent(id)}/duplicate`, {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify(input ?? {}),
       }),
     /**
      * P1-3: workspace-wide 活动流。`?space=<id>` 过滤;`limit` / `offset` 分页,

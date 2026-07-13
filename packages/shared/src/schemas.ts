@@ -444,10 +444,18 @@ export const PublishPageInputSchema = z.object({
   targetSpaceId: PageIdSchema,
 })
 
-/** POST /api/pages/:id/duplicate 入参 — 当前没有需要客户端传的字段,
- * 保留 schema 是为了和 publish / update 等路由在请求层结构对称(也方便
- * 未来扩展)。空对象 / 缺失 body 都视为合法。 */
-export const DuplicatePageInputSchema = z.object({}).optional()
+/** POST /api/pages/:id/duplicate 入参
+ *  - `withChildren`: 整棵子树递归复制,Confluence 默认行为
+ *    (单页复制是 NodeList 里的 "Duplicate" → "Duplicate with subtree")。
+ *    客户端可以用 `?withChildren=true` query 参数或 body 字段触发,
+ *    后端统一从 query 取(API client 当前把 body 做成空 {} 也能走通)。
+ *  - `?withChildren=true` 缺省 false,保持历史行为不变(单页复制,
+ *    不递归子页,跟改这个 schema 之前的版本一致)。 */
+export const DuplicatePageInputSchema = z
+  .object({
+    withChildren: z.boolean().optional(),
+  })
+  .optional()
 
 /** POST /api/pages/:id/snapshots 入参 — 边界 / idle 自动打 version 时
  * 携带的可选 changeNote(类似 git commit message),用户不在的边界不打

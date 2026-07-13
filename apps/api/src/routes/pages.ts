@@ -1253,6 +1253,12 @@ pagesRouter.post('/:id/duplicate', async (c) => {
   if (!parsed.success) {
     return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
   }
+  // `?withChildren=true` 触发整棵子树递归复制,Confluence 的
+  // "Duplicate with subtree" 语义。query 和 body 哪个为准:query 更显式
+  // 且容易在 API explorer / curl 里看到,优先 query;body 留 fallback
+  // 给后续想要把开关塞进 body 的客户端。
+  const includeChildren =
+    c.req.query('withChildren') === 'true' || parsed.data?.withChildren === true
 
   // Source must exist and be a live (non-trashed) page.
   const [source] = await db
@@ -1340,6 +1346,51 @@ pagesRouter.post('/:id/duplicate', async (c) => {
         .update(pages)
         .set({ sortOrder: i, updatedAt: now })
         .where(eq(pages.id, targetId))
+    }
+
+    if (includeChildren) {
+      // BFS 拉 source 的整棵 live 子树(不含 source,不含已删除的),
+      // 按 sortOrder 排序,保证新子页的兄弟顺序跟源子树一致。
+      // 不依赖 Postgres 递归 CTE(本项目硬约束 no FK,但 CTE 仍 OK;
+      // 这里走 BFS 是为了把每个子页的 parentId 映射和 INSERT 走 ts 端
+      // 控制,可读性 + 错误处理更直接)。
+      const idMap = new Map<string, string>()
+      idMap.set(id, newId) // 源 → 新源
+
+      const descendants: typeof pages.$inferSelect[] = []
+      let frontier: string[] = [id]
+      while (frontier.length > 0) {
+        const children = await tx
+          .select()
+          .from(pages)
+          .where(and(inArray(pages.parentId, frontier), isNull(pages.deletedAt)))
+          .orderBy(pages.sortOrder)
+        if (children.length === 0) break
+        descendants.push(...children)
+        frontier = children.map((c) => c.id)
+      }
+
+      for (const desc of descendants) {
+        const childNewId = generatePageId()
+        idMap.set(desc.id, childNewId)
+        // BFS 保证 desc.parentId 已经在 map 里(它是上一层的 frontier),
+        // 不会是 undefined;非空断言反映这个不变式。
+        const newParent = idMap.get(desc.parentId!)!
+        await tx.insert(pages).values({
+          id: childNewId,
+          parentId: newParent,
+          spaceId: desc.spaceId,
+          title: `复制自${(desc.title ?? '').trim() || '未命名'}`,
+          icon: desc.icon ?? null,
+          contentJson: desc.contentJson,
+          contentHtml: desc.contentHtml,
+          sortOrder: desc.sortOrder, // 兄弟相对顺序保留
+          createdAt: now,
+          updatedAt: now,
+          updatedBy: me.id,
+          authorId: me.id,
+        })
+      }
     }
   })
 

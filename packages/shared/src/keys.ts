@@ -12,6 +12,8 @@ export const PERSIST_KEYS = {
   TREE_EXPANDED: 'power-wiki:tree-expanded',
   /** 当前选中的 space id — 刷新后保留上下文 */
   ACTIVE_SPACE: 'power-wiki:active-space',
+  /** 各 space 侧栏滚动位置 — reload 后恢复用户浏览到的位置 */
+  TREE_SCROLL: 'power-wiki:tree-scroll',
 } as const
 
 export type PersistKey = (typeof PERSIST_KEYS)[keyof typeof PERSIST_KEYS]

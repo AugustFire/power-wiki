@@ -32,6 +32,24 @@ const currentSpaceId = computed(() => {
 })
 const isExpanded = computed(() => uiStore.isExpanded(spaceId.value, props.node.id))
 /**
+ * Effective expansion state, used for rendering (caret + children). On
+ * first entry into a space, root rows default to expanded so the user
+ * doesn't have to click every caret to see the tree. Once the user
+ * toggles anything in the space, the explicit `isExpanded` record
+ * takes over and the default is dropped.
+ *
+ * 为什么不直接在 uiStore.isExpanded 里加 depth 参数:让 store 保持纯
+ * 数据访问,把"什么算展开"的渲染语义留给组件。PageTree 已经知道
+ * `depth` / `hasChildren`,不需要把这些塞进 store API。
+ */
+const isEffectivelyExpanded = computed(() => {
+  if (isExpanded.value) return true
+  if (depth.value === 0 && hasChildren.value && !uiStore.hasRecord(spaceId.value)) {
+    return true
+  }
+  return false
+})
+/**
  * 是否显示 caret + 展开按钮。完全用服务端的 `hasChildren`(EXISTS 子查询
  * 计算的真实子节点存在性),不用 children 数组 —— 懒加载模式下 children
  * 数组在用户展开前都是空的,拿它判断会让 leaf 节点也显示 caret,误导用户
@@ -81,6 +99,16 @@ function onDragStart(e: DragEvent) {
   dragState.draggingId = props.node.id
   e.dataTransfer.effectAllowed = 'move'
   e.dataTransfer.setData('text/plain', props.node.id)
+  // 自定义 drag image:展示页面标题,而不是浏览器默认的半透明整行。
+  // 浏览器要求 setDragImage 的元素必须在 dragstart 同步流程里存在 —
+  // 创建一个 hidden 节点,setDragImage 引用它,然后用 setTimeout 0
+  // 退出本 tick 后再移除(0 即可,dragstart 同步阶段已经 capture 完图像)。
+  const ghost = document.createElement('div')
+  ghost.className = 'page-tree-drag-ghost'
+  ghost.textContent = `📄 ${props.node.title}`
+  document.body.appendChild(ghost)
+  e.dataTransfer.setDragImage(ghost, 14, 14)
+  setTimeout(() => ghost.remove(), 0)
 }
 
 function onDragEnd() {
@@ -214,8 +242,12 @@ async function onDrop(e: DragEvent) {
 
   try {
     await pagesStore.movePage(draggedId, newParentId, insertAt)
-  } catch {
-    // banner already shown by store
+  } catch (e) {
+    // store 内部 setError 把 banner 顶上;这里额外弹一个短促 toast,
+    // 让用户即时知道"刚才的拖动没成功",不用等 banner 自动消失或
+    // 主动去顶部看。toast 自动 3s 消失,不污染视野。
+    const msg = e instanceof Error ? e.message : '请重试'
+    uiStore.notify(`拖动失败: ${msg}`, 'error')
   }
 }
 
@@ -372,14 +404,14 @@ function onRenameKey(e: KeyboardEvent) {
   }
 }
 
-async function duplicatePage() {
+async function duplicatePage(withChildren = false) {
   uiStore.closeMenu()
   try {
     // Mirror the post-success navigation pattern from publishPageToSpace:
     // land on the new copy's read view so the user immediately sees the
     // 复制自-prefixed title with the duplicated content. Failures
     // surface via the store's `ui().setError` banner — no inner catch.
-    const created = await pagesStore.duplicatePage(props.node.id)
+    const created = await pagesStore.duplicatePage(props.node.id, { withChildren })
     await router.push(`/p/${created.id}`)
   } catch {
     // banner shown by store; user can retry from the menu
@@ -503,7 +535,7 @@ watch(isRenaming, (val) => {
     >
       <span
         class="caret"
-        :class="{ leaf: !hasChildren, open: isExpanded && hasChildren }"
+        :class="{ leaf: !hasChildren, open: isEffectivelyExpanded && hasChildren }"
         @click="toggleCaret"
       >
         <span v-if="hasChildren" class="material-symbols-outlined icon-md">chevron_right</span>
@@ -550,9 +582,18 @@ watch(isRenaming, (val) => {
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
-        <button class="menu-item" @click="duplicatePage">
+        <button class="menu-item" @click="duplicatePage(false)">
           <span class="material-symbols-outlined icon-md">content_copy</span>
           <span>复制页面</span>
+        </button>
+        <button
+          class="menu-item"
+          :disabled="!hasLiveChildren"
+          :title="hasLiveChildren ? '复制此页面及其所有子页面' : '此页面没有子页可复制'"
+          @click="duplicatePage(true)"
+        >
+          <span class="material-symbols-outlined icon-md">copy_all</span>
+          <span>复制整棵子树</span>
         </button>
         <button
           v-if="canPublish"
@@ -589,7 +630,7 @@ watch(isRenaming, (val) => {
       />
     </template>
 
-    <div v-if="hasChildren && isExpanded" class="tree-children">
+    <div v-if="hasChildren && isEffectivelyExpanded" class="tree-children">
       <PageTree
         v-for="child in node.children"
         :key="child.id"

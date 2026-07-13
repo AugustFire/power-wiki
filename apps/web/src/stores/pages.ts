@@ -932,8 +932,16 @@ export const usePagesStore = defineStore('pages', () => {
    * Local positions are approximated to the canonical 0..N sequence. The
    * server's authoritative order is observable when the next list refresh
    * lands; this avoids a tree "shuffle" in the meantime.
+   *
+   * `withChildren: true` 走整棵子树递归复制(Confluence "Duplicate with
+   * subtree" 语义)。子树模式下,store 端只追加新源页(根)的占位 + 落地
+   * 真实 row;子页依赖后端 INSERT,前端无源数据做乐观更新,落地后靠
+   * 一次 `invalidateChildren` 让下次 `ensureChildrenLoaded` 拉真实子列表。
    */
-  async function duplicatePage(id: string): Promise<PageNode> {
+  async function duplicatePage(
+    id: string,
+    opts: { withChildren?: boolean } = {},
+  ): Promise<PageNode> {
     const source = pages.value.find((p) => p.id === id)
     if (!source) throw new Error(`page not found: ${id}`)
 
@@ -958,7 +966,7 @@ export const usePagesStore = defineStore('pages', () => {
     pages.value = [...pages.value, optimistic]
 
     try {
-      const real = await api.pages.duplicate(id)
+      const real = await api.pages.duplicate(id, { withChildren: opts.withChildren })
 
       // 1. Drop the placeholder; ensure `real` is in the array.
       const withoutPlaceholder = pages.value.filter((p) => p.id !== tempId)
@@ -984,7 +992,13 @@ export const usePagesStore = defineStore('pages', () => {
 
       pages.value = withReal.map((p) => reorderedMap.get(p.id) ?? p)
       // 复制后 source.parentId 的 children 列表变了(多了一个)
+      // 子树模式下,新源页下还多了一整棵子树 — 走 cache invalidation,
+      // 下次展开时让 ensureChildrenLoaded 拉真实列表(子页的占位 row
+      // 没在 store 里,这里只保证新源页 root 行立即可见)。
       invalidateChildren(source.parentId, source.spaceId)
+      if (opts.withChildren) {
+        invalidateChildren(real.id, real.spaceId)
+      }
       return real
     } catch (e) {
       pages.value = pages.value.filter((p) => p.id !== tempId)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -16,6 +16,24 @@ const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
 const route = useRoute()
+
+/**
+ * Sidebar 自身 overflow-y: auto(styles/components.css:223),是侧栏的滚动
+ * 容器。scrollTop 反映用户在侧栏里的浏览位置。
+ *
+ * 持久化:每个 space 各自记一份(uiStore.scrollBySpace),reload 后
+ * 恢复;避免"我明明滚到 50% 看了很深的子树,刷新一下就回到顶"。
+ */
+const sidebarRef = ref<HTMLElement | null>(null)
+let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onSidebarScroll() {
+  if (scrollSaveTimer) clearTimeout(scrollSaveTimer)
+  scrollSaveTimer = setTimeout(() => {
+    const sid = spacesStore.activeSpaceId.value
+    const el = sidebarRef.value
+    if (sid && el) uiStore.setSidebarScroll(sid, el.scrollTop)
+  }, 200)
+}
 
 // Tree is scoped to the active space. Server already filters by accessibility
 // but the local store holds pages from every accessible space — scoping the
@@ -124,9 +142,28 @@ async function autoExpandAndLocate(pageId: string): Promise<void> {
     uiStore.expand(sid, anc.id)
   }
   await nextTick()
-  document
-    .querySelector<HTMLElement>(`.tree-row[data-page-id="${pageId}"]`)
-    ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  const el = sidebarRef.value
+  const targetRow = document.querySelector<HTMLElement>(
+    `.tree-row[data-page-id="${pageId}"]`,
+  )
+  // 优先恢复用户上次滚到的位置(每个 space 独立记)。
+  // 仅在该位置把目标行完全滚出视野时,才补一次 scrollIntoView 把当前页
+  // 拉进视野,避免 reload 后首次进入时"明明在 X 页却看不到侧栏当前位置"。
+  const stored = uiStore.getSidebarScroll(sid)
+  if (el && stored > 0) {
+    el.scrollTop = stored
+    if (targetRow) {
+      const rowRect = targetRow.getBoundingClientRect()
+      const containerRect = el.getBoundingClientRect()
+      const outOfView =
+        rowRect.top < containerRect.top || rowRect.bottom > containerRect.bottom
+      if (outOfView) {
+        targetRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    }
+  } else {
+    targetRow?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
 }
 
 /**
@@ -164,7 +201,7 @@ watch(
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside ref="sidebarRef" class="sidebar" @scroll="onSidebarScroll">
     <div class="quick-nav">
       <!-- Active-space chip: always reflects the currently active space (any
            kind) so the sidebar's identity matches the topbar. The chip is

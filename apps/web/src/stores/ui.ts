@@ -4,6 +4,7 @@ import { readJSON, writeJSON } from '@/lib/storage'
 import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 
 const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
+const KEY_SCROLL = PERSIST_KEYS.TREE_SCROLL
 const LEGACY_KEY = '__legacy__'
 
 /**
@@ -36,6 +37,7 @@ export interface Toast {
  * list and the legacy fallback is no longer consulted.
  */
 type ExpandedBySpace = Record<string, string[]>
+type ScrollBySpace = Record<string, number>
 
 function readInitial(): ExpandedBySpace {
   const raw = readJSON<unknown>(KEY_EXPANDED, {})
@@ -48,10 +50,28 @@ function readInitial(): ExpandedBySpace {
   return {}
 }
 
+function readScrollInitial(): ScrollBySpace {
+  const raw = readJSON<unknown>(KEY_SCROLL, {})
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as ScrollBySpace
+  }
+  return {}
+}
+
 export const useUiStore = defineStore('ui', () => {
   const expanded = ref<ExpandedBySpace>(readInitial())
 
   watch(expanded, (val) => writeJSON(KEY_EXPANDED, val), { deep: true })
+
+  /**
+   * Sidebar scrollTop per space. Persisted so a reload restores the
+   * user's last position — Confluence / Notion both do this. The watcher
+   * is throttled by the caller (Sidebar.vue) to avoid hammering
+   * localStorage on every wheel tick.
+   */
+  const scrollBySpace = ref<ScrollBySpace>(readScrollInitial())
+
+  watch(scrollBySpace, (val) => writeJSON(KEY_SCROLL, val), { deep: true })
 
   // 树节点 ⋯ 菜单状态(全树共享,同一时刻只有一个菜单打开)
   const openMenuId = ref<string | null>(null)
@@ -106,6 +126,26 @@ export const useUiStore = defineStore('ui', () => {
 
   function isExpanded(spaceId: string, id: string): boolean {
     return listFor(spaceId).includes(id)
+  }
+
+  function getSidebarScroll(spaceId: string): number {
+    return scrollBySpace.value[spaceId] ?? 0
+  }
+
+  function setSidebarScroll(spaceId: string, scrollTop: number): void {
+    if (scrollBySpace.value[spaceId] === scrollTop) return
+    scrollBySpace.value = { ...scrollBySpace.value, [spaceId]: scrollTop }
+  }
+
+  /**
+   * Whether the user has ever toggled expansion in this space. Used by
+   * PageTree to decide whether root rows should default to expanded
+   * (first time entering the space) vs. follow the (collapsed) record.
+   * Returns false for the legacy single-list state too — that record
+   * was a flat list shared across all spaces, not a per-space intent.
+   */
+  function hasRecord(spaceId: string): boolean {
+    return Array.isArray(expanded.value[spaceId])
   }
 
   /**
@@ -214,6 +254,9 @@ export const useUiStore = defineStore('ui', () => {
     cheatSheetOpen,
     error,
     isExpanded,
+    hasRecord,
+    getSidebarScroll,
+    setSidebarScroll,
     toggle,
     expand,
     openMenu,

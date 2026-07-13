@@ -223,6 +223,29 @@
     overflow-y: auto;
 }
 
+/* PageTree drag image:跟着 cursor 浮动的小卡片,显示 "📄 {title}"。
+ * 必须放全局(scoped style 不会作用到 setDragImage 注入 body 的节点),
+ * 用 .page-tree-drag-ghost 名字限定避免污染其他组件。 */
+.page-tree-drag-ghost {
+    position: fixed;
+    top: -2000px;
+    left: -2000px;
+    padding: 5px 10px;
+    background: var(--bg);
+    color: var(--text-1);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+    pointer-events: none;
+    white-space: nowrap;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 9999;
+}
+
 .space-card {
     padding: 12px;
     border-radius: var(--radius);
