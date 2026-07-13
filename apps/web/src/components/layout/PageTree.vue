@@ -293,8 +293,12 @@ async function addChild() {
 
 async function addSibling() {
   uiStore.closeMenu()
+  // 「添加同级」必须在 *node 自己的 parent* 下,而不是 root。如果 node
+  // 本身就是 root(parentId === null),这条路径就退化为「加根级」——
+  // 这跟 root 上 ⋯ 菜单的预期一致。之前的实现写死 parentId: null
+  // 是 bug:在深层节点上点「添加同级」会跳到空间根,跟文案不符。
   try {
-    const p = await pagesStore.createPage({ parentId: null })
+    const p = await pagesStore.createPage({ parentId: props.node.parentId })
     router.push(`/p/${p.id}/edit`)
   } catch {
     // banner already shown by store
