@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
@@ -31,6 +32,7 @@ const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
+const uiStore = useUiStore()
 const router = useRouter()
 const { recordVisit } = useRecentPages()
 
@@ -435,7 +437,21 @@ watch(
       </div>
     </div>
 
-    <div class="layout">
+    <!-- 专题 12:TOC 折叠手柄 —— 只在 tocCollapsed 时显示。
+       放 ReadView 内部(而非 App.vue 顶层)是为了路由切到 EditView 等
+       没有 TOC 的视图时,手柄自然随组件卸载消失。 -->
+    <button
+      v-if="uiStore.tocCollapsed"
+      type="button"
+      class="toc-expand-handle"
+      title="展开目录"
+      aria-label="展开目录"
+      @click="uiStore.setTocCollapsed(false)"
+    >
+      <span class="material-symbols-outlined">keyboard_double_arrow_left</span>
+    </button>
+
+    <div class="layout" :class="{ 'toc-collapsed': uiStore.tocCollapsed }">
       <Sidebar />
 
       <div class="content">

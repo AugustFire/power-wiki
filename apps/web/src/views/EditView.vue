@@ -533,7 +533,21 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="layout">
+    <!-- 专题 12:TOC 折叠手柄 —— 只在 tocCollapsed 时显示。
+       放 EditView 内部(而非 App.vue 顶层)是为了路由切回 ReadView 等
+       不受影响的视图时,手柄自然随组件卸载消失。 -->
+    <button
+      v-if="uiStore.tocCollapsed"
+      type="button"
+      class="toc-expand-handle"
+      title="展开目录"
+      aria-label="展开目录"
+      @click="uiStore.setTocCollapsed(false)"
+    >
+      <span class="material-symbols-outlined">keyboard_double_arrow_left</span>
+    </button>
+
+    <div class="layout" :class="{ 'toc-collapsed': uiStore.tocCollapsed }">
       <Sidebar />
 
       <div class="content">

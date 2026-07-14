@@ -5,6 +5,7 @@ import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 
 const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
 const KEY_SCROLL = PERSIST_KEYS.TREE_SCROLL
+const KEY_TOC_COLLAPSED = PERSIST_KEYS.TOC_COLLAPSED
 const LEGACY_KEY = '__legacy__'
 
 /**
@@ -72,6 +73,25 @@ export const useUiStore = defineStore('ui', () => {
   const scrollBySpace = ref<ScrollBySpace>(readScrollInitial())
 
   watch(scrollBySpace, (val) => writeJSON(KEY_SCROLL, val), { deep: true })
+
+  /**
+   * TOC 折叠态 —— 持久化到 localStorage,刷新后保留用户偏好。
+   * 读端兼容旧数据(无 key 视为未折叠);写端只存 boolean,不存其他形态。
+   * 命名跟 sidebar tree 折叠(`expanded`)区分:这个是 ReadView 右侧 TOC,
+   * 不是侧边栏页面树。
+   */
+  function readTocCollapsedInitial(): boolean {
+    return readJSON<unknown>(KEY_TOC_COLLAPSED, false) === true
+  }
+  const tocCollapsed = ref(readTocCollapsedInitial())
+  watch(tocCollapsed, (val) => writeJSON(KEY_TOC_COLLAPSED, val))
+
+  function setTocCollapsed(v: boolean): void {
+    tocCollapsed.value = v
+  }
+  function toggleTocCollapsed(): void {
+    tocCollapsed.value = !tocCollapsed.value
+  }
 
   // 树节点 ⋯ 菜单状态(全树共享,同一时刻只有一个菜单打开)
   const openMenuId = ref<string | null>(null)
@@ -275,6 +295,9 @@ export const useUiStore = defineStore('ui', () => {
     renamingId,
     topSearchOpen,
     cheatSheetOpen,
+    tocCollapsed,
+    setTocCollapsed,
+    toggleTocCollapsed,
     error,
     isExpanded,
     hasRecord,

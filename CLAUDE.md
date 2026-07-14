@@ -24,6 +24,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **Watch toggle 不打 `page_version`,也不写 `page_event`。** `POST /api/pages/:id/watch` / `DELETE` 只写 `user_watched_pages`,**不**写 `page_versions`(metadata,不是 content)。同样地:labels / 任何 metadata 操作都不应触发 version insert 或 page_event(避免 watch 操作刷活动流)。`page_event` 是「页面自身发生变化」的轨迹,不是用户级 metadata 事件的轨迹。
 - **测试脚本及其产物一律放 `scripts/` 子目录,不放项目根。** 验收 / 截图 / 烟测脚本(`verify_*.py` / `snap_*.py` / `smoke-*.cjs` / `verify-phaseN.py` 等)、脚本产物(`screenshots/` / cookies / 中间 HTML / `__pycache__`)都集中在 `scripts/` 子树下,根目录保持干净。**例外**:`printscreen/` 是用户精选配图目录(供 README 引用的产品截图),**不属于测试产物**,不动;`scripts/screenshots/` 是脚本截图的归属位置,根上残留的空 `screenshots/` 历史目录直接删。
 - **不主动 commit / push。** 没有用户明确指示(`提交吧` / `推吧` / `commit 一下` 之类)时,所有 `git commit` / `git push` 一律不做 —— 即使本地 typecheck 已绿、polish 类微调完毕。每个改动做完先汇报,等用户口头授权再动。**计划批准 ≠ 提交授权**:用户批准了若干任务清单(`好的` 接下来做 T1-T10)不等于授权你在执行过程里逐个 commit 上去。
+- **提交信息不携带 `Co-Authored-By` 签名。** `git commit` 不带 `Co-Authored-By: Claude ...` 之类的 trailer,即使改动由 AI 协作完成也保持单人提交语义。仓库历史归属用户个人,不需要 AI 协作者溯源。
 
 ## 关键约定
 

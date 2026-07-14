@@ -198,6 +198,8 @@
     display: grid;
     grid-template-columns: var(--sidebar-w) 1fr var(--toc-w);
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
+    /* 专题 12:TOC 折叠 —— 第三列 240→0 时整 grid 平滑过渡,避免内容列硬切。 */
+    transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .layout.with-subheader {
@@ -208,6 +210,16 @@
     /* 编辑视图没有 TocPanel,但仍占住 var(--toc-w) 列宽,
        保证跟 ReadView 的内容列宽度一致 — 切换视图时内容不跳动 */
     grid-template-columns: var(--sidebar-w) 1fr var(--toc-w);
+}
+
+/* TOC 折叠态 —— ReadView 绑 .toc-collapsed class 后,第三列收为 0,
+   TOC 自身淡出并失去 pointer-events,避免折叠后还挡点击。 */
+.layout.toc-collapsed {
+    grid-template-columns: var(--sidebar-w) 1fr 0;
+}
+.layout.toc-collapsed .toc-panel {
+    opacity: 0;
+    pointer-events: none;
 }
 
 /* =========================
@@ -768,6 +780,39 @@
     top: calc(var(--topbar-h) + var(--sub-h));
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
     overflow-y: auto;
+    /* 折叠时 opacity 0 的过渡(0.2s 比 grid 0.3s 短,先收起再让列宽跟上) */
+    transition: opacity 0.2s;
+}
+
+/* TOC 折叠手柄 —— 折叠状态下出现在右边缘,点击恢复 240px 列宽。
+   跟 design/toc.html 的 .toc-expand-handle 同款视觉(24×48px 细长条)。 */
+.toc-expand-handle {
+    position: fixed;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 48px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-right: none;
+    border-radius: 4px 0 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: var(--z-popover, 1000);
+    color: var(--text-2);
+    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.05);
+    transition: background 0.2s, color 0.2s;
+}
+.toc-expand-handle:hover {
+    background: var(--bg-subtle);
+    color: var(--accent);
+}
+.toc-expand-handle .material-symbols-outlined {
+    font-size: 20px;
+    font-variation-settings: 'wght' 300;
 }
 .toc-title {
     font-size: 11px;

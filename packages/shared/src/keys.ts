@@ -14,6 +14,8 @@ export const PERSIST_KEYS = {
   ACTIVE_SPACE: 'power-wiki:active-space',
   /** 各 space 侧栏滚动位置 — reload 后恢复用户浏览到的位置 */
   TREE_SCROLL: 'power-wiki:tree-scroll',
+  /** TOC 折叠态 — 刷新后保留用户偏好 */
+  TOC_COLLAPSED: 'power-wiki:toc-collapsed',
 } as const
 
 export type PersistKey = (typeof PERSIST_KEYS)[keyof typeof PERSIST_KEYS]

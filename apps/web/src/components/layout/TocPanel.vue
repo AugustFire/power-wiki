@@ -7,6 +7,7 @@ import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import UserPopover from '@/components/ui/UserPopover.vue'
+import { useUiStore } from '@/stores/ui'
 import { ensureHeadingId } from '@/lib/headingAnchors'
 import type { Watcher } from '@power-wiki/shared'
 
@@ -15,6 +16,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
+const uiStore = useUiStore()
 
 const props = defineProps<{
   contentRef: HTMLElement | null
@@ -332,7 +334,18 @@ watch(
 
 <template>
   <aside class="toc-panel">
-    <div class="toc-title">本页目录</div>
+    <div class="toc-title-row">
+      <div class="toc-title">本页目录</div>
+      <button
+        type="button"
+        class="toc-collapse-btn"
+        title="收起目录"
+        aria-label="收起目录"
+        @click="uiStore.setTocCollapsed(true)"
+      >
+        <span class="material-symbols-outlined">keyboard_double_arrow_right</span>
+      </button>
+    </div>
     <div v-if="items.length === 0" class="toc-empty">没有目录</div>
     <div v-else class="toc-list">
       <button
@@ -509,5 +522,34 @@ watch(
   min-width: 20px;
   height: 20px;
   font-variant-numeric: tabular-nums;
+}
+
+/* ─── 折叠按钮 ───
+   专题 12:点击 → uiStore.setTocCollapsed(true) → grid 第三列收为 0,
+   右边缘展开手柄接管(由 ReadView 渲染)。 */
+.toc-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.toc-collapse-btn {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.toc-collapse-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--accent);
+}
+.toc-collapse-btn .material-symbols-outlined {
+  font-size: 18px;
+  font-variation-settings: 'wght' 300;
 }
 </style>
