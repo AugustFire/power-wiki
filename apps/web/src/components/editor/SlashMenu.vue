@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 import { api } from '@/lib/api'
 import type { MentionCandidate, PageNode } from '@power-wiki/shared'
 import DateTimePicker from './DateTimePicker.vue'
@@ -508,7 +511,7 @@ function openAttachmentUpload() {
   openAttachmentPicker((file) => {
     uploadAndInsert(file, e, pageId).catch((err) => {
       console.error('[SlashMenu] attachment upload failed', err)
-      window.alert('附件上传失败,请重试')
+      toast.error('附件上传失败,请重试')
     })
   })
   hideMenu()

@@ -5,6 +5,9 @@ import type { Editor } from '@tiptap/core'
 import extensions from '@/editor/extensions'
 import { uploadAndInsert, isAllowedFile } from '@/editor/uploadAndInsert'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 import SlashMenu from './SlashMenu.vue'
 import EditorBubbleMenu from './EditorBubbleMenu.vue'
 
@@ -70,7 +73,7 @@ async function runUpload(file: File, pos?: number) {
     await uploadAndInsert(file, ed, pageId, pos)
   } catch (err) {
     console.error('[RichEditor] attachment upload failed', err)
-    window.alert('附件上传失败,请重试')
+    toast.error('附件上传失败,请重试')
   }
 }
 

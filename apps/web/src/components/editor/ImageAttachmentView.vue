@@ -24,6 +24,9 @@ import { fileIconFor } from '@/editor/attachmentIcon'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndReplace } from '@/editor/uploadAndInsert'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -161,7 +164,7 @@ function replace() {
   openAttachmentPicker((file) => {
     uploadAndReplace(file, ed, oldId, pageId).catch((err) => {
       console.error('[ImageAttachmentView] replace failed', err)
-      window.alert('附件替换失败,请重试')
+      toast.error('附件替换失败,请重试')
     })
   })
 }

@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import UserPopover from '@/components/ui/UserPopover.vue'
 import { ensureHeadingId } from '@/lib/headingAnchors'
 import type { Watcher } from '@power-wiki/shared'
 
@@ -254,6 +255,13 @@ const watchers = ref<Watcher[]>([])
 const watchersLoading = ref(false)
 const watchersTotal = ref(0)
 const WATCHERS_LIMIT = 5
+/**
+ * 当前 hover 的 watcher id —— 驱动 UserPopover 的 v-if。
+ * avatarRefs 收集每个头像 wrap 的 DOM 节点,UserPopover 据此定位。
+ * 用户快速划过时 hoveredId 反复切换,各 UserPopover 独立 v-if 不会冲突。
+ */
+const hoveredId = ref<string | null>(null)
+const avatarRefs = ref<Record<string, HTMLElement | null>>({})
 
 async function loadWatchers() {
   const pageId = props.pageKey
@@ -371,16 +379,28 @@ watch(
         还没有人关注此页
       </div>
       <div v-else class="toc-followers-stack">
-        <UserAvatar
+        <span
           v-for="w in watchers"
           :key="w.id"
-          :size="20"
-          :color="w.color ?? 'var(--text-3)'"
-          :label="w.name ?? w.id"
-          :title="w.name ?? w.id"
-          class="toc-follower-av"
-          :class="{ 'is-me': w.id === authStore.user?.id }"
-        />
+          :ref="(el) => { avatarRefs[w.id] = el as HTMLElement | null }"
+          class="toc-follower-wrap"
+          @mouseenter="hoveredId = w.id"
+          @mouseleave="hoveredId = null"
+        >
+          <UserAvatar
+            :size="20"
+            :color="w.color ?? 'var(--text-3)'"
+            :label="w.name ?? w.id"
+            class="toc-follower-av"
+            :class="{ 'is-me': w.id === authStore.user?.id }"
+          />
+          <UserPopover
+            v-if="hoveredId === w.id"
+            :name="w.name ?? w.id"
+            :color="w.color ?? 'var(--text-3)'"
+            :anchor="avatarRefs[w.id] ?? null"
+          />
+        </span>
         <span v-if="overflowCount > 0" class="toc-follower-overflow">+{{ overflowCount }}</span>
       </div>
     </div>
@@ -458,14 +478,18 @@ watch(
   align-items: center;
   margin-top: 6px;
 }
-.toc-follower-av {
+/* wrap 包了头像,inline-flex 让水平负 margin 生效 + hover 区命中 */
+.toc-follower-wrap {
+  display: inline-flex;
   margin-left: -4px;
+  position: relative;
+}
+.toc-follower-wrap:first-child {
+  margin-left: 0;
+}
+.toc-follower-av {
   border: 1.5px solid var(--bg);
   border-radius: 50%;
-  /* 自己特殊描边稍微亮一点,更容易识别「我也关注了」 */
-}
-.toc-follower-av:first-child {
-  margin-left: 0;
 }
 .toc-follower-av.is-me {
   border-color: var(--accent);

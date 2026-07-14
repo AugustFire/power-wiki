@@ -9,6 +9,9 @@ import { BG_COLOR_PALETTE } from '@/lib/colorPalettes'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
 import { useActivePageId } from '@/composables/useActivePageId'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -107,7 +110,7 @@ const insertBtns = computed<Btn[]>(() => {
 
 // ─── 图片 / 附件上传 ───────────────────────────────────────────
 // 点工具栏按钮 → 系统文件选择器 → uploadAndInsert(request → PUT → finalize)。
-// 失败仅 alert + console(项目暂无 toast 系统)。
+// 失败 toast + console —— 统一走 uiStore.notify 的红色 toast。
 const { activePageId } = useActivePageId()
 function openAttachmentUpload() {
   const e = props.editor
@@ -116,7 +119,7 @@ function openAttachmentUpload() {
   openAttachmentPicker((file) => {
     uploadAndInsert(file, e, pageId).catch((err) => {
       console.error('[EditorToolbar] attachment upload failed', err)
-      window.alert('附件上传失败,请重试')
+      toast.error('附件上传失败,请重试')
     })
   })
 }

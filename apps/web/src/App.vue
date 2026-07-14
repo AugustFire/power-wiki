@@ -15,6 +15,7 @@ import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
 import { useNotifications } from '@/composables/useNotifications'
+import { useNetworkStatus } from '@/composables/useNetworkStatus'
 
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
@@ -25,6 +26,9 @@ const route = useRoute()
 // `watch(auth.isAuthed)` once — login → startPolling, logout → invalidate.
 // The composable is idempotent; multiple call sites can invoke it.
 useNotifications()
+
+// 监听 navigator.onLine 翻转 —— 离线时顶部显示细 banner,提示用户。
+const { isOnline } = useNetworkStatus()
 
 const { topSearchOpen, error } = storeToRefs(uiStore)
 const { loading, loaded, loadError } = storeToRefs(pagesStore)
@@ -130,6 +134,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   <div v-else class="app-shell">
     <TopBar />
 
+    <!-- 离线 banner —— 物理网络断开时顶部细提示,与 uiStore.error 区分:
+         error-banner 是后端报错(红色,持续到清除);
+         offline-banner 是 OS 层网络状态(黄色,自动随 online/offline 翻转)。
+         优先级:offline > error,都显示时 offline 在上。 -->
+    <div v-if="!isOnline" class="offline-banner" role="status">
+      <span class="material-symbols-outlined ob-icon">wifi_off</span>
+      <span class="ob-text">网络连接已断开,正在等待恢复…</span>
+    </div>
+
     <div v-if="error" class="error-banner" role="alert">
       <span class="material-symbols-outlined eb-icon">error</span>
       <span class="eb-text">{{ error }}</span>
@@ -191,6 +204,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
   animation: ab-spin 0.8s linear infinite;
 }
 @keyframes ab-spin { to { transform: rotate(360deg); } }
+
+/* ─── 顶部离线 banner ───
+   物理网络断开时显示,黄色调 + wifi_off 图标,
+   自动随 navigator.onLine 翻转,无需手动关闭。 */
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  font-size: var(--text-sm, 13px);
+  border-bottom: 1px solid var(--warning);
+}
+.offline-banner .ob-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
 
 /* ─── 顶部错误 banner ─── */
 .error-banner {

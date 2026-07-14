@@ -15,6 +15,7 @@ import PageWatchButton from '@/components/page/PageWatchButton.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
+import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
@@ -32,6 +33,52 @@ const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const router = useRouter()
 const { recordVisit } = useRecentPages()
+
+/* ─── P3 内部链接 hover 卡片预览 ─────────────────────────────
+ *
+ * sanitize.ts 在内部 /p/:id 链接上加 .internal-page-link + data-page-id。
+ * 这里在 content 渲染完后绑 mouseenter / mouseleave:
+ *   - enter 500ms 后挂载 PageLinkPreview(避免快速划过误触发)
+ *   - leave 立即取消 timer + 清掉 hoveredLink
+ *
+ * WeakSet 跟踪已绑节点,页面切换同 root 复用时不重复绑。
+ */
+interface HoveredLink {
+  pageId: string
+  anchor: HTMLElement
+}
+const hoveredLink = ref<HoveredLink | null>(null)
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+const boundHoverRoots = new WeakSet<HTMLElement>()
+const HOVER_DELAY_MS = 500
+
+function clearHoverTimer() {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+}
+
+function bindInternalLinkHover(root: HTMLElement) {
+  if (boundHoverRoots.has(root)) return
+  root.querySelectorAll('a.internal-page-link').forEach((a) => {
+    const anchor = a as HTMLElement
+    const pageId = anchor.dataset['pageId']
+    if (!pageId) return
+    anchor.addEventListener('mouseenter', () => {
+      clearHoverTimer()
+      hoverTimer = setTimeout(() => {
+        hoveredLink.value = { pageId, anchor }
+        hoverTimer = null
+      }, HOVER_DELAY_MS)
+    })
+    anchor.addEventListener('mouseleave', () => {
+      clearHoverTimer()
+      hoveredLink.value = null
+    })
+  })
+  boundHoverRoots.add(root)
+}
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
@@ -208,6 +255,7 @@ watch(
       highlightCodeBlocks(root)
       addHeadingAnchors(root)
       recomputeLiveDates(root)
+      bindInternalLinkHover(root)
     }
   },
   { flush: 'post', immediate: true },
@@ -224,7 +272,11 @@ watch(
   },
   { flush: 'post' },
 )
-onBeforeUnmount(() => liveDateStop?.())
+onBeforeUnmount(() => {
+  liveDateStop?.()
+  clearHoverTimer()
+  hoveredLink.value = null
+})
 
 // read 视图下点击 task checkbox → 立即 toggle DOM + 写回 store,
 // 刷新或下次进入该页仍保留状态。
@@ -516,6 +568,13 @@ watch(
         :alt="lightbox.alt"
         :filename="lightbox.filename"
         @close="closeLightbox"
+      />
+
+      <!-- 内部链接 hover 预览卡片。Teleport 到 body,500ms 延迟挂载。 -->
+      <PageLinkPreview
+        v-if="hoveredLink"
+        :page-id="hoveredLink.pageId"
+        :anchor="hoveredLink.anchor"
       />
 
       <TocPanel

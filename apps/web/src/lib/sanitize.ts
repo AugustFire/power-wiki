@@ -156,6 +156,16 @@ export function sanitizeAndHardenLinks(html: string): string {
       a.removeAttribute('href')
       return
     }
+    // 内部页面链接:/p/{nanoid} 形式 —— 不强制 target=_blank(SPA router
+    // 内跳转),打 class + data-page-id 给 PageLinkPreview 做 hover 卡片。
+    // 长度范围 {6,32} 兼容 nanoid(10) + 未来可能的 id 长度调整。
+    const internalMatch = href.match(/^\/p\/([A-Za-z0-9_-]{6,32})$/)
+    if (internalMatch) {
+      const link = a as HTMLAnchorElement
+      link.classList.add('internal-page-link')
+      link.dataset['pageId'] = internalMatch[1]!
+      return
+    }
     // 附件下载链接:同源 /api/attachments/{id}/raw,保留 download 触发下载,
     // 不强制 target=_blank(否则会开新标签而非直接下载)。
     if (/^\/api\/attachments\/[A-Za-z0-9_-]+\/raw$/.test(href)) {
