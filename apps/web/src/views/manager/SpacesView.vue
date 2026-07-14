@@ -26,6 +26,7 @@ import { useManagerStats } from '@/composables/useManagerStats'
 import { usePaginatedList } from '@/composables/usePaginatedList'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import type { Space, UserGroup } from '@power-wiki/shared'
 import type { User } from '@power-wiki/shared'
 
@@ -327,23 +328,33 @@ const ownerNameById = computed<Record<string, string>>(() =>
     </div>
 
     <div v-if="loading && spaces.length === 0" class="sv-loading">加载中…</div>
-    <div v-else-if="spaces.length === 0" class="sv-empty">
-      <span class="material-symbols-outlined se-icon">folder_open</span>
-      <h3>还没有空间</h3>
-      <p>创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。</p>
-    </div>
-    <div v-else-if="visibleSpaces.length === 0" class="sv-empty sv-empty-soft">
-      <span class="material-symbols-outlined se-icon">
-        {{ kindTab === 'shared' ? 'workspaces' : 'cottage' }}
-      </span>
-      <h3>{{ kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间' }}</h3>
-      <p v-if="kindTab === 'shared'">
-        创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。
-      </p>
-      <p v-else>
-        每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。
-      </p>
-    </div>
+    <EmptyState
+      v-else-if="spaces.length === 0"
+      icon="folder_open"
+      title="还没有空间"
+      hint="创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。"
+      size="sm"
+    >
+      <button
+        v-if="kindTab === 'shared'"
+        type="button"
+        class="btn primary"
+        @click="showCreate = true"
+      >
+        <span class="material-symbols-outlined">create_new_folder</span>
+        <span>创建新空间</span>
+      </button>
+    </EmptyState>
+    <EmptyState
+      v-else-if="visibleSpaces.length === 0"
+      :icon="kindTab === 'shared' ? 'workspaces' : 'cottage'"
+      :title="kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间'"
+      :hint="kindTab === 'shared'
+        ? '创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。'
+        : '每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。'"
+      variant="no-results"
+      size="sm"
+    />
     <div v-else class="sv-grid">
       <div
         v-for="s in visibleSpaces"
@@ -533,8 +544,7 @@ const ownerNameById = computed<Record<string, string>>(() =>
   margin-bottom: 16px;
 }
 
-.sv-loading,
-.sv-empty {
+.sv-loading {
   padding: 60px 24px;
   text-align: center;
   color: var(--text-3);
@@ -542,15 +552,6 @@ const ownerNameById = computed<Record<string, string>>(() =>
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-}
-.sv-empty .se-icon { font-size: 48px; color: var(--text-3); display: block; margin-bottom: 12px; }
-.sv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
-.sv-empty p { margin: 0; }
-/* Soft variant for "no items on this tab" — lighter background so it
-   doesn't compete with the first-time setup empty state. */
-.sv-empty-soft {
-  background: transparent;
-  border: 1px dashed var(--border);
 }
 
 /* ─── Create panel ─── */

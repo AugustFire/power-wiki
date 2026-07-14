@@ -22,7 +22,8 @@
  *   title:  简单标题
  *   width:  抽屉宽度 px(默认 440)
  */
-import { computed, onBeforeUnmount, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 const props = withDefaults(
   defineProps<{
@@ -71,6 +72,9 @@ onBeforeUnmount(() => {
 
 const panelStyle = computed(() => ({ width: `${props.width}px` }))
 const labelId = useId()
+
+const panelRef = ref<HTMLElement | null>(null)
+useFocusTrap(panelRef, () => props.open)
 </script>
 
 <template>
@@ -81,12 +85,14 @@ const labelId = useId()
     <Transition name="drw-panel">
       <aside
         v-if="open"
+        ref="panelRef"
         class="drw-panel"
         :style="panelStyle"
         role="dialog"
         :aria-label="title ?? label ?? labelId"
         :aria-labelledby="title || $slots.header ? labelId : undefined"
         aria-modal="true"
+        tabindex="-1"
       >
         <header v-if="title || $slots.header" class="drw-head">
           <slot name="header">

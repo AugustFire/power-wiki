@@ -17,6 +17,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useManagerActions } from '@/composables/useManagerActions'
 import { useManagerStats } from '@/composables/useManagerStats'
@@ -492,7 +493,7 @@ watch(activeTab, (t) => {
           </tr>
         </tbody>
       </table>
-      <div v-else class="uv-empty">还没有用户。</div>
+      <EmptyState v-else icon="group" title="还没有用户" hint="用户首次登录后会出现在这里。" size="sm" />
 
       <div v-if="users.length > 0" class="load-more-row">
         <button
@@ -534,11 +535,7 @@ watch(activeTab, (t) => {
       </div>
 
       <div v-if="groupsLoading && groups.length === 0" class="uv-loading">加载中…</div>
-      <div v-else-if="groups.length === 0" class="gv-empty">
-        <span class="material-symbols-outlined ge-icon">workspaces</span>
-        <h3>还没有用户组</h3>
-        <p>创建用户组以批量管理用户的空间访问权限。</p>
-      </div>
+      <EmptyState v-else-if="groups.length === 0" icon="workspaces" title="还没有用户组" hint="创建用户组以批量管理用户的空间访问权限。" size="sm" />
       <div v-else class="gv-grid">
         <div
           v-for="g in groups"
@@ -705,7 +702,7 @@ watch(activeTab, (t) => {
   margin-bottom: 16px;
 }
 
-.uv-loading, .uv-empty {
+.uv-loading {
   padding: 48px;
   text-align: center;
   color: var(--text-3);
@@ -871,18 +868,6 @@ watch(activeTab, (t) => {
 .ra-btn .material-symbols-outlined { font-size: 18px; }
 
 /* Group cards */
-.gv-empty {
-  padding: 60px 24px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 4px);
-}
-.gv-empty .ge-icon { font-size: 48px; color: var(--text-3); display: block; margin-bottom: 12px; }
-.gv-empty h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
-.gv-empty p { margin: 0; }
 
 .gv-grid {
   display: grid;

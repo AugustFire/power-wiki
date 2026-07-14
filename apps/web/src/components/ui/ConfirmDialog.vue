@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 const { state, close } = useConfirm()
 
@@ -50,6 +51,11 @@ onBeforeUnmount(() => {
   document.body.style.overflow = ''
   document.removeEventListener('keydown', onKey)
 })
+
+const dialogRef = ref<HTMLElement | null>(null)
+useFocusTrap(dialogRef, () => state.value.open, {
+  initialFocus: '[autofocus]',
+})
 </script>
 
 <template>
@@ -57,11 +63,13 @@ onBeforeUnmount(() => {
     <transition name="confirm-fade">
       <div v-if="state.open" class="confirm-backdrop" @mousedown.self="onCancel">
         <div
+          ref="dialogRef"
           class="confirm-dialog"
           :class="{ danger: isDanger }"
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-title"
+          tabindex="-1"
           @mousedown.stop
         >
           <div class="confirm-icon">

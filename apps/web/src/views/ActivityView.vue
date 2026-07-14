@@ -407,14 +407,14 @@ function chipColor(kind: ActivityEvent['kind']): string {
   flex-shrink: 0;
   white-space: nowrap;
 }
-.kind-chip.kind-created    { background: #36B37E; }
-.kind-chip.kind-edited     { background: #6B778C; }
-.kind-chip.kind-moved      { background: #4C9AFF; }
-.kind-chip.kind-restored   { background: #FFAB00; }
-.kind-chip.kind-duplicated { background: #6554C0; }
-.kind-chip.kind-published  { background: #00B8D9; }
-.kind-chip.kind-trashed    { background: #FF5630; }
-.kind-chip.kind-purged     { background: #DE350B; }
+.kind-chip.kind-created    { background: var(--success); }
+.kind-chip.kind-edited     { background: var(--text-3); }
+.kind-chip.kind-moved      { background: var(--activity-moved); }
+.kind-chip.kind-restored   { background: var(--warning); }
+.kind-chip.kind-duplicated { background: var(--activity-duplicated); }
+.kind-chip.kind-published  { background: var(--activity-published); }
+.kind-chip.kind-trashed    { background: var(--danger); }
+.kind-chip.kind-purged     { background: var(--activity-purged); }
 .ev-page-title {
   font-size: 14px;
   font-weight: 500;

@@ -24,7 +24,8 @@
  *   size:          'sm' 420 / 'md' 560 / 'lg' 760 / 'auto'(默认,自适应内容)
  *   closeOnBackdrop: 点 backdrop 关闭(默认 true);false 则只能 esc / 显式按钮
  */
-import { computed, onBeforeUnmount, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 const props = withDefaults(
   defineProps<{
@@ -87,6 +88,9 @@ const dialogClass = computed(() => {
 })
 
 const titleId = useId()
+
+const dialogRef = ref<HTMLElement | null>(null)
+useFocusTrap(dialogRef, () => props.open)
 </script>
 
 <template>
@@ -94,10 +98,12 @@ const titleId = useId()
     <Transition name="modal-fade">
       <div v-if="open" class="modal-backdrop" @mousedown.self="onBackdrop">
         <div
+          ref="dialogRef"
           :class="dialogClass"
           role="dialog"
           aria-modal="true"
           :aria-labelledby="title || $slots.header ? titleId : undefined"
+          tabindex="-1"
           @mousedown.stop
         >
           <header v-if="title || $slots.header" class="modal-head">

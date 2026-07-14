@@ -39,6 +39,12 @@
     --purple:        #403294;
     --purple-soft:   #EAE6FF;
 
+    /* Activity feed chips — kinds without an existing semantic token */
+    --activity-moved:      #4C9AFF;
+    --activity-duplicated: #6554C0;
+    --activity-published:  #00B8D9;
+    --activity-purged:     #DE350B;
+
     /* Code surface — 深色代码块上的文字色 */
     --code-fg:           #B3BAC5;
     --code-chrome-fg:    #9CA3AF;

@@ -21,6 +21,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import type { PageNode, User } from '@power-wiki/shared'
 
 const pagesStore = usePagesStore()
@@ -445,19 +446,24 @@ async function onPurge(id: string, title: string) {
       </div>
     </section>
 
-    <div v-if="rows.length === 0" class="empty">
-      <span class="material-symbols-outlined empty-icon">delete_sweep</span>
-      <h2>{{ searchText || deletedByFilter !== 'all' ? '没有匹配的页面' : '该空间没有已删除的页面' }}</h2>
-      <p>{{ searchText || deletedByFilter !== 'all' ? '试试清除筛选条件。' : '用户删除的页面会出现在这里。' }}</p>
-    </div>
-    <div v-else-if="tabSpaces.length === 0" class="empty">
-      <span class="material-symbols-outlined empty-icon">
-        {{ kindTab === 'shared' ? 'workspaces' : 'cottage' }}
-      </span>
-      <h2>{{ kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间' }}</h2>
-      <p v-if="kindTab === 'shared'">创建空间以按团队 / 项目组织页面。</p>
-      <p v-else>每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。</p>
-    </div>
+    <EmptyState
+      v-if="rows.length === 0"
+      icon="delete_sweep"
+      :title="searchText || deletedByFilter !== 'all' ? '没有匹配的页面' : '该空间没有已删除的页面'"
+      :hint="searchText || deletedByFilter !== 'all' ? '试试清除筛选条件。' : '用户删除的页面会出现在这里。'"
+      :variant="searchText || deletedByFilter !== 'all' ? 'no-results' : 'no-data'"
+      size="sm"
+    />
+    <EmptyState
+      v-else-if="tabSpaces.length === 0"
+      :icon="kindTab === 'shared' ? 'workspaces' : 'cottage'"
+      :title="kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间'"
+      :hint="kindTab === 'shared'
+        ? '创建空间以按团队 / 项目组织页面。'
+        : '每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。'"
+      variant="no-data"
+      size="sm"
+    />
 
     <table v-else class="trash-table">
       <thead>
@@ -664,16 +670,6 @@ async function onPurge(id: string, title: string) {
   white-space: nowrap;
   justify-self: end;
 }
-
-/* ─── Empty state ─── */
-.empty {
-  padding: 80px 0;
-  text-align: center;
-  color: var(--text-3);
-}
-.empty-icon { font-size: 56px; display: block; margin-bottom: 12px; color: var(--text-3); }
-.empty h2 { font-size: 16px; font-weight: 500; color: var(--text-2); margin: 0 0 6px; }
-.empty p { font-size: 13px; margin: 0; }
 
 /* ─── Table ─── */
 .trash-table {

@@ -1702,10 +1702,6 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(userRecentPages)
         .where(inArray(userRecentPages.pageId, subtreeIds))
-      // (软删保留,recent 历史在 restore 后仍可见;详见 0021 migration 注释)
-      await tx
-        .delete(userRecentPages)
-        .where(inArray(userRecentPages.pageId, subtreeIds))
       await tx
         .delete(attachments)
         .where(inArray(attachments.pageId, subtreeIds))

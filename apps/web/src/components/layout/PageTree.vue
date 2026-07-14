@@ -241,11 +241,6 @@ async function onDrop(e: DragEvent) {
   const sourcePage = pagesStore.getPage(draggedId)
   if (!sourcePage) return
   const spaceId = sourcePage.spaceId
-  if (targetPage.spaceId !== spaceId) {
-    // 跨 space 拖拽:UI 没禁用,但语义上是另一个流程(发布到),这里静默拒绝
-    // 避免发出一个会被 server 拒掉的请求 + 一次无意义的乐观更新。
-    return
-  }
   const siblings = pagesStore.pages
     .filter((p) => p.spaceId === spaceId && p.parentId === newParentId && p.id !== draggedId)
     .sort((a, b) => a.order - b.order)
