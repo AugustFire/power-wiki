@@ -9,7 +9,7 @@
  * Behaviour mirrors the inline version 1:1 — keep these in sync with
  * the route handler's expectations.
  */
-import { and, eq, getTableColumns, isNull, sql, type SQL } from 'drizzle-orm'
+import { aliasedTable, and, eq, getTableColumns, isNull, sql, type SQL } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   pages,
@@ -95,11 +95,14 @@ export function selectPagesWithAuthor(
      FROM user_watched_pages wp
      WHERE wp.page_id = ${pages.id})
   `.as('watchers_count')
+  const editorUsers = aliasedTable(users, 'editor_users')
   const q = db
     .select({
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      updatedByName: editorUsers.name,
+      updatedByColor: editorUsers.color,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
       likesCount: likesCountExpr,
@@ -110,8 +113,9 @@ export function selectPagesWithAuthor(
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))
+    .leftJoin(editorUsers, eq(pages.updatedBy, editorUsers.id))
     .leftJoin(pageLabels, eq(pageLabels.pageId, pages.id))
-    .groupBy(pages.id, users.name, users.color)
+    .groupBy(pages.id, users.name, users.color, editorUsers.name, editorUsers.color)
   const filters: SQL[] = []
   if (!opts.includeDeleted) filters.push(isNull(pages.deletedAt))
   if (where) filters.push(where)

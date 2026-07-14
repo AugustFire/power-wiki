@@ -31,6 +31,10 @@ import type { PageRow } from '../db/schema'
 export type PageRowWithAuthor = PageRow & {
   authorName: string | null
   authorColor: string | null
+  /** 最后编辑者姓名,LEFT JOIN users 填充;updated_by 为空或用户已删时为 null */
+  updatedByName: string | null
+  /** 最后编辑者头像色,同上 */
+  updatedByColor: string | null
   /** Stage 8: labels aggregator from pages.ts LEFT JOIN.
    *  Always present on the row after the join; default [] otherwise. */
   labels: string[]
@@ -75,6 +79,9 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     authorId: row.authorId,
     authorName: row.authorName,
     authorColor: row.authorColor,
+    updatedBy: row.updatedBy,
+    updatedByName: row.updatedByName,
+    updatedByColor: row.updatedByColor,
     labels: row.labels ?? [],
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,

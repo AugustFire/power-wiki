@@ -43,6 +43,17 @@ export interface PageNode {
   /** 创建者头像色,同上 */
   authorColor: string | null
   /**
+   * 最后编辑者 user id(每次 PATCH / move / restore 同步更新)。
+   * `0012 migration` 已 backfill 成 author_id,所以存量行不会为 null;
+   * 新页可能在第一次 PATCH 之前为 null —— UI 路径 fallback 到 authorId。
+   * 无 FK,disabled / deleted users 的行保留原值。
+   */
+  updatedBy: string | null
+  /** 最后编辑者姓名,LEFT JOIN users 表填充;updated_by 为空或用户已删时为 null */
+  updatedByName: string | null
+  /** 最后编辑者头像色,同上 */
+  updatedByColor: string | null
+  /**
    * Stage 8: page labels (Notion-style, global lowercase). Always present
    *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
    *  Default [] when the page has no labels.

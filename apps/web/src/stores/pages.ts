@@ -408,6 +408,12 @@ export const usePagesStore = defineStore('pages', () => {
       // carries the real LEFT-JOIN'd authorName / authorColor.
       authorName: null,
       authorColor: null,
+      // 新建页 updated_by 还没写入(null),UI 派生链(updatedByName → authorName)
+      // 自然落到 authorName('我' via me sentinel);服务端 POST 响应回来后会被
+      // 真实值覆盖。
+      updatedBy: null,
+      updatedByName: null,
+      updatedByColor: null,
       spaceId,
       // 新建的页肯定没子。undefined 让 PageTree 走 leaf fallback,后续
       // ensureChildrenLoaded 拿到真实结果会纠正 (实际新建的页也确实没子,
@@ -896,6 +902,11 @@ export const usePagesStore = defineStore('pages', () => {
       authorId: '',
       authorName: null,
       authorColor: null,
+      // Optimistic placeholder;publish 成功后由真实响应覆盖,
+      // updatedBy 系列都先填 null(本新建页尚未被 PATCH)。
+      updatedBy: null,
+      updatedByName: null,
+      updatedByColor: null,
     }
     pages.value = [...pages.value, optimistic]
 
@@ -967,6 +978,12 @@ export const usePagesStore = defineStore('pages', () => {
       authorId: '',
       authorName: null,
       authorColor: null,
+      // Optimistic duplicate placeholder —— duplicate 响应会带真实的
+      // updatedBy;此处先填 null 让编辑器能挂载,UI 派生链回退到
+      // '未知作者'(authorId 也空串)。
+      updatedBy: null,
+      updatedByName: null,
+      updatedByColor: null,
     }
     pages.value = [...pages.value, optimistic]
 

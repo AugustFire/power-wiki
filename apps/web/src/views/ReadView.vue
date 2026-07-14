@@ -137,10 +137,34 @@ const isEmptyContent = computed(() => {
 })
 
 /**
- * 作者展示名。
- *   - 真实 JOIN 命中 → authorName
- *   - authorId='me'(旧 seed) → '我'
- *   - authorId 还在但用户已删(LEFT JOIN 拿不到) → '未知作者'
+ * 署名行展示名:优先用最后编辑者(`updatedByName`);编辑者用户已删
+ * (LEFT JOIN 拿不到)时回退到作者(`authorName`),最终兜底 '未知作者'。
+ *   - 新建页没改过 → updatedByName 可能为 null(没回退还在 ing,但 0012
+ *     migration 已把存量行 updated_by 回填 author_id,所以生产环境实际
+ *     几乎遇不到)
+ *   - 跨用户编辑后 → 显示的是真正最近改的人,跟"最后编辑于"语义闭环
+ *   - authorId='me'(旧 seed,且 updatedByName 拿不到)→ '我'
+ */
+const editorDisplay = computed(() => {
+  const p = page.value
+  if (!p) return ''
+  if (p.updatedByName) return p.updatedByName
+  if (p.authorName) return p.authorName
+  if (p.authorId === 'me') return '我'
+  return '未知作者'
+})
+
+/** 头像色:优先编辑者色,其次作者色,最后中性灰 */
+const editorAvatarColor = computed(
+  () =>
+    page.value?.updatedByColor ??
+    page.value?.authorColor ??
+    'var(--text-3)',
+)
+
+/**
+ * 作者(创建者)展示名 —— 与 editorDisplay 解耦,for "由 X 创建" 后缀。
+ * authorId='me' 旧 seed → '我';作者用户已删 → '未知作者'(读起来比空串稳)。
  */
 const authorDisplay = computed(() => {
   const p = page.value
@@ -150,8 +174,22 @@ const authorDisplay = computed(() => {
   return '未知作者'
 })
 
-/** 头像色:JOIN 拿到的 color;拿不到时退化到中性灰 */
-const authorAvatarColor = computed(() => page.value?.authorColor ?? 'var(--text-3)')
+/**
+ * 是否在署名行末尾追加 "由 X 创建" 后缀。
+ *   - updatedBy == null  → 视为老存量(未 backfill),仍展示作者
+ *   - updatedBy !== authorId  → 跨用户编辑过,展示作者
+ *   - 同一人 / 同 'me' → 不展示,避免 "happy 最后编辑 · 由 happy 创建" 这种冗余
+ *
+ * 按 user.id 比较(而不是 name),规避重名 / 改名带来的误判;authorId='me' 跟
+ * 任意真实 user.id 都不会相等,所以老 seed 页(updatedBy 被 0012 回填成 'me'
+ * 后又被人改 → updatedBy 变成真实 id)也是追加的,符合预期。
+ */
+const showAuthorSuffix = computed(() => {
+  const p = page.value
+  if (!p) return false
+  if (p.updatedBy == null) return true
+  return p.updatedBy !== p.authorId
+})
 
 // 面包屑链路(根 → 当前页)
 const breadcrumb = computed(() => {
@@ -478,27 +516,27 @@ watch(
             </div>
           </div>
           <div v-else-if="page">
-            <!-- 标签条(紧凑版) — 只显示有真实数据支撑的状态 -->
+            <!-- 标签条(紧凑版) — 已发布是页面状态,作者 pill 是贡献者元数据,
+                 都归 .page-tags。每条 pill 角色清晰:已发布 = 状态,创建者 = 角色。
+                 作者 pill 仅在「最后编辑者 ≠ 创建者」时出现(同人场景由 byline
+                 的头像 + 名字呈现,不重复堆 pill),避免 "happy 创建 · HA happy"
+                 这种同一人两份表达的冗余。 -->
             <div class="page-tags">
               <span class="status-pill success">
                 <span class="material-symbols-outlined icon-sm">check_circle</span>
                 已发布
               </span>
-              <span class="status-pill purple">
+              <span v-if="showAuthorSuffix" class="status-pill purple">
                 <span class="material-symbols-outlined icon-sm">account_circle</span>
-                {{ authorDisplay }}
-              </span>
-              <span class="status-pill">
-                <span class="material-symbols-outlined icon-sm">update</span>
-                {{ relativeTime(page.updatedAt) }} 编辑
+                {{ authorDisplay }} 创建
               </span>
             </div>
 
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
               <span class="author">
-                <UserAvatar :size="20" :color="authorAvatarColor" :label="authorDisplay" />
-                {{ authorDisplay }}
+                <UserAvatar :size="20" :color="editorAvatarColor" :label="editorDisplay" />
+                {{ editorDisplay }}
               </span>
               <span class="dot">·</span>
               <span>最后编辑于 {{ relativeTime(page.updatedAt) }}</span>

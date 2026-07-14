@@ -63,6 +63,12 @@ export function seedPages(defaultSpaceId: string): PageNode[] {
     // wire and ReadView falls back to "我".
     authorName: null,
     authorColor: null,
+    // Seed 页没有真正编辑者(updated_by 在创建时通常为 NULL,0012 migration
+    // 才会 backfill)。UI 派生(updatedByName → authorName 兜底)在这里
+    // 自然取 authorName,AuthorDisplay 最终落到 '我'。
+    updatedBy: null,
+    updatedByName: null,
+    updatedByColor: null,
   })
 
   // 一些可复用的 HTML 片段 ─────────────────────────────────────

@@ -18,7 +18,7 @@
  * 响应:`Paginated<PageNode>`,沿用 `pages.list` 的 schema 边界校验模式。
  */
 import { Hono } from 'hono'
-import { and, eq, getTableColumns, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import { aliasedTable, and, eq, getTableColumns, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import { PageNodeSchema, PaginatedListSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { pageLabels, pages, users } from '../db/schema'
@@ -102,16 +102,23 @@ searchRouter.get('/', async (c) => {
     )
   `.as('has_children')
 
+  // 与 selectPagesWithAuthor 一致的别 users:最后编辑者(PATCH / move / restore
+  // 写 updated_by),前台 ReadView 派生 editorDisplay 用。
+  const editorUsers = aliasedTable(users, 'editor_users')
+
   const rows = await db
     .select({
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      updatedByName: editorUsers.name,
+      updatedByColor: editorUsers.color,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))
+    .leftJoin(editorUsers, eq(pages.updatedBy, editorUsers.id))
     .leftJoin(pageLabels, eq(pageLabels.pageId, pages.id))
     .where(
       and(
@@ -122,7 +129,7 @@ searchRouter.get('/', async (c) => {
         accessibleScope,
       ),
     )
-    .groupBy(pages.id, users.name, users.color)
+    .groupBy(pages.id, users.name, users.color, editorUsers.name, editorUsers.color)
     // updatedAt DESC: freshest first. v0 doesn't need a relevance score —
     // title substring + recency covers the "what changed recently" use case
     // well enough. Sort by relevance only if a user reports that the most

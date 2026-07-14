@@ -48,6 +48,12 @@ export const PageNodeSchema = z.object({
    *  authorId='me' (legacy seed) or refers to a now-deleted user. */
   authorName: z.string().nullable(),
   authorColor: z.string().nullable(),
+  /** 最后编辑者(PATCH / move / restore 同步写入);存量行 0012 已 backfill。
+   *  UI 派生逻辑(updatedByName 优先 → authorName 兜底)在 ReadView 端,
+   *  详见 pages.ts:`selectPagesWithAuthor` 的 editor_users 左连。 */
+  updatedBy: z.string().min(1).nullable(),
+  updatedByName: z.string().nullable(),
+  updatedByColor: z.string().nullable(),
   /** Material Symbols ligature name (e.g. `menu_book`, `edit_note`,
    *  `arrow_back_ios_new`). Capped at 40 to match `SpaceSchema.icon` —
    *  the previous `max(8)` silently broke Material Symbols names like
