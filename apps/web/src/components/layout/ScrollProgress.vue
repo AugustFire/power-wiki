@@ -1,26 +1,21 @@
 <script setup lang="ts">
 /**
- * ScrollProgress — sticky top scroll indicator, 2px, var(--accent), full width.
+ * ScrollProgress — 阅读进度条,2px, var(--accent), 横跨内容列宽度。
+ * 只在 ReadView 挂载(page 阅读时才有意义;activity 流 / dashboard
+ * 不显示)。
  *
  * 视觉:
- *   - position: fixed; top: 0; 横跨整个 viewport,与 TopBar 同列首屏
+ *   - position: fixed;贴在 subheader 的下边框上(top = topbar-h + sub-h
+ *     - 2px),不再横在 viewport 最顶。
  *   - 2px 高,色彩 = --accent 蓝(Atlassian 主色,跟其它顶栏控件一致)
  *   - transform-origin: left + scaleX — 0% 时宽度 0(滚到底 = 看不到),
  *     100% 时宽度 100% — 用 transform 而非 width 动画,GPU 合成,
  *     不触发 reflow。
  *
  * 滚动模型(关键 — 早期版本只读 window scrollTop,在 internal-scroll
- * 视图上 bar 永远是 0,出现"只对 ActivityView 有效"的反馈):
- *
- *   app 里有两类滚动:
- *     A. Document scroll — ActivityView 用 .activity-layout
- *        min-height: 100vh,内容自然撑高,body / html 是真正滚动的元素。
- *     B. Internal scroll — ReadView / EditView / HistoryView / HomeView /
- *        NotFoundView / ManagerLayout 都用 `.layout height: calc(100vh - ...)`
- *        + `.content` (or `.manager-main`) `overflow-y: auto`,内部那个
- *        `.content` 才是真正的滚动容器,window.scrollY 永远 = 0。
- *        同时 — Sidebar 内部也是 overflow: auto(PageTree 长),也是
- *        一个 scroll 容器。
+ * 视图上 bar 永远是 0):ReadView 的 `.content` `overflow-y: auto` 才是
+ * 真正的滚动容器,window.scrollY 永远 = 0。同时 Sidebar 内部也是
+ * overflow: auto(PageTree 长),也是一个 scroll 容器。
  *
  *   不能用 e.target:浏览器 scroll 恢复在 onMount 时会触发 Sidebar 的
  *   scroll 事件,e.target=Sidebar → bar 锁在 Sidebar 上 → 用户后续滚
@@ -141,8 +136,8 @@ onMounted(() => {
   // 我们的 cache 也不会被劫持,所有 scroll 事件都从 cache 读
   document.addEventListener('scroll', onScroll, { capture: true, passive: true })
   window.addEventListener('resize', onResize, { passive: true })
-  // 初始 rebind:bar 挂载时 .content 还没存在(bar 在 App.vue shell,RouterView
-  // 异步 commit),所以紧接着再排两次 rAF 重试 — 等 .content 出现。
+  // 初始 rebind:bar 挂载时 .content 可能还没 layout 完(ReadView 首帧),
+  // 所以紧接着再排两次 rAF 重试 — 等 .content 出现。
   rebind()
   requestAnimationFrame(() => {
     requestAnimationFrame(rebind)
@@ -188,7 +183,11 @@ watch(
 <style scoped>
 .scroll-progress {
   position: fixed;
-  top: 0;
+  /* 贴在 subheader 的下边框上(不再横在 viewport 最顶)。ReadView 里
+   * subheader sticky 在 top:var(--topbar-h)、高 var(--sub-h),其下边缘在
+   * topbar-h + sub-h 处。bar 2px 高,top 减 2px 让 bar 底边与 subheader
+   * 底边对齐 —— 阅读进度像是 subheader 的下边框在变色。 */
+  top: calc(var(--topbar-h) + var(--sub-h) - 2px);
   left: 0;
   right: 0;
   height: 2px;

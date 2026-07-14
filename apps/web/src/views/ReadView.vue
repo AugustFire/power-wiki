@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
+import ScrollProgress from '@/components/layout/ScrollProgress.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import WhoLikedList from '@/components/page/WhoLikedList.vue'
@@ -329,6 +330,7 @@ watch(
 
 <template>
   <div class="read-shell">
+    <ScrollProgress />
     <div class="subheader">
       <div class="breadcrumb">
         <a href="#/">我的知识库</a>
