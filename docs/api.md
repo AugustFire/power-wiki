@@ -4,22 +4,24 @@
 
 完整契约以 `@power-wiki/shared/src/schemas.ts` 的 zod schema 为准,所有路由用 `*.parse()` 在响应边界二次校验(防 schema 漂移)。
 
-`apps/api/src/index.ts` 挂载的 13 个 route mount:
+`apps/api/src/index.ts` 挂载的 14 个 route mount(15 个 `app.route` 调用 —— `pageLabelsRouter` 同时挂到 `/api/pages` 和 `/api/labels`):
 
 | 路径前缀 | 路由文件 | 备注 |
 |---|---|---|
 | `/api/auth` | `routes/auth.ts` | 公开,sign-in / sign-out / session / reset-password |
-| `/api/pages` | `routes/pages.ts` | 页面 CRUD + tree + trash + publish + duplicate + move + snapshots |
+| `/api/pages` | `routes/pages.ts` | 页面 CRUD + tree + trash + publish + duplicate + move + snapshots + page_event 查询 |
 | `/api/pages` | `routes/pageVersions.ts` | 子路由,版本历史 + restore |
 | `/api/pages` + `/api/labels` | `routes/pageLabels.ts` | 子路由,挂两前缀;labels CRUD + 搜索 |
 | `/api/attachments` | `routes/attachments.ts` | MinIO 附件 upload-url / finalize / list / raw / delete |
 | `/api/spaces` | `routes/spaces.ts` | 用户可见 space 列表 + 单个详情 |
 | `/api/comments` | `routes/comments.ts` | 评论 CRUD + mention-candidates(分页 list) |
 | `/api/notifications` | `routes/notifications.ts` | 通知 list / unread-count / mark-read / clear-all |
+| `/api/users` | `routes/users.ts` | 自服务 user profile(me 读写 + watched 列表 + recent 列表/清空 + me dashboard 聚合) |
 | `/api/search` | `routes/search.ts` | 零中间件全文搜索 |
 | `/api/admin/users` | `routes/adminUsers.ts` | admin 后台用户管理 |
 | `/api/admin/groups` | `routes/adminGroups.ts` | admin 后台用户组管理 |
 | `/api/admin/spaces` | `routes/adminSpaces.ts` | admin 后台空间管理 |
+| `/api/admin/settings` | `routes/adminSettings.ts` | admin 后台全局设置(按 key 读 / 写) |
 
 ## Auth(`/api/auth/*`,公开)
 
@@ -105,7 +107,20 @@
 | POST | `/mark-read` | body `{ids?: string[]}` 或 `{all: true}` → `{ok: true}`;不传 ids + 不传 all 返 400 `invalid_input` |
 | POST | `/clear-all` | 删所有 `isRead=true` 行,返 `{deleted: number}` |
 
-`Notification.kind` 枚举:`mention` / `reply` / `comment_on_my_page`,见 `packages/shared/src/schemas.ts:NotificationSchema`。
+`Notification.kind` 枚举:`mention` / `reply` / `comment_on_my_page` / `page_like`,见 `packages/shared/src/schemas.ts:NotificationSchema`。
+
+## Users(`/api/users`,自服务)
+
+`requireAuth`,无 admin 要求 —— 当前登录用户自己的 profile + 派生数据(watched 列表、recent 浏览、me dashboard 聚合)。**不走 admin/users**(那是 admin 视角的全量用户管理)。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET    | `/me` | 当前用户完整 profile(同 `/api/auth/session`,实现上是同一行) |
+| PATCH  | `/me` | body `{name?,email?}`;email 改动会触发下次登录生效,清 session(同 auth 流) |
+| GET    | `/me/watched` | → `PageNode[]` 当前用户 watch 的页(`user_watched_pages` JOIN pages,带可见 space 过滤) |
+| GET    | `/me/recent?limit=` | per-user 最近浏览(`user_recent_pages` DESC),limit 1-50,default 20 |
+| DELETE | `/me/recent` | 清空当前用户 recent(头像 menu 「清空最近」按钮) |
+| GET    | `/me/dashboard` | MeDashboard 聚合一次返:recent + watched + 我创建的页 + 我最近编辑的页 + 通知 unread-count,后端 `LEFT JOIN + GROUP BY` 算好,前端不再 N+1 |
 
 ## Search(`/api/search`)
 
@@ -153,6 +168,14 @@
 | PUT    | `/:id/access` | 整组替换 access(事务) |
 | POST   | `/:id/access/:groupId` | 加一组 access |
 | DELETE | `/:id/access/:groupId` | 删一组 access |
+
+### Settings
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET    | `/` | 全量 `admin_settings` 键值对(`key → value`) |
+| GET    | `/:key` | 单个 key → `{key, value, updatedAt, updatedBy}` |
+| PATCH  | `/:key` | body `{value}` → 200;写值 + 记录 `updatedBy=me.id, updatedAt=now` |
 
 ## 错误响应规范
 
