@@ -248,7 +248,12 @@ export function scrollToHashAsync(hash: string) {
   return new Promise<{ el: string; behavior?: ScrollOptions['behavior'] } | { top: number }>((resolve) => {
     let attempts = 0
     const tryScroll = () => {
-      const el = document.querySelector(hash) as HTMLElement | null
+      // hash 形如 "#h-…" 或 "#comment-…"。用 getElementById 按原始 id 查找,
+      // 不用 querySelector —— 后者会把 id 当 CSS 选择器解析,标题 slug 里的
+      // 半角括号 / 点 / 冒号等都会触发 "not a valid selector" SyntaxError。
+      // decodeURIComponent 兼容 URL 往返时被百分号编码的中文 / 标点。
+      const rawId = decodeURIComponent(hash.slice(1))
+      const el = rawId ? document.getElementById(rawId) : null
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' })
         resolve({ el: hash, behavior: 'smooth' })

@@ -23,10 +23,15 @@ function slugify(text: string, fallback: string): string {
   return cleaned || fallback
 }
 
-function ensureId(el: HTMLElement, usedIds: Set<string>): string {
+/**
+ * 给 heading 元素分配稳定 id(缺失时基于文本 slug 生成,带 h- 前缀)。
+ * TocPanel 也复用这个函数收集目录 —— 两处走同一算法,保证无论谁先跑,
+ * 元素落到的 id 完全一致,复制的深链在新窗口打开也能定位。
+ */
+export function ensureHeadingId(el: HTMLElement, usedIds: Set<string>): string {
   let id = el.id
   // 已存在的 id 不强制加 h- 前缀 — 让外部已经合理命名的元素保持原样,
-  // 但 ensureId 是兜底路径,新生成的 id 必须带 h- 前缀以便与 #comment-xxx 等
+  // 但 ensureHeadingId 是兜底路径,新生成的 id 必须带 h- 前缀以便与 #comment-xxx 等
   // 其它 anchor 区分(TocPanel scrollTo / ReadView route.hash watcher 都依赖
   // 这个区分)。
   if (id && !usedIds.has(id)) {
@@ -90,7 +95,7 @@ export function addHeadingAnchors(root: HTMLElement | null | undefined): void {
   if (!root) return
   const usedIds = new Set<string>()
   root.querySelectorAll<HTMLElement>(ANCHOR_SELECTOR).forEach((el) => {
-    const id = ensureId(el, usedIds)
+    const id = ensureHeadingId(el, usedIds)
     injectAnchor(el, id)
   })
 }

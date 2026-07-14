@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { ensureHeadingId } from '@/lib/headingAnchors'
 import type { Watcher } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -76,7 +77,7 @@ function getHeadingNodes(root: HTMLElement): HTMLElement[] {
   return collected
 }
 
-function readHeading(el: HTMLElement, idx: number): TocItem | null {
+function readHeading(el: HTMLElement, usedIds: Set<string>): TocItem | null {
   // 编辑器节点:.heading-wrapper[data-level][data-heading-id]
   if (el.classList.contains('heading-wrapper')) {
     const lv = Number(el.getAttribute('data-level') ?? '0') as 1 | 2 | 3
@@ -102,13 +103,12 @@ function readHeading(el: HTMLElement, idx: number): TocItem | null {
   clone.querySelectorAll('a.heading-anchor').forEach((a) => a.remove())
   const text = (clone.textContent || '').trim()
   if (!text) return null
-  if (!el.id) {
-    // 兜底 id 也带 h- 前缀,与 headingAnchors.ts ensureId 对齐 —
-    // 万一 collectHeadings 比 addHeadingAnchors 先跑(罕见但偶发),
-    // 仍然保持 URL hash 语义一致,不会让 TocPanel 拿到不带前缀的 id。
-    el.id = `h-${tag}-${idx}-${text.replace(/\s+/g, '-').slice(0, 30)}`
-  }
-  return { id: el.id, text, level: lv }
+  // 用与 headingAnchors 完全相同的 ensureHeadingId 生成 / 读取 id ——
+  // 保证无论 collectHeadings 与 addHeadingAnchors 谁先跑,元素落到的 id
+  // 都一致。否则两套算法产出不同形态的 id(h-<slug> vs h-<tag>-<idx>-…),
+  // 复制到地址栏的深链在新窗口打开时会因 id 对不上而定位失败。
+  const id = ensureHeadingId(el, usedIds)
+  return { id, text, level: lv }
 }
 
 function collectHeadings() {
@@ -118,9 +118,13 @@ function collectHeadings() {
     return
   }
   const nodes = getHeadingNodes(root)
+  // 与 headingAnchors.addHeadingAnchors 共享同一套 id 生成算法:每次收集
+  // 用一个全新的 usedIds set,按 DOM 顺序喂给 ensureHeadingId,产出的 id
+  // 与 ReadView 注入的完全一致(dedup 的 -2 后缀也一致)。
+  const usedIds = new Set<string>()
   const result: TocItem[] = []
-  nodes.forEach((n, idx) => {
-    const item = readHeading(n, idx)
+  nodes.forEach((n) => {
+    const item = readHeading(n, usedIds)
     if (item) result.push(item)
   })
   items.value = result
