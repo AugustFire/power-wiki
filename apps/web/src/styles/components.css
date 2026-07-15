@@ -220,6 +220,11 @@
 .layout.toc-collapsed .toc-panel {
     opacity: 0;
     pointer-events: none;
+    /* TOC panel 自身带 overflow-y: auto,即使 grid 列宽 0 也保留
+     * scrollbar gutter(15-17px),跟主内容滚动条并排看起来像 2 个滚动条。
+     * 折叠态强制 hidden + padding 0,展开后浏览器自动恢复。 */
+    overflow: hidden;
+    padding: 0;
 }
 
 /* =========================
@@ -780,6 +785,9 @@
     top: calc(var(--topbar-h) + var(--sub-h));
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
     overflow-y: auto;
+    /* grid item 默认 min-width: auto ≈ min-content,会让列宽收到 ~240px
+     * 时无法真正到 0。折叠态需要 cell 能塌缩为 0 width。 */
+    min-width: 0;
     /* 折叠时 opacity 0 的过渡(0.2s 比 grid 0.3s 短,先收起再让列宽跟上) */
     transition: opacity 0.2s;
 }
