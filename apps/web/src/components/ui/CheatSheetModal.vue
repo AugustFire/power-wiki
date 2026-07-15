@@ -31,7 +31,7 @@ const shortcutGroups: Group[] = [
     items: [
       { keys: [MOD,'K'], desc: '搜索所有页面' },
       { keys: ['/'], desc: '搜索(Vim 风格,仅非输入框聚焦)' },
-      { keys: [MOD,'/'], desc: '打开 / 关闭这张速查表' },
+      { keys: [MOD,'/'], desc: '打开 / 关闭这张速查表(读 / 编辑模式都可用;Shift+/ = ? 是同一个键)' },
       { keys: [MOD,'S'], desc: '立即存档为新版本快照' },
     ],
   },

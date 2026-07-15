@@ -53,9 +53,11 @@ onBeforeUnmount(() => {
       <span
         v-if="visible"
         class="ttp-tip"
-        :class="`ttp-tip-${position}`"
+        :class="[`ttp-tip-${position}`, { 'ttp-tip-rich': $slots.tooltip }]"
         role="tooltip"
-      >{{ text }}</span>
+      >
+        <slot name="tooltip">{{ text }}</slot>
+      </span>
     </Transition>
   </span>
 </template>
@@ -81,6 +83,12 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
   pointer-events: none;
+}
+/* 当 tooltip 走具名 slot 时允许换行、多行(描述、标签组等)。 */
+.ttp-tip-rich {
+  white-space: normal;
+  max-width: 280px;
+  overflow-wrap: break-word;
 }
 
 .ttp-tip-top { bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); }

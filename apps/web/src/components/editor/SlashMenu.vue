@@ -11,6 +11,7 @@ import DateTimePicker from './DateTimePicker.vue'
 import type { DateMode } from '@/editor/dateInlineExtension'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
+import { useRecentSlashItems } from '@/composables/useRecentSlashItems'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -19,11 +20,19 @@ const props = defineProps<{
   editor: AnyEditor
 }>()
 
+type SlashGroup = 'basic' | 'media' | 'advanced'
+
 interface SlashItem {
   id: string
   label: string
   description: string
   icon: string
+  /**
+   * 分组 — query 空时渲染三段:基础(标题/列表/引用/分隔线)+ 媒体(图/表)
+   * + 高级(代码/提示/折叠/页面引用/@)。query 非空时降为扁平结果。
+   * 不影响 keyboard 导航顺序(按 DOM 顺序),只决定 section 视觉分组。
+   */
+  group: SlashGroup
   /** builtin: 选中后立即执行 run() */
   /** needsPicker: 选中后弹 picker(在 SlashMenu 内部渲染),run() 负责 hideMenu + 启 picker */
   kind?: 'builtin' | 'needsPicker'
@@ -41,6 +50,7 @@ const items: SlashItem[] = [
     label: '一级标题',
     description: '大号标题',
     icon: 'format_h1',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
   },
   {
@@ -48,6 +58,7 @@ const items: SlashItem[] = [
     label: '二级标题',
     description: '中等标题',
     icon: 'format_h2',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
   },
   {
@@ -55,6 +66,7 @@ const items: SlashItem[] = [
     label: '三级标题',
     description: '小号标题',
     icon: 'format_h3',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(),
   },
   {
@@ -62,6 +74,7 @@ const items: SlashItem[] = [
     label: '无序列表',
     description: '• 圆点列表',
     icon: 'format_list_bulleted',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleBulletList().run(),
   },
   {
@@ -69,6 +82,7 @@ const items: SlashItem[] = [
     label: '有序列表',
     description: '1. 编号列表',
     icon: 'format_list_numbered',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleOrderedList().run(),
   },
   {
@@ -76,6 +90,7 @@ const items: SlashItem[] = [
     label: '任务列表',
     description: '☑ 复选框列表',
     icon: 'checklist',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleTaskList().run(),
   },
   {
@@ -83,6 +98,7 @@ const items: SlashItem[] = [
     label: '表格',
     description: '3×3 网格,首行表头',
     icon: 'table',
+    group: 'media',
     run: (e) =>
       e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
   },
@@ -91,6 +107,7 @@ const items: SlashItem[] = [
     label: '代码块',
     description: '等宽字体块',
     icon: 'code',
+    group: 'advanced',
     run: (e) => e.chain().focus().toggleCodeBlock().run(),
   },
   {
@@ -98,6 +115,7 @@ const items: SlashItem[] = [
     label: '引用块',
     description: '左侧蓝条引用',
     icon: 'format_quote',
+    group: 'basic',
     run: (e) => e.chain().focus().toggleBlockquote().run(),
   },
   {
@@ -105,6 +123,7 @@ const items: SlashItem[] = [
     label: '分隔线',
     description: '水平线',
     icon: 'horizontal_rule',
+    group: 'basic',
     run: (e) => e.chain().focus().setHorizontalRule().run(),
   },
   {
@@ -112,6 +131,7 @@ const items: SlashItem[] = [
     label: '提示框',
     description: '带颜色侧条的信息块',
     icon: 'lightbulb',
+    group: 'advanced',
     run: (e) => e.chain().focus().toggleCallout('info').run(),
   },
   {
@@ -119,6 +139,7 @@ const items: SlashItem[] = [
     label: '折叠块',
     description: '可点击展开/收起的内容',
     icon: 'expand_more',
+    group: 'advanced',
     run: (e) => e.chain().focus().setToggle().run(),
   },
   {
@@ -126,6 +147,7 @@ const items: SlashItem[] = [
     label: '图片 / 附件',
     description: '上传图片或 PDF 文件',
     icon: 'image',
+    group: 'media',
     kind: 'needsPicker',
     run: () => {
       // needsPicker:由 onSelectIndex 调 openAttachmentUpload 弹文件选择器
@@ -136,6 +158,7 @@ const items: SlashItem[] = [
     label: '页面引用',
     description: '插入一个可跳转的页面卡片',
     icon: 'description',
+    group: 'advanced',
     kind: 'needsPicker',
     run: () => {
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openPagePicker
@@ -146,6 +169,7 @@ const items: SlashItem[] = [
     label: '@',
     description: '提及成员 或 插入日期/时间',
     icon: 'alternate_email',
+    group: 'advanced',
     kind: 'needsPicker',
     run: () => {
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openAtPicker
@@ -158,19 +182,102 @@ const pos = ref({ x: 0, y: 0 })
 const filterText = ref('')
 const activeIndex = ref(0)
 
-// Forward declarations so `onEditorKey` (declared below) can reference these
-// without TypeScript's "used before declaration" error. Real initializers
-// live in the corresponding picker sections further down.
-let pickerOpen: ReturnType<typeof ref<boolean>> = ref(false)
-let atPickerOpen: ReturnType<typeof ref<boolean>> = ref(false)
+const recentItemsState = useRecentSlashItems()
 
-const filtered = computed(() => {
-  const q = filterText.value.trim().toLowerCase()
-  if (!q) return items
-  return items.filter(
-    (it) => it.label.toLowerCase().includes(q) || it.id.toLowerCase().includes(q)
-  )
-})
+// Real initializers live here (not in a 「let + 后续 reassign」 forward-decl
+// 模式) — Vue 模板编译时把 v-if 绑到 setup 时的 ref 实例上,后面 reassign
+// 出来的 ref 跟模板失联,改 .value 也不会触发 re-render,看起来就像「不弹」
+// /Enter 路径之前能过纯属巧合,实际 ref 一直停在 false。
+const pickerOpen = ref(false)
+const atPickerOpen = ref(false)
+
+/**
+ * 把 localStorage 里的最近使用 id 数组解析成 SlashItem[],找不到的 id 跳过
+ * (slash 项被废弃时 recents 不会崩,只会在「最近使用」区里看不到)。
+ */
+const recentItems = computed<SlashItem[]>(() =>
+  recentItemsState.recents.value
+    .map((id) => items.find((it) => it.id === id))
+    .filter((it): it is SlashItem => !!it),
+)
+
+/**
+ * 三段分组的固定顺序:基础 → 媒体 → 高级。顺序跟设计意图一致(基础写作
+ * 高频在前,媒体/高级按使用频次递降),键盘 ↑↓ 也按这个顺序遍历。
+ */
+const GROUP_ORDER: Array<{ title: string; group: SlashGroup }> = [
+  { title: '基础', group: 'basic' },
+  { title: '媒体', group: 'media' },
+  { title: '高级', group: 'advanced' },
+]
+
+/**
+ * query 非空时:扁平过滤结果(无分组、无最近使用),扁平索引 = filtered 索引。
+ * query 空时:
+ *   - recents 置顶(去重 — 已在 recents 里的项不再在下面三组里出现,避免重复)
+ *   - 然后按 GROUP_ORDER 依次追加 基础 / 媒体 / 高级
+ *
+ * 同时输出 `filtered`(扁平 SlashItem[],供 keyboard nav / onSelectIndex / 模板 v-if)
+ * 和 `displayRows`(title 节点 + item 节点混排,供模板分 section 渲染)。
+ */
+type DisplayRow =
+  | { type: 'title'; title: string; key: string }
+  | { type: 'item'; item: SlashItem; flatIdx: number; key: string }
+
+const { filtered, displayRows } = (() => {
+  const filtered = computed<SlashItem[]>(() => {
+    const q = filterText.value.trim().toLowerCase()
+    if (q) {
+      return items.filter(
+        (it) =>
+          it.label.toLowerCase().includes(q) ||
+          it.id.toLowerCase().includes(q),
+      )
+    }
+    const recentIds = new Set(recentItemsState.recents.value)
+    const recentsOrdered = recentItems.value
+    const basic = items.filter((it) => it.group === 'basic' && !recentIds.has(it.id))
+    const media = items.filter((it) => it.group === 'media' && !recentIds.has(it.id))
+    const advanced = items.filter(
+      (it) => it.group === 'advanced' && !recentIds.has(it.id),
+    )
+    return [...recentsOrdered, ...basic, ...media, ...advanced]
+  })
+
+  const displayRows = computed<DisplayRow[]>(() => {
+    const q = filterText.value.trim().toLowerCase()
+    if (q) {
+      const list = filtered.value
+      return list.map((it, i) => ({
+        type: 'item' as const,
+        item: it,
+        flatIdx: i,
+        key: it.id,
+      }))
+    }
+    const rows: DisplayRow[] = []
+    let flatIdx = 0
+    if (recentItems.value.length > 0) {
+      rows.push({ type: 'title', title: '最近使用', key: 'title-recents' })
+      for (const it of recentItems.value) {
+        rows.push({ type: 'item', item: it, flatIdx, key: it.id })
+        flatIdx++
+      }
+    }
+    for (const g of GROUP_ORDER) {
+      const groupItems = filtered.value.slice(flatIdx).filter((it) => it.group === g.group)
+      if (groupItems.length === 0) continue
+      rows.push({ type: 'title', title: g.title, key: `title-${g.group}` })
+      for (const it of groupItems) {
+        rows.push({ type: 'item', item: it, flatIdx, key: it.id })
+        flatIdx++
+      }
+    }
+    return rows
+  })
+
+  return { filtered, displayRows }
+})()
 
 // 过滤结果变化时,把高亮重置到第一项
 watch(filtered, () => {
@@ -219,6 +326,9 @@ function hideMenu() {
 // 检测编辑器文本中最后一个 "/" 触发菜单
 function checkForSlash() {
   if (!props.editor) return
+  // Picker-needing 项选中后,slash 被删但 picker 接管菜单:此时不应当被
+  // 误判为「没 slash」而 hideMenu 把整块连同 picker 一起关掉。
+  if (pickerOpen.value || atPickerOpen.value) return
   const { state } = props.editor
   const { $from } = state.selection
   // 当前 paragraph 的文本
@@ -281,6 +391,8 @@ function onSelectIndex(idx: number) {
   }
 
   item.run(props.editor)
+  // builtin 项立即生效,这里 record 即可;picker-needing 项在完成路径 record
+  recentItemsState.recordUse(item.id)
   hideMenu()
 }
 
@@ -347,8 +459,12 @@ function attach() {
   el.addEventListener('input', onInput)
   el.addEventListener('keyup', onKeyUp)
   el.addEventListener('keydown', onKey, true) // capture:优先于 Tiptap 内部
-  // 点击外部关闭
+  // 点击外部关闭。Picker 模式时:点 menu item 触发 onSelect → deleteRange
+  // → editor focus 回弹,会冒一个 mousedown 到 document,target 是 editor 的
+  // P 元素,不是 menu 本身;此时 picker 已开,不应当把整个 menu(picker 一起)
+  // 关掉 — 由 picker 自身的取消/完成路径决定何时 hideMenu。
   const outside = (e: MouseEvent) => {
+    if (pickerOpen.value || atPickerOpen.value) return
     if (!(e.target as HTMLElement).closest('.slash-menu')) hideMenu()
   }
   document.addEventListener('mousedown', outside)
@@ -380,7 +496,6 @@ onBeforeUnmount(() => {
 //  页面引用 Picker
 // ============================================================
 const pagesStore = usePagesStore()
-pickerOpen = ref(false)
 const pickerQuery = ref('')
 const pickerIndex = ref(0)
 const pickerInputEl = ref<HTMLInputElement | null>(null)
@@ -437,6 +552,9 @@ function onPickPage(p: PageNode) {
       attrs: { pageId: p.id, title: p.title },
     })
     .run()
+  // picker 完成路径里 record:菜单点选本身不 record,避免点开 picker
+  // 再取消导致的「幽灵使用」
+  recentItemsState.recordUse('pageRef')
   hideMenu()
 }
 
@@ -486,7 +604,6 @@ function onPickerKey(e: KeyboardEvent) {
 // 没有共同前缀,放一起反而会让用户错以为日期也是 mention。
 
 type AtTab = 'user' | 'date'
-atPickerOpen = ref(false)
 const atTab = ref<AtTab>('user')
 const atPickerQuery = ref('')
 const atPickerIndex = ref(0)
@@ -509,10 +626,15 @@ function openAttachmentUpload() {
     return
   }
   openAttachmentPicker((file) => {
-    uploadAndInsert(file, e, pageId).catch((err) => {
-      console.error('[SlashMenu] attachment upload failed', err)
-      toast.error('附件上传失败,请重试')
-    })
+    uploadAndInsert(file, e, pageId)
+      .then(() => {
+        // 上传成功 = 已插入 = 算「使用过」;失败不 record,避免污染 recents
+        recentItemsState.recordUse('attachment')
+      })
+      .catch((err) => {
+        console.error('[SlashMenu] attachment upload failed', err)
+        toast.error('附件上传失败,请重试')
+      })
   })
   hideMenu()
 }
@@ -590,6 +712,8 @@ function onPickUser(c: MentionCandidate) {
     })
     .insertContent(' ')
     .run()
+  // 不论选成员还是日期,都是「@ 项被使用」,统一 record 同一个 id
+  recentItemsState.recordUse('at')
   hideMenu()
 }
 
@@ -606,6 +730,7 @@ function onPickDate(payload: { mode: DateMode; date: Date }) {
       },
     })
     .run()
+  recentItemsState.recordUse('at')
   hideMenu()
 }
 
@@ -775,21 +900,23 @@ function onAtPickerKey(e: KeyboardEvent) {
         <span>插入块</span>
         <span class="slash-hint">↑↓ 选择 · Enter 应用 · Esc 取消</span>
       </div>
-      <button
-        v-for="(item, idx) in filtered"
-        :key="item.id"
-        class="slash-item"
-        :class="{ active: idx === activeIndex }"
-        @mousedown.prevent="onSelect(item)"
-        @mousemove="activeIndex = idx"
-      >
-        <span class="material-symbols-outlined icon">{{ item.icon }}</span>
-        <div class="text">
-          <div class="label">{{ item.label }}</div>
-          <div class="desc">{{ item.description }}</div>
-        </div>
-      </button>
-      <div v-if="filtered.length === 0" class="slash-empty">没有匹配的块</div>
+      <template v-for="row in displayRows" :key="row.key">
+        <div v-if="row.type === 'title'" class="slash-section-title">{{ row.title }}</div>
+        <button
+          v-else
+          class="slash-item"
+          :class="{ active: row.flatIdx === activeIndex }"
+          @mousedown.prevent="onSelect(row.item)"
+          @mousemove="activeIndex = row.flatIdx"
+        >
+          <span class="material-symbols-outlined icon">{{ row.item.icon }}</span>
+          <div class="text">
+            <div class="label">{{ row.item.label }}</div>
+            <div class="desc">{{ row.item.description }}</div>
+          </div>
+        </button>
+      </template>
+      <div v-if="displayRows.length === 0" class="slash-empty">没有匹配的块</div>
     </template>
   </div>
 </template>
@@ -825,6 +952,24 @@ function onAtPickerKey(e: KeyboardEvent) {
   font-size: 13px;
   color: var(--text-3);
   text-align: center;
+}
+
+/* 分组小标题:query 空时把 slash 项按「最近使用 / 基础 / 媒体 / 高级」分段。
+ * 第一个 section 不画分隔线(上方的 .slash-title 已有 border-bottom),后续
+ * section 用 border-top 划开,跟扁平列表混在一起不显突兀。 */
+.slash-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  font-weight: 600;
+  padding: 8px 12px 4px;
+}
+/* 任意 .slash-section-title 前面还有另一个同元素 → 加 1px 分隔线 + 顶部间距 */
+.slash-section-title ~ .slash-section-title {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 10px;
 }
 
 /* ─── Picker 子样式 ─────────────────────────────────────── */

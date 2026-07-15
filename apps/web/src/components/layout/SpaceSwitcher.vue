@@ -40,6 +40,7 @@ import { useRouter } from 'vue-router'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
@@ -67,16 +68,7 @@ const canOpen = computed(
     !(spacesList.value.length === 1 && isActiveShared.value),
 )
 
-// The trigger label deliberately ignores personal spaces — the topbar's space
-// switcher is a "team context" indicator, not a generic space picker. When
-// the active space is the user's personal space, the switcher shows a
-// neutral placeholder instead of the personal-space name. The user enters
-// the personal space from the top-right user menu (UserMenu.vue → "我的空间"),
-// keeping the personal-vs-shared separation clean at the topbar level.
 const isActiveShared = computed(() => active.value?.kind === 'shared')
-const triggerLabel = computed(() =>
-  isActiveShared.value && active.value ? active.value.name : '选择团队空间',
-)
 
 function toggle() {
   if (!canOpen.value) return
@@ -135,10 +127,9 @@ onBeforeUnmount(() => {
         'ss-trigger-clickable': canOpen,
         'ss-trigger-neutral': !isActiveShared,
       }"
-      :title="isActiveShared ? `切换空间 — ${active.name}` : '选择一个团队空间'"
       @click="toggle"
     >
-      <span class="ss-name">{{ triggerLabel }}</span>
+      <SpaceAvatar :space="active" :size="28" :show-name="true" />
       <span
         v-if="canOpen"
         class="material-symbols-outlined ss-caret"
@@ -169,15 +160,11 @@ onBeforeUnmount(() => {
         :aria-selected="s.id === active?.id"
         @click="pick(s.id)"
       >
-        <span
-          class="ss-avatar"
-          :style="{ background: s.color }"
-          aria-hidden="true"
-        >
-          <span v-if="s.icon" class="material-symbols-outlined ss-avatar-icon">{{ s.icon }}</span>
-          <span v-else class="ss-initials">{{ s.name.slice(0, 2) }}</span>
+        <SpaceAvatar :space="s" :size="28" />
+        <span class="ss-menu-text">
+          <span class="ss-menu-name">{{ s.name }}</span>
+          <span v-if="s.description" class="ss-menu-desc">{{ s.description }}</span>
         </span>
-        <span class="ss-menu-name">{{ s.name }}</span>
         <span
           v-if="s.id === active?.id"
           class="material-symbols-outlined ss-check"
@@ -212,25 +199,21 @@ onBeforeUnmount(() => {
   cursor: default;
   transition: background var(--duration-fast, 120ms) var(--ease-out, ease);
 }
+.ss-trigger :deep(.sa-name) {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+}
 .ss-trigger-clickable { cursor: pointer; }
 .ss-trigger-clickable:hover { background: var(--bg-subtle); }
 
-/* Neutral state: the active space is the personal space, so the trigger
- * shows a placeholder instead of a real name. Subtle muted color so it's
- * visually distinct from "you're in this team space" — the topbar's space
- * switcher is a team-context indicator and should not pretend the personal
- * space is a team. */
-.ss-trigger-neutral { color: var(--text-3); }
+/* Neutral state: the active space is the user's personal space — softer
+ * text color signals "private / not a team" without hiding the identity.
+ * The SpaceAvatar block stays fully colored (still recognizably a space),
+ * only the name next to it dims. */
+.ss-trigger-neutral :deep(.sa-name) { color: var(--text-3); }
+.ss-trigger-neutral:hover :deep(.sa-name) { color: var(--text-1); }
 .ss-trigger-neutral .ss-caret { color: var(--text-3); }
-.ss-trigger-neutral:hover { color: var(--text-1); }
-
-.ss-name {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1;
-}
 
 .ss-caret {
   font-size: var(--icon-lg, 18px) !important;
@@ -299,24 +282,6 @@ onBeforeUnmount(() => {
 .ss-menu-item-active { background: var(--accent-soft); }
 .ss-menu-item-active:hover { background: var(--accent-soft); }
 
-.ss-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm, 3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 700;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.ss-avatar-icon { font-size: 16px !important; }
-.ss-initials {
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
 .ss-menu-name {
   flex: 1;
   min-width: 0;
@@ -328,6 +293,25 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .ss-menu-item-active .ss-menu-name { color: var(--accent); }
+
+/* 下拉项文字区:名字一行 + 描述一行,描述小一号、字色浅 3。 */
+.ss-menu-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ss-menu-desc {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
 .ss-check {
   font-size: var(--icon-lg, 18px) !important;
   color: var(--accent);

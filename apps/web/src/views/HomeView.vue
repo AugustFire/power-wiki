@@ -24,6 +24,7 @@ import { newId } from '@/lib/id'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import MeDashboardView from '@/views/MeDashboardView.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 
@@ -210,6 +211,12 @@ function excerpt(html: string): string {
               </div>
             </div>
 
+            <!-- 空间简介:仅当 description 非空时显示,展示该团队空间是干什么的。 -->
+            <section v-if="activeSpace?.description" class="space-overview">
+              <SpaceAvatar :space="activeSpace" :size="40" :show-name="true" />
+              <p class="space-overview-desc">{{ activeSpace.description }}</p>
+            </section>
+
             <!-- 统计卡片 -->
             <div class="stat-grid">
               <div class="stat-card">
@@ -342,6 +349,32 @@ function excerpt(html: string): string {
 .home-shell { min-height: calc(100vh - var(--topbar-h)); }
 
 .home-hero { margin-bottom: 8px; }
+
+/* 空间简介:avatar 40 + name + description 两行,放在 hero 之下、统计之上,
+ * 让用户进首页就看到「这空间是干什么的」。 */
+.space-overview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0 20px;
+  padding: 12px 16px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md, 6px);
+}
+.space-overview :deep(.sa-name) {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-right: 8px;
+}
+.space-overview-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+}
 
 .empty-illustration {
   margin: 0 auto 20px;

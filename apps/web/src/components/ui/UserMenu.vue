@@ -25,9 +25,10 @@
  *       — 深链 /me 仍可用(直接挂 MeDashboardView,无 active 切换),但不是
  *         主要入口。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
@@ -36,6 +37,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
 const spacesStore = useSpacesStore()
+
+const personalSpace = computed(() => spacesStore.personalSpace.value)
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -169,13 +172,13 @@ async function onLogout() {
         <div class="um-divider"></div>
 
         <button
-          v-if="authStore.personalSpaceId"
+          v-if="authStore.personalSpaceId && personalSpace"
           type="button"
           class="um-item"
           role="menuitem"
           @click="goMySpace"
         >
-          <span class="material-symbols-outlined um-icon">cottage</span>
+          <SpaceAvatar :space="personalSpace" :size="20" />
           <span>我的空间</span>
         </button>
 

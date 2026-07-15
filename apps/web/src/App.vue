@@ -93,10 +93,23 @@ function isTypingTarget(t: EventTarget | null): boolean {
 function onGlobalKey(e: KeyboardEvent) {
   if (e.isComposing) return
   if (!isAuthed.value) return
+
+  // `?` 唤起快捷键速查表 —— 故意**绕过 isTypingTarget 守卫**,跟 GitHub /
+  // Slack 一致:即便用户在 Tiptap 编辑器里聚焦也应该能用。`isComposing`
+  // 已经挡住 IME 进行中的问号输入,所以不会跟中文拼音冲突。
+  if (e.key === '?') {
+    e.preventDefault()
+    if (uiStore.cheatSheetOpen) uiStore.closeCheatSheet()
+    else uiStore.openCheatSheet()
+    return
+  }
+
   if (isTypingTarget(e.target)) return
 
   const mod = e.metaKey || e.ctrlKey
   // ⌘/ (Ctrl+/) 唤起快捷键速查表。放在 ⌘K 之前判断,因为二者都带 mod。
+  // 注意:由于 isTypingTarget 守卫,这条在 Tiptap 编辑器里**不生效**(原 bug,
+  // 由上面的 `?` 触发器兜底)。
   if (mod && e.key === '/') {
     e.preventDefault()
     if (uiStore.cheatSheetOpen) uiStore.closeCheatSheet()
@@ -108,8 +121,8 @@ function onGlobalKey(e: KeyboardEvent) {
     uiStore.openTopSearch()
     return
   }
-  // Vim-style: bare "/" opens search. Shift+/ ("?") is left alone so users
-  // can still type question marks freely.
+  // Vim-style: bare "/" opens search. Shift+/ ("?") 已经被上面的分支吞掉,
+  // 所以这里 e.shiftKey 必须为 false,跟 `?` 触发器不重叠。
   if (e.key === '/' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
     uiStore.openTopSearch()

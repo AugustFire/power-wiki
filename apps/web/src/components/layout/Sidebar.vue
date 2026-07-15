@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { newId } from '@/lib/id'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
 import WatchedSidebar from './WatchedSidebar.vue'
 
@@ -226,9 +227,7 @@ watch(
         :title="`回到 ${active.name} 首页`"
         @click="goHome"
       >
-        <span class="active-avatar" :style="{ background: active.color }" aria-hidden="true">
-          <span class="material-symbols-outlined">{{ active.icon || (isActivePersonal ? 'cottage' : 'workspaces') }}</span>
-        </span>
+        <SpaceAvatar :space="active" :size="20" />
         <span class="active-name">{{ active.name }}</span>
         <span class="active-count">{{ activePageCount }}</span>
       </button>
@@ -333,20 +332,6 @@ watch(
   color: var(--accent);
 }
 .quick-nav-active .material-symbols-outlined { color: var(--accent); }
-.active-avatar {
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm, 3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: white;
-}
-.active-avatar .material-symbols-outlined {
-  font-size: 14px !important;
-  color: white;
-}
 .active-name {
   flex: 1;
   overflow: hidden;
