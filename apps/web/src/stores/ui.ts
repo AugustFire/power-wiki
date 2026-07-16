@@ -14,6 +14,9 @@ const LEGACY_KEY = '__legacy__'
  * - id:用单调递增整数作为 key;只在本会话内去重,不持久化。
  * - kind:决定图标 + 颜色。success(绿) / error(红) / info(蓝)。
  * - message:1-2 句话;过长用户在右下角读不全。
+ * - action(可选):toast 右侧附加按钮。典型用途是附件上传失败时挂
+ *   「重试」按钮 —— 用户拖文件失败后能直接原地重试,不用回原文件
+ *   重新拖。action.onClick 是闭包,可直接持有 file 等运行时对象。
  *
  * 替代原本可能误用于成功反馈的顶部 banner —— 顶部 banner 仍专用于
  * 持续展示的全局错误,toast 适用于"刚做完一个动作,短促告诉用户"。
@@ -22,6 +25,10 @@ export interface Toast {
   id: number
   kind: 'success' | 'error' | 'info'
   message: string
+  action?: {
+    label: string
+    onClick: () => void
+  }
 }
 
 /**
@@ -253,9 +260,10 @@ export const useUiStore = defineStore('ui', () => {
     message: string,
     kind: Toast['kind'] = 'success',
     durationMs = 3000,
+    action?: Toast['action'],
   ): number {
     const id = nextToastId++
-    toasts.value = [...toasts.value, { id, kind, message }]
+    toasts.value = [...toasts.value, { id, kind, message, action }]
     if (durationMs > 0) {
       setTimeout(() => dismiss(id), durationMs)
     }

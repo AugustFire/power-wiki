@@ -46,11 +46,20 @@ function iconFor(kind: Toast['kind']): string {
           v-for="t in toasts"
           :key="t.id"
           class="toast"
-          :class="`toast-${t.kind}`"
+          :class="[`toast-${t.kind}`, { 'toast-with-action': t.action }]"
           role="status"
         >
           <span class="material-symbols-outlined toast-icon">{{ iconFor(t.kind) }}</span>
           <span class="toast-msg">{{ t.message }}</span>
+          <!-- 可选 action 按钮(典型:上传失败 → 重试)。action.onClick
+               是闭包,ToastContainer 不持有业务状态,职责止于触发;重试
+               成功后由 RichEditor 调 uiStore.dismiss 关闭本 toast。 -->
+          <button
+            v-if="t.action"
+            class="toast-action"
+            type="button"
+            @click="t.action.onClick()"
+          >{{ t.action.label }}</button>
           <button
             class="toast-close"
             type="button"
@@ -154,6 +163,36 @@ function iconFor(kind: Toast['kind']): string {
 }
 .toast-close .material-symbols-outlined {
   font-size: 16px;
+}
+
+/* Action 按钮(上传失败 → 重试)。视觉上比 close 更显眼 —— 主操作
+ * 是 action,close 只是附带。配色跟 close 一族(透明 + 主题色 hover),
+ * 但加了 weight 和 padding 让按钮"可点"信号更强。带 action 的 toast
+ * 通常是 sticky 状态,所以加一道左边分隔线,让 action 区域跟消息区
+ * 分开。 */
+.toast-with-action {
+  padding-right: 10px;
+}
+.toast-action {
+  height: 26px;
+  padding: 0 12px;
+  margin-left: 4px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-md, 4px);
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 80ms ease;
+}
+.toast-action:hover {
+  background: #fff;
+}
+.toast-action:active {
+  background: rgba(255, 255, 255, 0.7);
 }
 
 /* 进入 / 离开动画:从右侧滑入,200ms 缓和;离开反向。TransitionGroup

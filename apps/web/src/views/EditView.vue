@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
+import UploadStatus from '@/components/editor/UploadStatus.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -569,6 +570,8 @@ onBeforeUnmount(() => {
 <span class="byline-hint">·</span>
             <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>
           </div>
+
+          <UploadStatus />
 
           <RichEditor
             :key="editorKey"
