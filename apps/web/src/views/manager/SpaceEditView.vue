@@ -28,6 +28,7 @@ import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { api, ApiError } from '@/lib/api'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { SPACE_COLOR_PALETTE } from '@/lib/colorPalettes'
 import type { Space, UserGroup } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -49,16 +50,11 @@ useDocumentTitle(() => (space.value ? `编辑空间: ${space.value.name}` : null
 
 const editName = ref('')
 const editDesc = ref('')
-const editColor = ref('#0052CC')
+const editColor = ref(SPACE_COLOR_PALETTE[0].value as string)
 const saving = ref(false)
 const formDirty = ref(false)
 const search = ref('')
 const pendingGroupId = ref<string | null>(null)
-
-const COLOR_PALETTE = [
-  '#0052CC', '#00875A', '#FF5630', '#FFAB00',
-  '#403294', '#0065FF', '#36B37E', '#6554C0',
-]
 
 async function load() {
   loading.value = true
@@ -338,14 +334,15 @@ function formatDate(ts: number): string {
             <span class="field-label">颜色</span>
             <div class="color-swatches">
               <button
-                v-for="c in COLOR_PALETTE"
-                :key="c"
+                v-for="c in SPACE_COLOR_PALETTE"
+                :key="c.value as string"
                 type="button"
                 class="cs-swatch"
-                :class="{ 'cs-swatch-active': editColor === c }"
-                :style="{ background: c }"
+                :class="{ 'cs-swatch-active': editColor === c.value }"
+                :style="{ background: c.value as string }"
+                :title="c.name"
                 :disabled="saving"
-                @click="editColor = c; markDirty()"
+                @click="editColor = c.value!; markDirty()"
               />
             </div>
           </div>

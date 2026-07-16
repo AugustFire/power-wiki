@@ -1,5 +1,7 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { isSafeHref } from '@/lib/sanitize'
+import { useToast } from '@/composables/useToast'
 
 // eslint-disable-next-line @typescript-eslint/no-explicitany
 type AnyEditor = any
@@ -15,6 +17,8 @@ const emit = defineEmits<{
 
 const url = ref('')
 const inputEl = ref<HTMLInputElement | null>(null)
+const errorText = ref<string | null>(null)
+const toast = useToast()
 
 onMounted(async () => {
   // 组件只在 open=true 时挂载,这里直接读当前 link href
@@ -34,12 +38,23 @@ function apply() {
   if (!href) {
     // 空输入视同"移除链接"
     e.chain().focus().extendMarkRange('link').unsetLink().run()
-  } else {
-    const safe = /^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^tel:/i.test(href)
-      ? href
-      : `https://${href}`
-    e.chain().focus().extendMarkRange('link').setLink({ href: safe }).run()
+    errorText.value = null
+    emit('close')
+    return
   }
+  // 输入无协议头时(如「power.wiki」),自动补 https:// —— 这是写链接
+  // 的常见 UX。但补完后必须走 isSafeHref 二次校验,挡掉 javascript: /
+  // data: 等被伪装成无协议头的危险 URL。
+  const candidate = /^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^tel:/i.test(href)
+    ? href
+    : `https://${href}`
+  if (!isSafeHref(candidate)) {
+    errorText.value = '链接格式无效,只支持 http(s) / mailto / tel / 内部页面链接'
+    toast.error('链接格式无效')
+    return
+  }
+  errorText.value = null
+  e.chain().focus().extendMarkRange('link').setLink({ href: candidate }).run()
   emit('close')
 }
 
@@ -63,6 +78,11 @@ function onKey(e: KeyboardEvent) {
     cancel()
   }
 }
+
+// 输入变化时清掉错误态,避免「报错后用户改对了还在红」
+watch(url, () => {
+  if (errorText.value) errorText.value = null
+})
 </script>
 
 <template>
@@ -73,8 +93,10 @@ function onKey(e: KeyboardEvent) {
       type="url"
       placeholder="https://"
       class="link-input"
+      :class="{ 'link-input-error': errorText }"
       @keydown="onKey"
     />
+    <div v-if="errorText" class="link-error">{{ errorText }}</div>
     <div class="link-actions">
       <button class="lp-btn ghost" type="button" @click="cancel">取消</button>
       <button v-if="hasLink" class="lp-btn danger" type="button" @click="remove">
@@ -112,6 +134,13 @@ function onKey(e: KeyboardEvent) {
   box-sizing: border-box;
 }
 .link-input:focus { border-color: var(--accent); }
+.link-input-error { border-color: var(--danger, #de350b) !important; }
+.link-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger, #de350b);
+  line-height: 1.4;
+}
 .link-actions {
   display: flex;
   gap: 6px;

@@ -27,6 +27,7 @@ import { usePaginatedList } from '@/composables/usePaginatedList'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { SPACE_COLOR_PALETTE } from '@/lib/colorPalettes'
 import type { Space, UserGroup } from '@power-wiki/shared'
 import type { User } from '@power-wiki/shared'
 
@@ -91,7 +92,7 @@ const visibleSpaces = computed(() =>
 const { showCreateSpace: showCreate } = useManagerActions()
 const createName = ref('')
 const createDesc = ref('')
-const createColor = ref('#0052CC')
+const createColor = ref(SPACE_COLOR_PALETTE[0].value as string)
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
@@ -102,15 +103,10 @@ watch(showCreate, (next, prev) => {
   if (next && !prev) {
     createName.value = ''
     createDesc.value = ''
-    createColor.value = '#0052CC'
+    createColor.value = SPACE_COLOR_PALETTE[0].value as string
     createError.value = null
   }
 })
-
-const COLOR_PALETTE = [
-  '#0052CC', '#00875A', '#FF5630', '#FFAB00',
-  '#403294', '#0065FF', '#36B37E', '#6554C0',
-]
 
 /**
  * No by-space stat maps: as of Stage B.2, Space DTO carries pageCount /
@@ -306,15 +302,15 @@ const ownerNameById = computed<Record<string, string>>(() =>
         <span class="field-label">颜色</span>
         <div class="color-swatches">
           <button
-            v-for="c in COLOR_PALETTE"
-            :key="c"
+            v-for="c in SPACE_COLOR_PALETTE"
+            :key="c.value as string"
             type="button"
             class="cs-swatch"
-            :class="{ 'cs-swatch-active': createColor === c }"
-            :style="{ background: c }"
-            :title="c"
+            :class="{ 'cs-swatch-active': createColor === c.value }"
+            :style="{ background: c.value as string }"
+            :title="c.name"
             :disabled="creating"
-            @click="createColor = c"
+            @click="createColor = c.value!"
           />
         </div>
       </div>

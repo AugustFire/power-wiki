@@ -126,10 +126,22 @@ onBeforeUnmount(() => {
       :class="{
         'ss-trigger-clickable': canOpen,
         'ss-trigger-neutral': !isActiveShared,
+        'ss-trigger-personal': active.kind === 'personal',
       }"
       @click="toggle"
     >
       <SpaceAvatar :space="active" :size="28" :show-name="true" />
+      <!-- Private 徽章 — Notion 风格,只在 personal space 时挂。徽章本
+           身是顶栏个人空间唯一显式标识,跟 ss-trigger-neutral 的色彩
+           微调一起给"这里跟 team space 不一样"的视觉信号。 -->
+      <span
+        v-if="active.kind === 'personal'"
+        class="ss-private-badge"
+        title="个人空间:只有你(及管理员)可见"
+      >
+        <span class="material-symbols-outlined ss-private-icon">lock</span>
+        <span class="ss-private-label">私人</span>
+      </span>
       <span
         v-if="canOpen"
         class="material-symbols-outlined ss-caret"
@@ -207,13 +219,45 @@ onBeforeUnmount(() => {
 .ss-trigger-clickable { cursor: pointer; }
 .ss-trigger-clickable:hover { background: var(--bg-subtle); }
 
-/* Neutral state: the active space is the user's personal space — softer
- * text color signals "private / not a team" without hiding the identity.
- * The SpaceAvatar block stays fully colored (still recognizably a space),
- * only the name next to it dims. */
-.ss-trigger-neutral :deep(.sa-name) { color: var(--text-3); }
-.ss-trigger-neutral:hover :deep(.sa-name) { color: var(--text-1); }
+/* Neutral state: the active space is the user's personal space. 早期版本
+ * 把名字变浅(text-3)作为"私密"信号,但跟共享空间并排时会视觉割裂
+ * (左侧名字 text-1,右侧名字 text-3)。现在改为克制策略:名字跟共享
+ * 空间同色,只在徽章 / icon 上区分。caret 仍用 text-3(本来就是这个色,
+ * 不是 personal 专属),保留规则以免 hover 变化出错。 */
 .ss-trigger-neutral .ss-caret { color: var(--text-3); }
+
+/* Personal space — 顶栏触发按钮的 chrome 跟共享空间保持完全一致
+ * (透明背景 / 正常字色),唯一区别是挂一个"私人"徽章。Notion 风格:
+ * 克制但能看见,不做"整块背景铺色 + 色条 + 文字变浅"的三重叠加。 */
+.ss-trigger-personal {
+  /* 不改背景、不加色条、不改名字颜色 — 跟 ss-trigger-clickable 完全对齐 */
+}
+
+/* Private 徽章 — 跟 SpaceAvatar 同一基线高度,小 lock + "私人"。
+ * 配色用 --bg-subtle + --text-2,跟触发按钮整体一致;lock 图标
+ * 用 --text-3 当"中性标记",不抢主色,避免跟左侧共享空间视觉打架。 */
+.ss-private-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px 0 5px;
+  margin-left: 2px;
+  border-radius: 9px;
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+  flex-shrink: 0;
+}
+.ss-private-icon {
+  font-size: 13px !important;
+  color: var(--text-3);
+  line-height: 1;
+}
+.ss-private-label { line-height: 1; }
 
 .ss-caret {
   font-size: var(--icon-lg, 18px) !important;

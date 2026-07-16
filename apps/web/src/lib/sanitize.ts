@@ -140,6 +140,35 @@ export function sanitizeHtml(html: string): string {
 }
 
 /**
+ * URL 协议白名单 — 单一事实来源,所有「用户输入 URL 后要被存进 Tiptap
+ * attr / 写入 DB / 渲染成 href」的场景必须走这里。设计要点:
+ *   - 外部协议只放行 http(s) / mailto / tel。javascript: / data: / vbscript:
+ *     / file: / blob: / about: 等危险 / 内部协议一律拒绝
+ *   - 内部链接放行:`/p/{nanoid}` 形式的页面引用 + `/api/attachments/{id}/raw`
+ *     形式的附件下载链接
+ *   - 相对路径(`foo/bar`、`./x`)?不允许 —— 编辑器无相对路径语义,
+ *     用户粘内部相对路径往往是误操作,拒绝更安全
+ *
+ * 用法:LinkPopover / 任何 setLink / insertContent 写入 href 之前调用;
+ * sanitizeAndHardenLinks 渲染期兜底,但写入期直接拒绝更早一步挡住 XSS。
+ */
+export function isSafeHref(href: string): boolean {
+  if (!href) return false
+  const trimmed = href.trim()
+  if (!trimmed) return false
+
+  // 内部链接优先匹配(同源,无协议头)
+  if (/^\/p\/[A-Za-z0-9_-]{6,32}$/.test(trimmed)) return true
+  if (/^\/api\/attachments\/[A-Za-z0-9_-]+\/raw$/.test(trimmed)) return true
+
+  // 外部协议白名单(协议不区分大小写)
+  const m = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)
+  if (!m) return false
+  const proto = m[1]!.toLowerCase()
+  return proto === 'http' || proto === 'https' || proto === 'mailto' || proto === 'tel'
+}
+
+/**
  * 把 sanitize 后的字符串再走一遍:给所有 <a> 强制加 rel="noopener noreferrer" target="_blank",
  * 防止 tab-nabbing 和 reverse tabnabbing。
  */
