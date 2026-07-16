@@ -1,16 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
+import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 
-// eslint-disable-next-line @typescript-eslint/no-explicitany
-type AnyEditor = any
-
-const props = defineProps<{
-  node: { attrs: { language?: string | null }; textContent: string }
-  editor: AnyEditor
-  getPos: () => number | undefined
-  updateAttributes: (attrs: Record<string, unknown>) => void
-}>()
+const props = defineProps<EditorNodeViewProps<{ language?: string | null }>>()
 
 // lowlight common 里的常用子集
 const LANGS: { value: string; label: string }[] = [

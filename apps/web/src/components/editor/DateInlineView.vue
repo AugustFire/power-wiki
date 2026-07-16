@@ -12,17 +12,10 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper } from '@tiptap/vue-3'
 import type { DateMode } from '@/editor/dateInlineExtension'
 import { formatLiveDate } from '@/lib/dateFormat'
+import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 import DateTimePicker from './DateTimePicker.vue'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
-
-const props = defineProps<{
-  node: { attrs: { mode?: DateMode; iso?: string } }
-  editor: AnyEditor
-  getPos: () => number | undefined
-  updateAttributes: (attrs: Record<string, unknown>) => void
-}>()
+const props = defineProps<EditorNodeViewProps<{ mode?: DateMode; iso?: string }>>()
 
 const mode = computed<DateMode>(() => (props.node.attrs.mode === 'fixed' ? 'fixed' : 'now'))
 const iso = computed<string>(() => props.node.attrs.iso || '')

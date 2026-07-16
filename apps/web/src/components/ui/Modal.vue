@@ -24,8 +24,10 @@
  *   size:          'sm' 420 / 'md' 560 / 'lg' 760 / 'auto'(默认,自适应内容)
  *   closeOnBackdrop: 点 backdrop 关闭(默认 true);false 则只能 esc / 显式按钮
  */
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, ref, useId } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { useBodyLock } from '@/composables/useBodyLock'
+import { useEscape } from '@/composables/useEscape'
 
 const props = withDefaults(
   defineProps<{
@@ -50,33 +52,8 @@ function onBackdrop(): void {
   if (props.closeOnBackdrop) close()
 }
 
-function onKey(e: KeyboardEvent): void {
-  if (!props.open) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    close()
-  }
-}
-
-let prevBodyOverflow = ''
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      prevBodyOverflow = document.body.style.overflow
-      document.body.style.overflow = 'hidden'
-      document.addEventListener('keydown', onKey)
-    } else {
-      document.body.style.overflow = prevBodyOverflow
-      document.removeEventListener('keydown', onKey)
-    }
-  },
-  { immediate: true },
-)
-onBeforeUnmount(() => {
-  document.body.style.overflow = prevBodyOverflow
-  document.removeEventListener('keydown', onKey)
-})
+useBodyLock(() => props.open)
+useEscape(() => props.open, close)
 
 const dialogClass = computed(() => {
   switch (props.size) {

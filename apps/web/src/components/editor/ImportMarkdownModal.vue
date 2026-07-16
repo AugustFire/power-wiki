@@ -20,6 +20,8 @@ import { storeToRefs } from 'pinia'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
+import { useBodyLock } from '@/composables/useBodyLock'
+import { useEscape } from '@/composables/useEscape'
 import PathPicker from './PathPicker.vue'
 
 const uiStore = useUiStore()
@@ -173,29 +175,25 @@ function close(): void {
   uiStore.closeImport()
 }
 
-/** Esc 关闭 + Ctrl/Cmd+Enter 提交 */
+/** Esc 关闭由 useEscape 处理;这里只兜 Ctrl/Cmd+Enter 提交 */
 function onKey(e: KeyboardEvent): void {
   if (!importModalOpen.value) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    close()
-  } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault()
     void submit()
   }
 }
+useBodyLock(importModalOpen)
+useEscape(importModalOpen, close)
 watch(importModalOpen, (open) => {
   if (open) {
     resetAndFocus()
-    document.body.style.overflow = 'hidden'
     document.addEventListener('keydown', onKey)
   } else {
-    document.body.style.overflow = ''
     document.removeEventListener('keydown', onKey)
   }
 })
 onBeforeUnmount(() => {
-  document.body.style.overflow = ''
   document.removeEventListener('keydown', onKey)
 })
 

@@ -25,11 +25,9 @@ import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndReplace } from '@/editor/uploadAndInsert'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { useToast } from '@/composables/useToast'
+import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 
 const toast = useToast()
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
 
 type Alignment = 'left' | 'center' | 'right'
 
@@ -44,13 +42,7 @@ type Attrs = {
   align: Alignment
 }
 
-const props = defineProps<{
-  node: { attrs: Attrs }
-  editor: AnyEditor
-  getPos: () => number | undefined
-  updateAttributes: (attrs: Record<string, unknown>) => void
-  selected: boolean
-}>()
+const props = defineProps<EditorNodeViewProps<Attrs>>()
 
 const attrs = computed<Attrs>(() => props.node.attrs)
 const isImage = computed(() => attrs.value.kind !== 'file')

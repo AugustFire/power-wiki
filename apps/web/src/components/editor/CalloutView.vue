@@ -2,18 +2,11 @@
 import { computed } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 import { CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
+import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 
 type CalloutVariant = 'info' | 'success' | 'warning' | 'danger'
 
-const props = defineProps<{
-  node: { attrs: { variant?: CalloutVariant } }
-  editor: AnyEditor
-  getPos: () => number | undefined
-  updateAttributes: (attrs: Record<string, unknown>) => void
-}>()
+const props = defineProps<EditorNodeViewProps<{ variant?: CalloutVariant }>>()
 
 const variant = computed<CalloutVariant>(() => props.node.attrs.variant || 'info')
 const iconName = computed(() => CALLOUT_ICON_MAP[variant.value] || 'info')

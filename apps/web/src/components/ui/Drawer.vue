@@ -22,8 +22,10 @@
  *   title:  简单标题
  *   width:  抽屉宽度 px(默认 440)
  */
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, ref, useId } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { useBodyLock } from '@/composables/useBodyLock'
+import { useEscape } from '@/composables/useEscape'
 
 const props = withDefaults(
   defineProps<{
@@ -45,30 +47,8 @@ function close(): void {
   emit('close')
 }
 
-function onKey(e: KeyboardEvent): void {
-  if (!props.open) return
-  if (e.key === 'Escape') close()
-}
-
-let prevBodyOverflow = ''
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      prevBodyOverflow = document.body.style.overflow
-      document.body.style.overflow = 'hidden'
-      document.addEventListener('keydown', onKey)
-    } else {
-      document.body.style.overflow = prevBodyOverflow
-      document.removeEventListener('keydown', onKey)
-    }
-  },
-  { immediate: true },
-)
-onBeforeUnmount(() => {
-  document.body.style.overflow = prevBodyOverflow
-  document.removeEventListener('keydown', onKey)
-})
+useBodyLock(() => props.open)
+useEscape(() => props.open, close)
 
 const panelStyle = computed(() => ({ width: `${props.width}px` }))
 const labelId = useId()

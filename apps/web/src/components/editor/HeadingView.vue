@@ -1,16 +1,9 @@
 ﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
+import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyEditor = any
-
-const props = defineProps<{
-  node: { attrs: { level?: number }; textContent: string }
-  editor: AnyEditor
-  getPos: () => number | undefined
-  updateAttributes: (attrs: Record<string, unknown>) => void
-}>()
+const props = defineProps<EditorNodeViewProps<{ level?: number }>>()
 
 const level = computed(() => props.node.attrs.level ?? 2)
 

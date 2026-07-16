@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { useBodyLock } from '@/composables/useBodyLock'
+import { useEscape } from '@/composables/useEscape'
 
 const { state, close } = useConfirm()
 
@@ -19,36 +21,29 @@ function onConfirm() {
   close(true)
 }
 
-// Esc 取消 + Enter 确认
+// Esc 取消由 useEscape 处理;这里只兜 Enter 确认(Shift+Enter 留给多行 message)
 function onKey(e: KeyboardEvent) {
   if (!state.value.open) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    onCancel()
-  } else if (e.key === 'Enter' && !e.shiftKey) {
-    // Enter 提交;Shift+Enter 留给 message 多行场景
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     onConfirm()
   }
 }
 
-// 打开时锁 body 滚动 + 监听键盘
+useBodyLock(() => state.value.open)
+useEscape(() => state.value.open, onCancel)
+
+// 打开时监听 Enter,关闭时摘掉
 watch(
   () => state.value.open,
   (open) => {
-    if (open) {
-      document.body.style.overflow = 'hidden'
-      document.addEventListener('keydown', onKey)
-    } else {
-      document.body.style.overflow = ''
-      document.removeEventListener('keydown', onKey)
-    }
+    if (open) document.addEventListener('keydown', onKey)
+    else document.removeEventListener('keydown', onKey)
   },
   { immediate: true }
 )
 
 onBeforeUnmount(() => {
-  document.body.style.overflow = ''
   document.removeEventListener('keydown', onKey)
 })
 

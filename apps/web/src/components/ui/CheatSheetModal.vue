@@ -14,10 +14,11 @@
  * Teleport to body、backdrop click 关闭、Escape 关闭、body 锁滚。
  * 开关状态在 uiStore.cheatSheetOpen,⌘/ 在 App.vue 全局 keydown 触发。
  */
-import { onBeforeUnmount, watch } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
 import { MOD_KEY as MOD } from '@/lib/platform'
+import { useBodyLock } from '@/composables/useBodyLock'
+import { useEscape } from '@/composables/useEscape'
 
 const uiStore = useUiStore()
 const { cheatSheetOpen } = storeToRefs(uiStore)
@@ -119,32 +120,8 @@ const tips: Tip[] = [
   },
 ]
 
-function onKey(e: KeyboardEvent) {
-  if (!cheatSheetOpen.value) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    uiStore.closeCheatSheet()
-  }
-}
-
-watch(
-  cheatSheetOpen,
-  (open) => {
-    if (open) {
-      document.body.style.overflow = 'hidden'
-      document.addEventListener('keydown', onKey)
-    } else {
-      document.body.style.overflow = ''
-      document.removeEventListener('keydown', onKey)
-    }
-  },
-  { immediate: true },
-)
-
-onBeforeUnmount(() => {
-  document.body.style.overflow = ''
-  document.removeEventListener('keydown', onKey)
-})
+useBodyLock(cheatSheetOpen)
+useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
 </script>
 
 <template>
