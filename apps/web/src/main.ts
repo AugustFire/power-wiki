@@ -28,10 +28,17 @@ useUiStore()
 // 全局 401 拦截:任何非 auth-flow 的请求返回 401,清掉本地 session 并跳登录。
 // 必须在 router 安装之后、任何 authed 请求之前装配。handler 不调用 auth.logout()
 // —— 401 已经说明 cookie 无效,再发一次 sign-out 既浪费又可能再次触发此 handler。
+//
+// 模块 9 P0:先 resetSessionState() 再跳转。只清 user / mustResetPassword 会把
+// 前一个 session 的 pages / spaces / recents 等数据 store 留在内存里,401 → /login
+// 的过渡窗口会闪一帧旧数据(旧页面树 / 旧空间)。resetSessionState() 一次性
+// 抹掉全部 per-session 内存状态,与 logout() 走同一条清理路径。
 setUnauthorizedHandler(async () => {
   const auth = useAuthStore()
   auth.user = null
   auth.mustResetPassword = false
+  auth.personalSpaceId = null
+  auth.resetSessionState()
   const redirect = router.currentRoute.value.fullPath
   await router.push({ name: 'login', query: { redirect } })
 })

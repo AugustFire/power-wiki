@@ -9,6 +9,7 @@ import {
 } from '@/editor/htmlToJson'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { api, ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
 import type {
@@ -1314,7 +1315,5 @@ export const usePagesStore = defineStore('pages', () => {
 })
 
 function errorMessage(e: unknown): string {
-  if (e instanceof ApiError) return e.message
-  if (e instanceof Error) return e.message
-  return String(e)
+  return humanizeApiError(e)
 }

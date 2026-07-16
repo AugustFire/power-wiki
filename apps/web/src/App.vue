@@ -11,6 +11,7 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 // P1-6: 自助修改姓名 / 颜色 — 顶层挂,uiStore 控制开关。
 import SettingsDrawer from '@/components/layout/SettingsDrawer.vue'
 import ImportMarkdownModal from '@/components/editor/ImportMarkdownModal.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
@@ -165,9 +166,30 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
     </div>
 
     <main>
-      <div v-if="loading" class="page-loading">
-        <div class="pl-spinner" aria-hidden="true"></div>
-        <p class="pl-text">正在连接后端…</p>
+      <!-- 模块 9 P0:冷启动数据加载用 Skeleton 还原 wiki 骨架(左页面树 +
+           右正文),不用裸 spinner + 文字。loading-ux.md §11 要求:首次加载
+           一律 Skeleton,shimmer 复用 tokens 灰度,chrome(TopBar)已在外层
+           常驻,这里只占位 <main> 的 body。 -->
+      <div v-if="loading" class="boot-skeleton" aria-hidden="true">
+        <aside class="bs-sidebar">
+          <Skeleton width="60%" height="14px" />
+          <div class="bs-tree">
+            <Skeleton v-for="i in 8" :key="i" :width="`${55 + ((i * 37) % 40)}%`" height="12px" />
+          </div>
+        </aside>
+        <section class="bs-content">
+          <Skeleton width="52%" height="30px" radius="6px" />
+          <div class="bs-meta">
+            <Skeleton width="28px" height="28px" radius="50%" />
+            <Skeleton width="140px" height="12px" />
+          </div>
+          <div class="bs-body">
+            <Skeleton :count="3" height="13px" />
+            <Skeleton width="88%" height="13px" />
+            <Skeleton width="40%" height="13px" />
+            <Skeleton width="70%" height="13px" />
+          </div>
+        </section>
       </div>
 
       <div v-else-if="loadError" class="page-error">
@@ -261,26 +283,46 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
 .eb-close:hover { background: rgba(255, 86, 48, 0.12); }
 .eb-close .material-symbols-outlined { font-size: 18px; }
 
-/* ─── 加载占位 ─── */
-.page-loading {
+/* ─── 冷启动 Skeleton 占位(模块 9 P0) ───
+   还原 wiki 双栏骨架:左页面树 + 右正文。宽度 / 间距对齐真实 shell,
+   数据进来切到 RouterView 时高度不塌、不闪。 */
+.boot-skeleton {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 32px;
+  padding: 24px 32px;
+  max-width: 1600px;
+}
+.bs-sidebar {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  padding-top: 8px;
+}
+.bs-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.bs-content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 820px;
+  padding-top: 8px;
+}
+.bs-meta {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  gap: 16px;
-  color: var(--text-3);
+  gap: 10px;
 }
-.pl-spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: pl-spin 0.8s linear infinite;
+.bs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
 }
-.pl-text { font-size: 14px; margin: 0; }
-@keyframes pl-spin { to { transform: rotate(360deg); } }
 
 /* ─── 加载失败 ─── */
 .page-error {
