@@ -22,7 +22,6 @@ import { useBreadcrumb } from '@/composables/useBreadcrumb'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
-import { recomputeLiveDates, startLiveDateInterval } from '@/lib/recomputeLiveDates'
 import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
@@ -277,26 +276,13 @@ watch(
     if (root) {
       highlightCodeBlocks(root)
       addHeadingAnchors(root)
-      recomputeLiveDates(root)
       bindInternalLinkHover(root)
     }
   },
   { flush: 'post', immediate: true },
 )
 
-// 每 60s 重算 now 模式的日期节点,跨日后会自动从"今天"切到绝对日期。
-let liveDateStop: (() => void) | null = null
-watch(
-  contentEl,
-  (root) => {
-    liveDateStop?.()
-    liveDateStop = null
-    if (root) liveDateStop = startLiveDateInterval(root)
-  },
-  { flush: 'post' },
-)
 onBeforeUnmount(() => {
-  liveDateStop?.()
   clearHoverTimer()
   hoveredLink.value = null
 })

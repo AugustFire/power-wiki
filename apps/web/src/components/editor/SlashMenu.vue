@@ -8,7 +8,6 @@ const toast = useToast()
 import { api } from '@/lib/api'
 import type { MentionCandidate, PageNode } from '@power-wiki/shared'
 import DateTimePicker from './DateTimePicker.vue'
-import type { DateMode } from '@/editor/dateInlineExtension'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
 import { useRecentSlashItems } from '@/composables/useRecentSlashItems'
@@ -188,7 +187,7 @@ const items: SlashItem[] = [
   {
     id: 'at',
     label: '@ 提及 / 日期',
-    description: '提及成员 或 插入日期/时间(picker 内 Tab 切成员/日期)',
+    description: '提及成员 或 插入日期/时间(鼠标切 tab)',
     icon: 'alternate_email',
     group: 'advanced',
     aliases: ['提及', 'mention', '@', '日期', 'date', '时间', 'time', '成员'],
@@ -619,13 +618,9 @@ function onPickerKey(e: KeyboardEvent) {
 //  @ Picker —— 成员 tab + 日期 tab
 // ============================================================
 // 2026-07-01: 替代原来的"日期 picker + 提及成员 slash 项"。
+// 2026-07-17: Tab 键不再切 tab(早先焦点会乱跳);改用鼠标点 tab 切换
+//
 // 用户体验上把"@"作为统一入口,内部分流:
-//   - 成员 tab:列出 page 所在 space 的访问组成员,搜索过滤,回车插入 mention
-//   - 日期 tab:嵌入 DateTimePicker(原 date 项的入口),回车插入 dateInline
-// 之所以用 tab 而不是两个独立 slash 项:避免列表里有"@ 提及"和"日期"两项
-// 看起来不相关的项,但入口语义其实是同一个 —— `@ 提及成员` 跟"日期"
-// 没有共同前缀,放一起反而会让用户错以为日期也是 mention。
-
 type AtTab = 'user' | 'date'
 const atTab = ref<AtTab>('user')
 const atPickerQuery = ref('')
@@ -740,7 +735,7 @@ function onPickUser(c: MentionCandidate) {
   hideMenu()
 }
 
-function onPickDate(payload: { mode: DateMode; date: Date }) {
+function onPickDate(payload: { date: Date }) {
   if (!props.editor) return
   props.editor
     .chain()
@@ -748,7 +743,6 @@ function onPickDate(payload: { mode: DateMode; date: Date }) {
     .insertContent({
       type: 'dateInline',
       attrs: {
-        mode: payload.mode,
         iso: payload.date.toISOString(),
       },
     })
@@ -795,10 +789,9 @@ function onAtPickerKey(e: KeyboardEvent) {
     e.preventDefault()
     const c = filteredAtCandidates.value[atPickerIndex.value]
     if (c) onPickUser(c)
-  } else if (e.key === 'Tab') {
-    e.preventDefault()
-    switchAtTab(atTab.value === 'user' ? 'date' : 'user')
   }
+  // Tab 不再拦截 —— 改用鼠标点 tab 切换(早先 Tab 键切到日期 tab 后
+  // 焦点会跳到 tab 按钮上,影响日历交互体验)
 }
 </script>
 
@@ -841,11 +834,11 @@ function onAtPickerKey(e: KeyboardEvent) {
       </div>
     </div>
 
-    <!-- @ picker:成员 tab + 日期 tab -->
+    <!-- @ picker:成员 tab + 日期 tab(鼠标点切) -->
     <div v-else-if="atPickerOpen" class="slash-picker">
       <div class="slash-title">
         <span>插入 @</span>
-        <span class="slash-hint">Tab 切换成员 / 日期 · Esc 取消</span>
+        <span class="slash-hint">鼠标切成员 / 日期 · Esc 取消</span>
       </div>
       <div class="at-tabs" role="tablist">
         <button
@@ -881,7 +874,7 @@ function onAtPickerKey(e: KeyboardEvent) {
             class="pp-input"
             type="text"
             placeholder="按姓名 / 邮箱搜索…"
-            @keydown.stop
+            @keydown="onAtPickerKey"
           />
         </div>
         <div class="pp-list">

@@ -1200,6 +1200,12 @@ body:not(.editor-hover) .drag-handle {
     max-height: 280px;
     overflow-y: auto;
 }
+/* Picker 模式(/页面、@)需要更高的容器 —— 日历 ~310px,成员列表也可能
+   较长。覆盖默认 280px 上限,避免日期 tab 日历溢出要滚动,看不到确定按钮。*/
+.slash-menu:has(.slash-picker) {
+    max-height: 480px;
+    overflow-y: auto;
+}
 .slash-item {
     width: 100%;
     padding: 8px 10px;
@@ -2396,13 +2402,7 @@ button:active:not(:disabled):not(.btn) {
     line-height: 1.4;
     transition: background-color var(--duration-fast) ease;
 }
-.date-inline[data-date-mode="now"]::before {
-    content: '⏱';
-    margin-right: 3px;
-    font-size: 0.85em;
-    opacity: 0.85;
-}
-.date-inline[data-date-mode="fixed"]::before {
+.date-inline::before {
     content: '📅';
     margin-right: 3px;
     font-size: 0.85em;

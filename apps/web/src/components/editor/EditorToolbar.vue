@@ -385,19 +385,12 @@ function isOnDateInline(): boolean {
   return e.isActive('dateInline')
 }
 
-function insertDateNow() {
-  const e = props.editor
-  if (!e) return
-  e.chain().focus().insertDate({ mode: 'now' }).run()
-  closeAllDate()
-}
-
 function insertDateTodayOnly() {
   const e = props.editor
   if (!e) return
   const d = new Date()
   d.setHours(0, 0, 0, 0)
-  e.chain().focus().insertDate({ mode: 'fixed', date: d }).run()
+  e.chain().focus().insertDate({ date: d }).run()
   closeAllDate()
 }
 
@@ -407,12 +400,12 @@ function openDatePopover() {
   datePickerOpen.value = false
 }
 
-function onDateInsert(payload: { mode: 'now' | 'fixed'; date: Date }) {
+function onDateInsert(payload: { date: Date }) {
   const e = props.editor
   if (!e) return
   e.chain()
     .focus()
-    .insertDate({ mode: payload.mode, date: payload.date })
+    .insertDate({ date: payload.date })
     .run()
   closeAllDate()
 }
@@ -930,10 +923,6 @@ function handleClick(btn: Btn) {
         <!-- 快速选项下拉 -->
         <Transition name="popover-fade">
         <div v-if="datePickerOpen" class="tb-date-menu tb-block-type-menu">
-          <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="insertDateNow">
-            <span class="material-symbols-outlined">schedule</span>
-            <span>今天(自动)</span>
-          </button>
           <button type="button" class="tb-block-type-opt" @mousedown.stop.prevent="insertDateTodayOnly">
             <span class="material-symbols-outlined">today</span>
             <span>今天日期</span>

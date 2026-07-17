@@ -1,54 +1,22 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /**
- * DateInline NodeView
+ * DateInline NodeView —— 只渲染固定日期。
  *
- * - mode='now':  每分钟重算显示文案("今天 14:32" / "2026/06/25 14:32")
- * - mode='fixed': 显示 attr.iso 对应的固定日期
- *
- * 节点可编辑:点击节点弹 DateTimePicker 让用户改日期/模式。
+ * 节点可编辑:点击节点弹 DateTimePicker 让用户改日期。
  * 图标(.di-icon 前缀)交给 CSS ::before 统一处理,跟 read view 一致。
+ *
+ * 历史:本节点曾有 mode='now'(每 60s 重算 "今天"),已删除 —— 见
+ * `dateInlineExtension.ts` 顶部注释。NodeView 不再持有 timer / mode prop。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { NodeViewWrapper } from '@tiptap/vue-3'
-import type { DateMode } from '@/editor/dateInlineExtension'
-import { formatLiveDate } from '@/lib/dateFormat'
+import { formatYmd } from '@/lib/dateFormat'
 import type { EditorNodeViewProps } from '@/editor/nodeViewProps'
 import DateTimePicker from './DateTimePicker.vue'
 
-const props = defineProps<EditorNodeViewProps<{ mode?: DateMode; iso?: string }>>()
+const props = defineProps<EditorNodeViewProps<{ iso?: string }>>()
 
-const mode = computed<DateMode>(() => (props.node.attrs.mode === 'fixed' ? 'fixed' : 'now'))
 const iso = computed<string>(() => props.node.attrs.iso || '')
-
-const now = ref(Date.now())
-let timer: ReturnType<typeof setInterval> | null = null
-
-function startTimer() {
-  if (timer) return
-  timer = setInterval(() => {
-    now.value = Date.now()
-  }, 60_000)
-}
-
-function stopTimer() {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
-}
-
-onMounted(() => {
-  if (mode.value === 'now') startTimer()
-})
-
-// 节点 mode 在编辑器内可能被 updateAttributes 修改(fixed ↔ now 切换);
-// 切换到 now 时启动定时器,切到 fixed 时停掉,避免显示冻结。
-watch(mode, (m) => {
-  if (m === 'now') startTimer()
-  else stopTimer()
-})
-
-onBeforeUnmount(stopTimer)
 
 // ─── 节点编辑:点击节点 → 弹 DateTimePicker ─────────────────
 const editing = ref(false)
@@ -71,9 +39,8 @@ function closeEditor() {
   popoverPos.value = null
 }
 
-function onEditorUpdate(payload: { mode: DateMode; date: Date }) {
+function onEditorUpdate(payload: { date: Date }) {
   props.updateAttributes({
-    mode: payload.mode,
     iso: payload.date.toISOString(),
   })
   closeEditor()
@@ -84,17 +51,13 @@ function onEditorUpdate(payload: { mode: DateMode; date: Date }) {
 }
 
 // ─── 显示文案格式化(共享函数) ────────────────────
-const displayText = computed<string>(() =>
-  formatLiveDate({ mode: mode.value, iso: iso.value }, new Date(now.value)),
-)
+const displayText = computed<string>(() => formatYmd(iso.value))
 </script>
 
 <template>
   <NodeViewWrapper
     as="span"
     class="date-inline"
-    :class="mode"
-    :data-date-mode="mode"
     :data-date="iso"
     :datetime="iso"
     contenteditable="false"
@@ -109,7 +72,6 @@ const displayText = computed<string>(() =>
       @mousedown.stop
     >
       <DateTimePicker
-        :initial-mode="mode"
         :initial-date="iso ? new Date(iso) : new Date()"
         @insert="onEditorUpdate"
         @cancel="closeEditor"
@@ -137,4 +99,3 @@ const displayText = computed<string>(() =>
   box-shadow: var(--shadow-md);
 }
 </style>
-

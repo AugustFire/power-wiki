@@ -1,31 +1,27 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /**
- * DateTimePicker(日期选择器)
+ * DateTimePicker(日期选择器) —— 只发 fixed 日期。
  *
  * 用在三个地方:
  *  1. 工具栏「⏰ → 指定日期」下拉项
  *  2. slash 菜单「/date」选中后
  *  3. 点击已存在的 dateInline 节点(编辑)
  *
- * 交互:
- *  - 顶部 [动态 | 固定] 模式 tab
- *  - 「动态」:显示当前日期,确定 → mode='now'
- *  - 「固定」:日历选日期,确定 → mode='fixed'
+ * 历史:本 picker 原本有 [动态 | 固定] 模式 tab,「动态」已删除 —— 见
+ * `dateInlineExtension.ts` 顶部注释。现在只发固定日期。
  *
  * 发出事件:
- *  - @insert({ mode, date })
+ *  - @insert({ date })
  *  - @cancel
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { DateMode } from '@/editor/dateInlineExtension'
 
 const props = defineProps<{
-  initialMode?: DateMode
   initialDate?: Date
 }>()
 
 const emit = defineEmits<{
-  insert: [{ mode: DateMode; date: Date }]
+  insert: [{ date: Date }]
   cancel: []
 }>()
 
@@ -46,18 +42,12 @@ function fromYmd(s: string): Date {
 
 // ─── 状态 ──────────────────────────────────────────────
 const initDate = props.initialDate ?? new Date()
-const initMode: DateMode = props.initialMode === 'fixed' ? 'fixed' : 'now'
 
-const mode = ref<DateMode>(initMode)
 const selectedDate = ref<Date>(new Date(initDate.getFullYear(), initDate.getMonth(), initDate.getDate()))
 const viewYear = ref(selectedDate.value.getFullYear())
 const viewMonth = ref(selectedDate.value.getMonth())
 
 const dateInputRef = ref<HTMLInputElement | null>(null)
-
-function setMode(m: DateMode) {
-  mode.value = m
-}
 
 // ─── 日历网格计算 ──────────────────────────────────────
 interface CalCell {
@@ -113,16 +103,10 @@ function pickCell(cell: CalCell) {
   selectedDate.value = new Date(cell.date)
   viewYear.value = selectedDate.value.getFullYear()
   viewMonth.value = selectedDate.value.getMonth()
-  // 选了日期就自动切到固定模式
-  mode.value = 'fixed'
 }
 
 function pickConfirm() {
-  if (mode.value === 'now') {
-    emit('insert', { mode: 'now', date: new Date() })
-  } else {
-    emit('insert', { mode: 'fixed', date: new Date(selectedDate.value) })
-  }
+  emit('insert', { date: new Date(selectedDate.value) })
 }
 
 function pickTodayDate() {
@@ -131,7 +115,6 @@ function pickTodayDate() {
   selectedDate.value = d
   viewYear.value = d.getFullYear()
   viewMonth.value = d.getMonth()
-  mode.value = 'fixed'
 }
 
 function onCancel() {
@@ -144,7 +127,6 @@ function onDateInput(e: Event) {
   selectedDate.value = fromYmd(v)
   viewYear.value = selectedDate.value.getFullYear()
   viewMonth.value = selectedDate.value.getMonth()
-  mode.value = 'fixed'
 }
 
 // 键盘:Enter 确认;Esc 取消
@@ -168,46 +150,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="date-picker" @mousedown.stop>
-    <!-- 模式 tab -->
-    <div class="dp-mode-tabs">
-      <button
-        type="button"
-        class="dp-mode-tab"
-        :class="{ active: mode === 'now' }"
-        @mousedown.prevent="setMode('now')"
-      >
-        <span class="material-symbols-outlined">schedule</span>
-        <span>动态</span>
-      </button>
-      <button
-        type="button"
-        class="dp-mode-tab"
-        :class="{ active: mode === 'fixed' }"
-        @mousedown.prevent="setMode('fixed')"
-      >
-        <span class="material-symbols-outlined">event</span>
-        <span>固定</span>
-      </button>
-    </div>
-
-    <!-- 动态模式:简洁展示当前日期 -->
-    <div v-if="mode === 'now'" class="dp-now">
-      <div class="dp-now-label">当前日期</div>
-      <div class="dp-now-value">
-        {{
-          new Date().toLocaleDateString('zh-CN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            weekday: 'long',
-          })
-        }}
-      </div>
-      <div class="dp-now-hint">每次打开页面/光标进入时自动更新到当天</div>
-    </div>
-
-    <!-- 固定模式:日历 -->
-    <div v-else class="dp-cal-wrap">
+    <div class="dp-cal-wrap">
       <div class="dp-cal-head">
         <button type="button" class="dp-nav" title="上一月" @mousedown.prevent="prevMonth">
           <span class="material-symbols-outlined">chevron_left</span>
@@ -279,64 +222,6 @@ onBeforeUnmount(() => {
   font-family: inherit;
   color: var(--text-1);
   user-select: none;
-}
-
-.dp-mode-tabs {
-  display: flex;
-  background: var(--bg-subtle);
-  border-radius: var(--radius-md);
-  padding: 2px;
-  gap: 2px;
-}
-.dp-mode-tab {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-2);
-  cursor: pointer;
-  font-family: inherit;
-}
-.dp-mode-tab:hover { color: var(--text-1); }
-.dp-mode-tab.active {
-  background: var(--bg);
-  color: var(--accent);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-.dp-mode-tab .material-symbols-outlined { font-size: 14px; }
-
-.dp-now {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 4px;
-}
-.dp-now-label {
-  font-size: 11px;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 600;
-}
-.dp-now-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-1);
-  line-height: 1.4;
-}
-.dp-now-hint {
-  font-size: 11px;
-  color: var(--text-3);
-  line-height: 1.4;
-  margin-top: 4px;
 }
 
 .dp-cal-head {
@@ -473,4 +358,3 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 </style>
-

@@ -226,36 +226,48 @@ export const ImageAttachment = Node.create({
     return {
       insertAttachment:
         (arg: InsertAttachmentArg) =>
-        ({ commands }) =>
-          commands.insertContent({
-            type: this.name,
-            attrs: {
-              id: arg.id,
-              kind: arg.kind,
-              mime: arg.mimeType,
-              originalFilename: arg.originalFilename,
-              sizeBytes: arg.sizeBytes,
-              alt: '',
-              caption: '',
-              align: 'left',
+        ({ commands }) => {
+          // imageAttachment 是 atom + block,cursor 不进入节点内部;只插一个
+          // 节点的话光标停在节点边界上,用户看不见输入位置。一起插一个空
+          // 段落,Tiptap 会把 cursor 自然落到空段落起始处,继续打字即可。
+          // (mention 那种 inline atom 走 .insertContent(' ') 推空格同思路,
+          // block 必须用 paragraph 推)
+          return commands.insertContent([
+            {
+              type: 'imageAttachment',
+              attrs: {
+                id: arg.id,
+                kind: arg.kind,
+                mime: arg.mimeType,
+                originalFilename: arg.originalFilename,
+                sizeBytes: arg.sizeBytes,
+                alt: '',
+                caption: '',
+                align: 'left',
+              },
             },
-          }),
+            { type: 'paragraph' },
+          ])
+        },
       insertAttachmentAt:
         (arg: InsertAttachmentArg, pos: number) =>
         ({ commands }) =>
-          commands.insertContentAt(pos, {
-            type: this.name,
-            attrs: {
-              id: arg.id,
-              kind: arg.kind,
-              mime: arg.mimeType,
-              originalFilename: arg.originalFilename,
-              sizeBytes: arg.sizeBytes,
-              alt: '',
-              caption: '',
-              align: 'left',
+          commands.insertContentAt(pos, [
+            {
+              type: 'imageAttachment',
+              attrs: {
+                id: arg.id,
+                kind: arg.kind,
+                mime: arg.mimeType,
+                originalFilename: arg.originalFilename,
+                sizeBytes: arg.sizeBytes,
+                alt: '',
+                caption: '',
+                align: 'left',
+              },
             },
-          }),
+            { type: 'paragraph' },
+          ]),
       setAttachmentCaption:
         (id: string, caption: string) =>
         ({ state, dispatch }) =>
