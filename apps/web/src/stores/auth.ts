@@ -161,14 +161,21 @@ export const useAuthStore = defineStore('auth', () => {
     useUiStore().clearError()
   }
 
-  async function resetPassword(currentPassword: string, newPassword: string): Promise<void> {
-    const { user: u, personalSpaceId: psid } = await api.auth.resetPassword({
+  async function resetPassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ kickedSessions: number }> {
+    const { user: u, personalSpaceId: psid, kickedSessions } = await api.auth.resetPassword({
       currentPassword,
       newPassword,
     })
     user.value = u
     mustResetPassword.value = false
     personalSpaceId.value = psid
+    // 后端在改密成功后顺手清掉该用户除当前外的 sessions 行。「我怀疑账号
+    // 泄露」是高频场景,这个数字透给 caller 用来弹反馈 toast(> 0 才弹,
+    // = 0 不弹避免冗余)。
+    return { kickedSessions }
   }
 
   return {

@@ -32,6 +32,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import AvatarCropper, { type CroppedAvatarPayload } from '@/components/AvatarCropper.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { useToast } from '@/composables/useToast'
 import { useUserAvatarUpload } from '@/composables/useUserAvatarUpload'
 import { usePresetAvatars, presetFileSync } from '@/composables/usePresetAvatars'
 import { api, ApiError } from '@/lib/api'
@@ -45,6 +46,7 @@ import {
 
 const authStore = useAuthStore()
 const uiStore = useUiStore()
+const toast = useToast()
 const { upload, abort: abortUpload } = useUserAvatarUpload()
 /** M11 v2:预设头像清单由后端扫盘提供,模块顶层 cache + reactive presets。
  *  见 apps/web/src/composables/usePresetAvatars.ts。 */
@@ -462,12 +464,26 @@ const nameInvalid = computed(
   () => editName.value.trim().length === 0 || editName.value.length > 64,
 )
 
-/** 改密表单的就绪态 — 8 字符以上 / 两次输入一致 / 当前密码非空。 */
+/**
+ * 新密码是否与当前密码相同。ResetPasswordView 已有同名 computed,
+ * SettingsDrawer 之前漏了这个检查(改密 = 拿 A 改 A 等于没改)。
+ * 后端 ResetPasswordInputSchema refine 也卡这层(前后端共用一条规则,
+ * 前端拦住让用户即时看到 hint,后端兜底防绕过)。
+ */
+const pwdSameAsCurrent = computed(
+  () =>
+    newPwd.value.length > 0 &&
+    currentPwd.value.length > 0 &&
+    newPwd.value === currentPwd.value,
+)
+
+/** 改密表单的就绪态 — 8 字符以上 / 两次输入一致 / 当前密码非空 / 新旧不同。 */
 const pwdReady = computed(
   () =>
     currentPwd.value.length > 0 &&
     newPwd.value.length >= 8 &&
-    newPwd.value === confirmPwd.value,
+    newPwd.value === confirmPwd.value &&
+    !pwdSameAsCurrent.value,
 )
 
 async function onChangePassword() {
@@ -488,9 +504,14 @@ async function onChangePassword() {
     currentPwd.value = ''
     newPwd.value = ''
     confirmPwd.value = ''
-    // 不弹 toast:折叠 <details> + 清空 3 个 password input 就是反馈,
-    // 用户就在抽屉里看着,toast 是冗余。
+    // 折叠 + 清空 3 个 password input 是「改密成功」的就地反馈(用户
+    // 在抽屉里看着,toast 冗余);但 kickedSessions 是「安全相关」的副
+    // 效果 —— 用户大概率没想到改密码会自动踢其他设备,显式 toast 一句
+    // 「已退出其他 N 个设备」让他确认动作已生效。
     pwdOpen.value = false
+    if (r.kickedSessions > 0) {
+      toast.info(`已退出其他 ${r.kickedSessions} 个设备的登录`, 2500)
+    }
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       pwdError.value = '当前密码不正确'
@@ -923,6 +944,12 @@ const previewAvatarSrc = computed<string | null>(() => {
                   {{ pwdStrength.label }}
                 </span>
               </div>
+              <!-- 新旧密码相同:与 ResetPasswordView 同步显示,
+                   强度条之外再加一条 error hint(强度条还能显示「弱」,
+                   但「跟旧密码一样」是更严重的阻断信号)。 -->
+              <span v-if="pwdSameAsCurrent" class="field-hint error">
+                新密码不能与当前密码相同
+              </span>
             </label>
 
             <label class="field">

@@ -204,9 +204,29 @@ export const SignInInputSchema = z.object({
 })
 
 /** POST /api/auth/reset-password */
-export const ResetPasswordInputSchema = z.object({
-  currentPassword: z.string().min(1, '请输入当前密码'),
-  newPassword: z.string().min(8, '新密码至少 8 位').max(128),
+export const ResetPasswordInputSchema = z
+  .object({
+    currentPassword: z.string().min(1, '请输入当前密码'),
+    newPassword: z.string().min(8, '新密码至少 8 位').max(128),
+  })
+  // 新密码必须与当前密码不同 —— 用户场景分两种:(1) admin 给临时
+  // 密码后首次重置,(2) 自愿改密。前者临时密码跟旧密码相同概率极低,
+  // 但后者如果允许「拿 A 改 A」等于没改,违背改密意图。refine 提到
+  // schema 层,前后端共用一份规则。
+  .refine((d) => d.newPassword !== d.currentPassword, {
+    message: '新密码不能与当前密码相同',
+    path: ['newPassword'],
+  })
+
+/** POST /api/auth/reset-password 响应 —— 改密成功后,后端顺手清掉该用户
+ *  除当前 session 外的所有 sessions 行(sessions 表是 cookie→userId 映射,
+ *  改密后保留其它 session = 攻击者仍能继续访问)。`kickedSessions` 是清
+ *  掉的行数(0 表示没其它设备在线),前端用来决定是否弹「已退出其他 N
+ *  个设备」反馈。详见 apps/api/src/routes/auth.ts:reset-password。 */
+export const ResetPasswordResponseSchema = z.object({
+  user: UserSchema,
+  personalSpaceId: z.string().nullable(),
+  kickedSessions: z.number().int().nonnegative(),
 })
 
 /* ---------- User avatar API schemas ---------- */
@@ -623,6 +643,7 @@ export type DuplicatePageInput = z.infer<typeof DuplicatePageInputSchema>
 export type SnapPageInput = z.infer<typeof SnapPageInputSchema>
 export type SignInInput = z.infer<typeof SignInInputSchema>
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>
+export type ResetPasswordResponse = z.infer<typeof ResetPasswordResponseSchema>
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>
 /** M11 用户头像三态 union(form state 用)。 */

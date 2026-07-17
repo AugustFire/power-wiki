@@ -18,17 +18,24 @@
  * enumeration. The error message stays generic ("邮箱或密码错误").
  */
 import { Hono } from 'hono'
-import { and, eq } from 'drizzle-orm'
+import { getCookie } from 'hono/cookie'
+import { and, eq, ne } from 'drizzle-orm'
 import {
   ResetPasswordInputSchema,
+  ResetPasswordResponseSchema,
   SignInInputSchema,
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { spaces, users } from '../db/schema'
+import { sessions, spaces, users } from '../db/schema'
 import { requireAuth, type Variables } from '../auth/middleware'
 import { hashPassword, verifyPassword } from '../auth/password'
-import { createSession, deleteSession, getSessionUser } from '../auth/session'
+import {
+  SESSION_COOKIE,
+  createSession,
+  deleteSession,
+  getSessionUser,
+} from '../auth/session'
 import { rowToUser } from '../lib/rowMappers'
 
 export const authRouter = new Hono<{ Variables: Variables }>()
@@ -102,6 +109,21 @@ authRouter.get('/session', async (c) => {
 // ─── POST /api/auth/reset-password ──────────────────────────────────────────
 // Requires an active session — used both for first-login forced reset AND for
 // the user's own voluntary password change.
+//
+// Side effect: after the password actually changes, delete every other session
+// row for this user. This is the "I think my account was compromised" path —
+// if someone has the old password on another device, that device's session row
+// is dropped on the next request and they're bounced back to sign-in. We keep
+// the row that made *this* request (the user who just changed the password is
+// presumably not the attacker).
+//
+// Failure mode: if the DELETE fails after the password UPDATE succeeded, the
+// password is still changed (defense in depth — sessions are DB-backed and
+// do NOT re-check password on every request, so a stuck row would still grant
+// access until its 30d TTL). We don't wrap in a transaction because the
+// existing session-lifecycle pattern (see auth/session.ts) is also single-
+// statement; the password change is the load-bearing defense, the session
+// purge is the UX bonus.
 authRouter.post('/reset-password', requireAuth, async (c) => {
   const me = c.get('user')
   const body = await c.req.json().catch(() => ({}))
@@ -125,9 +147,30 @@ authRouter.post('/reset-password', requireAuth, async (c) => {
     .set({ passwordHash: newHash, status: 'active', updatedAt: now })
     .where(eq(users.id, me.id))
 
+  // 拿当前 sessionId(改密的是谁,留谁的 session)。
+  // SESSION_COOKIE 不存在 = 当前请求不带 session,但 requireAuth 已经拦了,
+  // 所以一定有值 —— 拿不到的话 fallback 到「不留」,等于踢掉自己 = 下次访问
+  // 重新登录,也是合理行为(异常路径,不该发生)。
+  const currentSessionId = getCookie(c, SESSION_COOKIE)
+  const kicked = await db
+    .delete(sessions)
+    .where(
+      currentSessionId
+        ? and(eq(sessions.userId, me.id), ne(sessions.id, currentSessionId))
+        : eq(sessions.userId, me.id),
+    )
+    .returning({ id: sessions.id })
+  const kickedSessions = kicked.length
+
   const updated = (await db.select().from(users).where(eq(users.id, me.id)).limit(1))[0]!
   const personalSpaceId = await findPersonalSpaceId(me.id)
-  return c.json({ user: UserSchema.parse(rowToUser(updated)), personalSpaceId })
+  return c.json(
+    ResetPasswordResponseSchema.parse({
+      user: rowToUser(updated),
+      personalSpaceId,
+      kickedSessions,
+    }),
+  )
 })
 
 /**

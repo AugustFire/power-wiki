@@ -41,6 +41,7 @@ import {
   PublishPageInputSchema,
   RequestUploadInputSchema,
   ResetPasswordInputSchema,
+  ResetPasswordResponseSchema,
   SignInInputSchema,
   SpaceSchema,
   ToggleLikeResponseSchema,
@@ -590,7 +591,7 @@ export const api = {
       })),
     resetPassword: async (input: ResetPasswordInput) => {
       const parsed = ResetPasswordInputSchema.parse(input)
-      const r = await request<{ user: User; personalSpaceId: string | null }>(
+      const r = await request<unknown>(
         '/auth/reset-password',
         { method: 'POST', body: JSON.stringify(parsed) },
       )
@@ -602,9 +603,11 @@ export const api = {
       // straight back to /reset-password — forcing them to set the password
       // twice.
       invalidatePath('GET', '/auth/session')
+      const validated = ResetPasswordResponseSchema.parse(r)
       return {
-        user: UserSchema.parse(r.user) as User,
-        personalSpaceId: r.personalSpaceId,
+        user: UserSchema.parse(validated.user) as User,
+        personalSpaceId: validated.personalSpaceId,
+        kickedSessions: validated.kickedSessions,
       }
     },
   },
