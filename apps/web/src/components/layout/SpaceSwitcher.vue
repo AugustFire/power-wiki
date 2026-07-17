@@ -137,10 +137,9 @@ onBeforeUnmount(() => {
       <span
         v-if="active.kind === 'personal'"
         class="ss-private-badge"
-        title="个人空间:只有你(及管理员)可见"
+        title="个人空间:只有你自己可见"
       >
-        <span class="material-symbols-outlined ss-private-icon">lock</span>
-        <span class="ss-private-label">私人</span>
+        <span class="material-symbols-outlined ss-private-icon">lock_person</span>
       </span>
       <span
         v-if="canOpen"
@@ -239,16 +238,8 @@ onBeforeUnmount(() => {
 .ss-private-badge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 18px;
-  padding: 0 6px 0 5px;
   margin-left: 2px;
-  border-radius: 9px;
-  background: var(--bg-subtle);
   color: var(--text-2);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
   user-select: none;
   flex-shrink: 0;
 }
@@ -257,7 +248,6 @@ onBeforeUnmount(() => {
   color: var(--text-3);
   line-height: 1;
 }
-.ss-private-label { line-height: 1; }
 
 .ss-caret {
   font-size: var(--icon-lg, 18px) !important;
