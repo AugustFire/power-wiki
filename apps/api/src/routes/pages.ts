@@ -89,6 +89,7 @@ import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { deleteObject } from '../lib/s3'
+import { copyPageAttachments, rewriteAttachmentRefs } from '../lib/copyPageAttachments'
 import { enqueueNotifications, enqueueWatchFanout } from '../lib/notify'
 import { recordPageEvent, SUPPORTED_KINDS, type PageEventKind } from '../lib/pageEvents'
 import { purgeExpiredTrash } from '../lib/retention'
@@ -1100,7 +1101,10 @@ pagesRouter.patch('/:id/move', async (c) => {
  *      owner,所以这条天然挡掉,不需要 personalSpaceGuard。
  *  标题后缀:`(来自 {userName} 的个人分享)`。userName 取自 users 表的
  *  name 字段(失败 fallback 为「我」,绝不抛错)。
- *  子页面:**不**递归复制 — 单页发布,作者可以选择是否要继续逐个发布子页。
+ *  子页面:默认**不**递归(单页发布)。body 传 `includeChildren:true` +
+ *  可选 `depth`(默认 1 = 仅直接子级)时,BFS 逐层复制源子树到 depth 层,
+ *  每页都复制独立附件(见 copyPageAttachments)。只有根页加分享后缀,
+ *  子页保留原标题;'published' 事件只打在根页(不刷活动流)。
  */
 pagesRouter.post('/:id/publish', async (c) => {
   const me = c.get('user')
@@ -1111,6 +1115,8 @@ pagesRouter.post('/:id/publish', async (c) => {
     return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
   }
   const { targetSpaceId } = parsed.data
+  const includeChildren = parsed.data.includeChildren === true
+  const depth = parsed.data.depth ?? 1
 
   // 源页必须存在、未删除
   const [source] = await db
@@ -1200,20 +1206,82 @@ pagesRouter.post('/:id/publish', async (c) => {
   const baseTitle = (source.title || '').trim() || '未命名'
   const newTitle = baseTitle.includes(suffix) ? baseTitle : `${baseTitle}${suffix}`
 
-  await db.insert(pages).values({
-    id: newId,
-    parentId: null,
-    spaceId: targetSpaceId,
-    title: newTitle,
-    icon: source.icon ?? null,
-    contentJson: source.contentJson,
-    contentHtml: source.contentHtml,
-    sortOrder,
-    createdAt: now,
-    updatedAt: now,
-    updatedBy: me.id,
-    authorId: me.id,
-  })
+  try {
+    await db.transaction(async (tx) => {
+      // 复制源页附件到新页(独立的 S3 对象 + DB 行),并把内容里的旧附件
+      // 引用改写成新 id —— 否则跨空间发布后团队成员读不到源个人空间的
+      // 附件会裂图,源草稿删除也会让已发布页永久裂图。见 copyPageAttachments。
+      const attIdMap = await copyPageAttachments(tx, source.id, newId, me.id, now)
+      const { contentJson, contentHtml } = rewriteAttachmentRefs(
+        source.contentJson,
+        source.contentHtml,
+        attIdMap,
+      )
+      await tx.insert(pages).values({
+        id: newId,
+        parentId: null,
+        spaceId: targetSpaceId,
+        title: newTitle,
+        icon: source.icon ?? null,
+        contentJson,
+        contentHtml,
+        sortOrder,
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: me.id,
+        authorId: me.id,
+      })
+
+      // includeChildren:BFS 逐层复制源子树到 depth 层(depth=1 只含直接子级)。
+      // 每个子页也走 copyPageAttachments + rewrite,拿独立附件。parentId 用
+      // pageIdMap 从旧 id 映射到新 id;BFS 保证父页先于子页入 map。子页保留原
+      // 标题(只有根页加「来自 X 的个人分享」后缀),sortOrder 保留兄弟相对顺序。
+      if (includeChildren) {
+        const pageIdMap = new Map<string, string>()
+        pageIdMap.set(source.id, newId)
+        let frontier: string[] = [source.id]
+        let level = 0
+        while (frontier.length > 0 && level < depth) {
+          const children = await tx
+            .select()
+            .from(pages)
+            .where(and(inArray(pages.parentId, frontier), isNull(pages.deletedAt)))
+            .orderBy(pages.sortOrder)
+          if (children.length === 0) break
+          for (const child of children) {
+            const childNewId = generatePageId()
+            pageIdMap.set(child.id, childNewId)
+            const newParent = pageIdMap.get(child.parentId!)!
+            const childAttIdMap = await copyPageAttachments(tx, child.id, childNewId, me.id, now)
+            const { contentJson: childJson, contentHtml: childHtml } = rewriteAttachmentRefs(
+              child.contentJson,
+              child.contentHtml,
+              childAttIdMap,
+            )
+            await tx.insert(pages).values({
+              id: childNewId,
+              parentId: newParent,
+              spaceId: targetSpaceId,
+              title: child.title,
+              icon: child.icon ?? null,
+              contentJson: childJson,
+              contentHtml: childHtml,
+              sortOrder: child.sortOrder,
+              createdAt: now,
+              updatedAt: now,
+              updatedBy: me.id,
+              authorId: me.id,
+            })
+          }
+          frontier = children.map((ch) => ch.id)
+          level++
+        }
+      }
+    })
+  } catch (err) {
+    console.error('[publish] 发布失败(附件复制或建页出错)', err)
+    return c.json({ error: 'publish_failed', message: '发布失败,请重试' }, 502)
+  }
 
   // P1-3 v2: emit 'published' event on the NEW page. Source stays in the
   // personal space and is NOT re-stamped — the act of publishing is a new

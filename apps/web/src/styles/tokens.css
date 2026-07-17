@@ -45,6 +45,17 @@
     --activity-published:  #00B8D9;
     --activity-purged:     #DE350B;
 
+    /* Label chips — 8 组 Atlas 软色板 bg/fg 对。标签按名字哈希落到其中一组,
+       同名标签处处同色(见 apps/web/src/lib/labelColor.ts)。 */
+    --label-1-bg: #DEEBFF; --label-1-fg: #0747A6; /* blue */
+    --label-2-bg: #E3FCEF; --label-2-fg: #006644; /* green */
+    --label-3-bg: #FFF7E6; --label-3-fg: #B86E00; /* yellow */
+    --label-4-bg: #FFEBE6; --label-4-fg: #BF2600; /* red */
+    --label-5-bg: #EAE6FF; --label-5-fg: #403294; /* purple */
+    --label-6-bg: #E6FCFF; --label-6-fg: #008DA6; /* teal */
+    --label-7-bg: #FFECF8; --label-7-fg: #AE4787; /* magenta */
+    --label-8-bg: #FFF0E6; --label-8-fg: #B65C02; /* orange */
+
     /* Code surface — 深色代码块上的文字色 */
     --code-fg:           #B3BAC5;
     --code-chrome-fg:    #9CA3AF;

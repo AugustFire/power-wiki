@@ -20,6 +20,7 @@
 import { computed, ref } from 'vue'
 import type { PageNode } from '@power-wiki/shared'
 import { api } from '@/lib/api'
+import { labelColorVars } from '@/lib/labelColor'
 import LabelAddPopover from '@/components/page/LabelAddPopover.vue'
 
 const props = withDefaults(
@@ -37,6 +38,12 @@ const popoverOpen = ref(false)
 const popoverAnchor = ref<{ x: number; y: number } | null>(null)
 
 const labels = computed(() => props.page.labels ?? [])
+
+/** 每个标签按名字哈希取一组固定配色(bg/fg),inline style 应用到 chip。 */
+function chipStyle(label: string) {
+  const { bg, fg } = labelColorVars(label)
+  return { background: bg, color: fg }
+}
 
 const showRow = computed(() => !props.compact || labels.value.length > 0 || popoverOpen.value)
 
@@ -90,7 +97,12 @@ async function removeLabel(label: string) {
       class="material-symbols-outlined label-leading-icon"
       aria-hidden="true"
     >sell</span>
-    <span v-for="l in labels" :key="l" class="label-chip label-chip-removable">
+    <span
+      v-for="l in labels"
+      :key="l"
+      class="label-chip label-chip-removable"
+      :style="chipStyle(l)"
+    >
       {{ l }}
       <button
         class="label-remove"
@@ -163,7 +175,7 @@ async function removeLabel(label: string) {
   height: 14px;
   border: 0;
   background: transparent;
-  color: var(--text-3);
+  color: currentColor;
   border-radius: 50%;
   cursor: pointer;
   padding: 0;

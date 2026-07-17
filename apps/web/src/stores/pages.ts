@@ -881,6 +881,7 @@ export const usePagesStore = defineStore('pages', () => {
   async function publishPageToSpace(
     id: string,
     targetSpaceId: string,
+    opts?: { includeChildren?: boolean; depth?: number },
   ): Promise<PageNode> {
     if (!pages.value.some((p) => p.id === id)) {
       throw new Error(`page not found: ${id}`)
@@ -912,7 +913,10 @@ export const usePagesStore = defineStore('pages', () => {
     pages.value = [...pages.value, optimistic]
 
     try {
-      const real = await api.pages.publish(id, { targetSpaceId })
+      const real = await api.pages.publish(id, {
+        targetSpaceId,
+        ...(opts?.includeChildren ? { includeChildren: true, depth: opts.depth ?? 1 } : {}),
+      })
       // 替换占位
       const i = pages.value.findIndex((p) => p.id === tempId)
       if (i >= 0) {

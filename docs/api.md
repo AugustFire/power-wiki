@@ -47,7 +47,7 @@
 | PATCH  | `/:id` | 普通 | body `{title?,contentJSON?,contentHTML?,icon?}`;metadata-only PATCH 不打 `page_versions` |
 | PATCH  | `/:id/move` | 普通 | body `{newParentId,newOrder?}`,循环返 409 `cycle` |
 | POST   | `/:id/snapshots` | 普通 | 手动 / 边界快照入口(EditView 30s idle + route leave 末段自动调),retention 30 行 |
-| POST   | `/:id/publish` | 普通 | body `{targetSpaceId}` → 201 + 新 `PageNode`(personal space → team space 的「发布到」语义:源页保留,新页标题自动加 `（来自 {userName} 的个人分享）` 后缀,源页只读于自己 personal space) |
+| POST   | `/:id/publish` | 普通 | body `{targetSpaceId, includeChildren?, depth?}` → 201 + 新 `PageNode`(personal space → team space 的「发布到」语义:源页保留,新页标题自动加 `（来自 {userName} 的个人分享）` 后缀,源页只读于自己 personal space)。附件随发布**独立复制**(S3 对象 + DB 行 + 内容引用改写,防跨空间裂图)。`includeChildren:true` 时按 `depth`(默认 1 = 仅直接子级,max 50 当「全部」)BFS 递归复制子树,子页保留原标题、独立复制各自附件,`published` 事件只打根页 |
 | POST   | `/:id/duplicate` | 普通 | 同 sibling 组复制,标题前缀 `复制自`,新页落在源页正下方 |
 | POST   | `/:id/restore` | admin | 恢复软删除页 |
 | DELETE | `/:id` | 普通(soft) / admin(`?purge=true`) | 默认软删进回收站;`?purge=true` 硬删整棵子树(recursive CTE + comments / notifications / attachments 三表三步事务清理) |

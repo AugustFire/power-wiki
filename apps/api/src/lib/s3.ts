@@ -20,6 +20,7 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type { Readable } from 'node:stream'
@@ -87,5 +88,24 @@ export async function headObject(
 export async function deleteObject(key: string): Promise<void> {
   await getS3Client().send(
     new DeleteObjectCommand({ Bucket: bucket(), Key: key }),
+  )
+}
+
+/**
+ * 服务端复制对象(不经过 API 中转字节)。跨空间 publish 复制附件时用:
+ * 把源页附件的 S3 对象拷到新页的 key 下,新页拿到自己独立的一份字节,
+ * 源草稿删除后也不会让已发布页裂图。
+ *
+ * `CopySource` = `{bucket}/{srcKey}`。本项目的 key 恒为 {pageId}/{id}{ext},
+ * pageId/id 是 nanoid 字母数字、ext 是点+字母,无需 URL 编码(编码反而会把
+ * 路径分隔的 `/` 也转义掉,导致 MinIO 找不到源对象)。
+ */
+export async function copyObject(srcKey: string, destKey: string): Promise<void> {
+  await getS3Client().send(
+    new CopyObjectCommand({
+      Bucket: bucket(),
+      CopySource: `${bucket()}/${srcKey}`,
+      Key: destKey,
+    }),
   )
 }

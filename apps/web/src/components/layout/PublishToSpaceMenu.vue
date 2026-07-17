@@ -38,6 +38,16 @@ const router = useRouter()
 
 const rootEl = ref<HTMLElement | null>(null)
 
+/** 「包含子页面」开关 + 递归深度。depth=50 当「全部」用(见后端 schema max 50)。 */
+const includeChildren = ref(false)
+const depth = ref(1)
+const DEPTH_ALL = 50
+const depthOptions: { label: string; value: number }[] = [
+  { label: '1 级', value: 1 },
+  { label: '2 级', value: 2 },
+  { label: '全部', value: DEPTH_ALL },
+]
+
 /**
  * 目标空间:只能是团队空间 (`kind === 'shared'`),排除 personal 与源 page
  * 所在 space(同一个 personal 空间再发一次没意义)。
@@ -69,12 +79,16 @@ async function pick(targetSpaceId: string) {
   emit('close')
   uiStore.closeMenu()
   try {
-    const created = await pagesStore.publishPageToSpace(props.page.id, targetSpaceId)
+    const created = await pagesStore.publishPageToSpace(props.page.id, targetSpaceId, {
+      includeChildren: includeChildren.value,
+      depth: depth.value,
+    })
     const target = spacesStore.spaces.value.find((s) => s.id === targetSpaceId)
     if (target) spacesStore.setActiveSpace(target.id)
     // 成功后给个 toast —— 跳页后 ReadView 接管,toast 仍挂在 App.vue
     // 全局容器里,3 秒内能看到「已发布到 X」。失败由 store 弹 banner。
-    uiStore.notify(`已发布到「${target?.name ?? '目标空间'}」`, 'success')
+    const scope = includeChildren.value ? '(含子页)' : ''
+    uiStore.notify(`已发布到「${target?.name ?? '目标空间'}」${scope}`, 'success')
     // 跳到新生成的副本 — 源页保持不动
     await router.push(`/p/${created.id}`)
   } catch {
@@ -104,6 +118,22 @@ onBeforeUnmount(() => {
     <div class="m2s-header">
       <span class="m2s-title">发布到团队空间</span>
       <span class="m2s-sub">{{ currentSpaceName }} → ...</span>
+    </div>
+    <div v-if="destinations.length > 0" class="m2s-opts">
+      <label class="m2s-toggle">
+        <input v-model="includeChildren" type="checkbox" class="m2s-checkbox" />
+        <span class="m2s-toggle-label">包含子页面</span>
+      </label>
+      <div v-if="includeChildren" class="m2s-depth">
+        <button
+          v-for="opt in depthOptions"
+          :key="opt.value"
+          type="button"
+          class="m2s-depth-btn"
+          :class="{ 'is-active': depth === opt.value }"
+          @click="depth = opt.value"
+        >{{ opt.label }}</button>
+      </div>
     </div>
     <div v-if="destinations.length === 0" class="m2s-empty">
       <div class="m2s-empty-icon">
@@ -166,6 +196,59 @@ onBeforeUnmount(() => {
 .m2s-sub {
   font-size: 11px;
   color: var(--text-3);
+}
+
+.m2s-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.m2s-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.m2s-checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+.m2s-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.m2s-depth {
+  display: flex;
+  gap: 4px;
+  padding-left: 22px;
+}
+.m2s-depth-btn {
+  flex: 1;
+  padding: 4px 0;
+  background: var(--bg-subtle);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 3px);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.m2s-depth-btn:hover {
+  background: var(--border);
+}
+.m2s-depth-btn.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .m2s-item {

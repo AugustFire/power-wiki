@@ -9,6 +9,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import UserPopover from '@/components/ui/UserPopover.vue'
 import { useUiStore } from '@/stores/ui'
 import { ensureHeadingId } from '@/lib/headingAnchors'
+import { labelColorVars } from '@/lib/labelColor'
 import type { Watcher } from '@power-wiki/shared'
 
 const route = useRoute()
@@ -41,6 +42,12 @@ const safeLabels = computed(() => {
   return out
 })
 const hasLabels = computed(() => safeLabels.value.length > 0)
+
+/** 与 LabelPills 同款:标签按名字哈希取一组固定配色。 */
+function labelChipStyle(label: string) {
+  const { bg, fg } = labelColorVars(label)
+  return { background: bg, color: fg }
+}
 
 type TocItem = { id: string; text: string; level: 1 | 2 | 3 }
 const items = ref<TocItem[]>([])
@@ -372,6 +379,7 @@ watch(
           v-for="l in safeLabels"
           :key="l"
           class="toc-label-chip"
+          :style="labelChipStyle(l)"
           :title="l"
         >{{ l }}</span>
       </div>

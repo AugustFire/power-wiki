@@ -577,6 +577,11 @@ export const MovePageInputSchema = z.object({
  * 用户 canAccess。 */
 export const PublishPageInputSchema = z.object({
   targetSpaceId: PageIdSchema,
+  /** 是否连同子页一起发布。缺省 false = 仅发布本页(历史行为)。 */
+  includeChildren: z.boolean().optional(),
+  /** includeChildren 为 true 时的递归深度:1 = 仅直接子级,2 = 再下一层……
+   *  缺省 1。上限 50 当「全部」用(实际业务子树远浅于此)。 */
+  depth: z.number().int().min(1).max(50).optional(),
 })
 
 /** POST /api/pages/:id/duplicate 入参
