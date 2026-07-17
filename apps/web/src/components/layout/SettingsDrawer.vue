@@ -331,6 +331,9 @@ function onFileChosen(e: Event) {
   errorMsg.value = null
   cropperFile.value = file
   croppingBlob.value = null
+  // 收起态(v-if 虚线圆)选完文件后必须展开,否则 cropperFile 设了但模板还
+  // 停在 v-if 分支,用户感知「选完啥都没发生」
+  uploadExpanded.value = true
 }
 
 function onFileDropped(e: DragEvent) {
@@ -341,6 +344,7 @@ function onFileDropped(e: DragEvent) {
   errorMsg.value = null
   cropperFile.value = file
   croppingBlob.value = null
+  uploadExpanded.value = true
 }
 
 /** cropper 实时 emit(200ms 节流)的当前裁剪 blob —— 「保存头像」按钮
@@ -709,6 +713,18 @@ const previewAvatarSrc = computed<string | null>(() => {
 
           <!-- Panel C 自定义上传 —— 三态之一,跟插画 / 颜色 互斥 -->
           <div class="avatar-panel" :class="{ active: selectedKind === 'custom' }">
+            <!-- 始终挂载的 file input —— 收起态(v-if / v-else-if)和展开态
+                 (v-else)三处 upload-zone 都通过 triggerUpload() 调用 input.click();
+                 放在 .avatar-panel 直接子级、跟三个 branch 同级,确保
+                 uploadExpanded=false 时虚线圆也能开 picker,否则 input ref 为
+                 null → .click() 静默 no-op,用户感知「点了没反应」 -->
+            <input
+              ref="uploadInput"
+              type="file"
+              :accept="(AVATAR_ALLOWED_MIME as readonly string[]).join(',')"
+              class="upload-input-hidden"
+              @change="onFileChosen"
+            />
             <div class="avatar-panel-label">
               <span class="material-symbols-outlined">add_photo_alternate</span>
               自定义上传
@@ -835,13 +851,8 @@ const previewAvatarSrc = computed<string | null>(() => {
                 点击或拖入 {{ Object.values(MIME_HUMAN).join('/') }} 图片(≤ {{ Math.round(AVATAR_UPLOAD_MAX_BYTES / 1024 / 1024) }} MB)
               </div>
 
-              <input
-                ref="uploadInput"
-                type="file"
-                :accept="(AVATAR_ALLOWED_MIME as readonly string[]).join(',')"
-                class="upload-input-hidden"
-                @change="onFileChosen"
-              />
+              <!-- file input 已上提到 .avatar-panel 直接子级,任何 upload-zone
+                   状态(triggerUpload)都能命中 -->
 
               <!-- 展开态按钮行 -->
               <div class="upload-actions">
