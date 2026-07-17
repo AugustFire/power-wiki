@@ -14,6 +14,7 @@ import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { useBreadcrumb } from '@/composables/useBreadcrumb'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
@@ -116,6 +117,26 @@ const parentPage = computed(() => {
   if (!pid) return null
   return pagesStore.getPage(pid) ?? null
 })
+
+/** 面包屑链路(根 → 当前页)+ 折叠渲染。读 pageId(localId 或 parentId,
+ *  新建页时 parentId 给定但 page 自身还没在 store 里)。
+ *
+ * EditView 的特殊点:页面本身可能在 store 里(已创建)或不在(客户端 nanoid
+ * 刚生成、还没等服务端回包)。两种情况都期望看到「父 → 当前」的链路 —— 所以
+ * composable 的 pageIdGetter 在没有 page 时回退到 parentId,这样新建页
+ * 也能看到「我的知识库 / 父 / 未命名」的三段式。 */
+const { visibleBreadcrumb } = useBreadcrumb(
+  () => page.value?.id ?? props.parentId ?? null,
+)
+
+/** 「未命名 · 点此重命名」CTA:新建页 / 标题被清空时,breadcrumb 最后一段
+ *  渲染为可点击按钮,点击聚焦 title input 让用户立即起名。 */
+const isTitleEmpty = computed(() => localTitle.value.trim() === '')
+
+function focusTitle(): void {
+  titleInputRef.value?.focus()
+  titleInputRef.value?.select()
+}
 
 const isDirty = ref(false)
 const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
@@ -494,15 +515,53 @@ onBeforeUnmount(() => {
   <div class="edit-shell">
     <div class="subheader">
       <div class="breadcrumb">
-        <a href="#/">我的知识库</a>
-        <template v-if="parentPage">
+        <a href="#/" class="crumb-item crumb-link">我的知识库</a>
+        <template v-for="(c, i) in visibleBreadcrumb.head" :key="'h-' + i">
           <span class="sep">/</span>
-          <a class="crumb-item crumb-link" :href="`#/p/${parentPage.id}`" :title="parentPage.title">
-            {{ parentPage.title }}
+          <a
+            v-if="i < visibleBreadcrumb.head.length - 1 || visibleBreadcrumb.ellipsis || visibleBreadcrumb.tail.length > 0"
+            class="crumb-item crumb-link"
+            :href="`#/p/${c.id}`"
+          >
+            {{ c.title }}
           </a>
+          <span v-else class="crumb-item current">{{ c.title }}</span>
         </template>
-        <span class="sep">/</span>
-        <span class="crumb-item current">{{ localTitle || DEFAULT_TITLE }}</span>
+        <template v-if="visibleBreadcrumb.ellipsis">
+          <span class="sep">/</span>
+          <span class="crumb-item ellipsis" title="中间层级省略">…</span>
+          <template v-for="(c, i) in visibleBreadcrumb.tail" :key="'t-' + i">
+            <span class="sep">/</span>
+            <a
+              v-if="i < visibleBreadcrumb.tail.length - 1"
+              class="crumb-item crumb-link"
+              :href="`#/p/${c.id}`"
+            >
+              {{ c.title }}
+            </a>
+            <!-- tail 最后一段 = 当前页(可能标题已存在 / 或未命名 CTA) -->
+            <button
+              v-else-if="isTitleEmpty"
+              type="button"
+              class="crumb-item current rename-cta"
+              @click="focusTitle"
+            >未命名 · 点此重命名</button>
+            <span v-else class="crumb-item current">{{ c.title }}</span>
+          </template>
+        </template>
+        <!-- 无 ellipsis 折叠时,head 最后一段 = 当前页 -->
+        <template v-else>
+          <span v-if="visibleBreadcrumb.head.length > 0">
+            <span class="sep">/</span>
+            <button
+              v-if="isTitleEmpty"
+              type="button"
+              class="crumb-item current rename-cta"
+              @click="focusTitle"
+            >未命名 · 点此重命名</button>
+            <span v-else class="crumb-item current">{{ visibleBreadcrumb.head[visibleBreadcrumb.head.length - 1]!.title }}</span>
+          </span>
+        </template>
         <span class="edit-mode-badge">
           <span class="material-symbols-outlined icon-sm">edit</span>
           编辑中
@@ -654,6 +713,55 @@ onBeforeUnmount(() => {
   background: var(--danger-soft);
   color: var(--danger);
   font-weight: 600;
+}
+
+/* 面包屑可点 crumb(祖辈 / 同级):跟 ReadView 同一套。 */
+.crumb-item.crumb-link {
+  cursor: pointer;
+  color: var(--text-2);
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 1px 4px;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.crumb-item.crumb-link:hover {
+  background: var(--bg-subtle);
+  color: var(--accent);
+  text-decoration: none;
+}
+.crumb-item.crumb-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  color: var(--accent);
+}
+.crumb-item.ellipsis {
+  color: var(--text-3);
+  cursor: default;
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+/* 「未命名 · 点此重命名」CTA:跟普通 current 区分,加 dashed underline +
+   浅色 hover,告诉用户「这一段还没起名,点我」。 */
+.crumb-item.current.rename-cta {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font: inherit;
+}
+.crumb-item.current.rename-cta:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.crumb-item.current.rename-cta:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* 把关注按钮推到 byline 行最右 —— 视觉上跟作者信息组(左)+ 操作(右)两端对齐 */

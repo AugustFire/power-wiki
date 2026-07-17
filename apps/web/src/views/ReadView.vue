@@ -18,6 +18,7 @@ import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import { useBreadcrumb } from '@/composables/useBreadcrumb'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -191,27 +192,9 @@ const showAuthorSuffix = computed(() => {
   return p.updatedBy !== p.authorId
 })
 
-// 面包屑链路(根 → 当前页)
-const breadcrumb = computed(() => {
-  const chain: { id: string; title: string }[] = []
-  let cur = page.value
-  while (cur) {
-    chain.unshift({ id: cur.id, title: cur.title })
-    cur = cur.parentId ? pagesStore.getPage(cur.parentId) : undefined
-  }
-  return chain
-})
-
-// 面包屑溢出处理:超过 3 段就折叠成 ...+最后一截
-const visibleBreadcrumb = computed(() => {
-  const arr = breadcrumb.value
-  if (arr.length <= 3) return { head: arr, ellipsis: false, tail: [] as typeof arr }
-  return {
-    head: [arr[0]],
-    ellipsis: true,
-    tail: arr.slice(-2),
-  }
-})
+// 面包屑链路(根 → 当前页) + 折叠渲染分段(>3 段中间省略)
+// useBreadcrumb 复用给 EditView,保持两边行为一致。
+const { visibleBreadcrumb } = useBreadcrumb(() => props.id)
 
 function goEdit() {
   if (page.value) router.push(`/p/${page.value.id}/edit`)
@@ -425,21 +408,31 @@ watch(
     <ScrollProgress />
     <div class="subheader">
       <div class="breadcrumb">
-        <a href="#/">我的知识库</a>
+        <a href="#/" class="crumb-item crumb-link">我的知识库</a>
         <template v-for="(c, i) in visibleBreadcrumb.head" :key="'h-' + i">
           <span class="sep">/</span>
-          <span class="crumb-item" :class="{ current: i === visibleBreadcrumb.head.length - 1 && !visibleBreadcrumb.ellipsis && visibleBreadcrumb.tail.length === 0 }">
+          <a
+            v-if="i < visibleBreadcrumb.head.length - 1 || visibleBreadcrumb.ellipsis || visibleBreadcrumb.tail.length > 0"
+            class="crumb-item crumb-link"
+            :href="`#/p/${c.id}`"
+          >
             {{ c.title }}
-          </span>
+          </a>
+          <span v-else class="crumb-item current">{{ c.title }}</span>
         </template>
         <template v-if="visibleBreadcrumb.ellipsis">
           <span class="sep">/</span>
-          <span class="crumb-item ellipsis" title="省略中间层级">…</span>
+          <span class="crumb-item ellipsis" title="中间层级省略">…</span>
           <template v-for="(c, i) in visibleBreadcrumb.tail" :key="'t-' + i">
             <span class="sep">/</span>
-            <span class="crumb-item" :class="{ current: i === visibleBreadcrumb.tail.length - 1 }">
+            <a
+              v-if="i < visibleBreadcrumb.tail.length - 1"
+              class="crumb-item crumb-link"
+              :href="`#/p/${c.id}`"
+            >
               {{ c.title }}
-            </span>
+            </a>
+            <span v-else class="crumb-item current">{{ c.title }}</span>
           </template>
         </template>
       </div>
@@ -689,6 +682,29 @@ watch(
   cursor: default;
   font-weight: 600;
   padding: 0 4px;
+}
+
+/* 面包屑可点 crumb:祖辈 / 同级祖先都能跳,鼠标 hover 高亮 + 键盘 focus
+   显环。current 是最后一段,渲染为 <span class="crumb-item current">,
+   走另一套非链接样式。 */
+.crumb-item.crumb-link {
+  cursor: pointer;
+  color: var(--text-2);
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 1px 4px;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.crumb-item.crumb-link:hover {
+  background: var(--bg-subtle);
+  color: var(--accent);
+  text-decoration: none;
+}
+.crumb-item.crumb-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  color: var(--accent);
 }
 
 .subpages-title .count {

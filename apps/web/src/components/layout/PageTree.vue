@@ -69,6 +69,45 @@ const isRenaming = computed(() => uiStore.renamingId === props.node.id)
 // 懒加载状态:展开一个未加载过的父节点时显示小 spinner
 const loadingChildren = ref(false)
 
+/**
+ * Bug 修复:刷新 / 切空间后,`uiStore.expandedBySpace` 持久化保留了
+ * 「之前展开过」的标记,但 `pagesStore.childrenLoaded` cache 是纯内存、
+ * reload 后已清空。`isEffectivelyExpanded` 会因为持久化标记翻 true,
+ * 模板里 `.tree-children` 就渲染出空 div(无 row 无 spinner)。同样地,
+ * 首次访问某空间时,根行的 auto-expand(depth===0 && no record)也会
+ * 让 `isEffectivelyExpanded` 翻 true 而子节点还没拉 —— 两条路径同一
+ * 个症状。
+ *
+ * 用 watch + immediate 在以下三条件同时成立时触发懒加载:
+ *   - `isEffectivelyExpanded === true`(展开了或被视为展开了)
+ *   - `hasChildren === true`(父真有子,否则没东西可拉)
+ *   - `!isChildrenLoaded`(cache miss,guard 避免重复请求)
+ *
+ * 与既有 `toggleCaret` / `scheduleAutoExpand` 走同一段 `ensureChildrenLoaded`
+ * 路径,inflight dedup 由 store 的 `loadingPromises` Map 兜底 —— `toggleCaret`
+ * 即便在用户点击后还跑一遍也不重复 fetch,只会同步地把 `loadingChildren`
+ * 翻两次 true/false(无害)。
+ */
+watch(
+  () => isEffectivelyExpanded.value && hasChildren.value,
+  async (shouldLoad) => {
+    if (
+      shouldLoad &&
+      !pagesStore.isChildrenLoaded(props.node.id, currentSpaceId.value)
+    ) {
+      loadingChildren.value = true
+      try {
+        await pagesStore.ensureChildrenLoaded(props.node.id)
+      } catch {
+        uiStore.setError('加载子页面失败')
+      } finally {
+        loadingChildren.value = false
+      }
+    }
+  },
+  { immediate: true },
+)
+
 const renameValue = ref(props.node.title)
 const renameInputRef = ref<HTMLInputElement | null>(null)
 
@@ -267,11 +306,14 @@ async function onDrop(e: DragEvent) {
 /**
  * Walk parent chain from `startId`; return true if `ancestorId` appears.
  * Used to refuse drops that would create a cycle (X onto a descendant of X).
+ *
+ * 没有硬上限 —— page 树在产品里深度有界(没人会建 100+ 层),store 持有
+ * 的 pages 是同步 map lookup,走 N 步毫秒级。原来 `guard++ < 64` 是为了
+ * 防 store 损坏导致环时不死循环,实际从来没触发,反而让 65 层环静默放过。
  */
 function isAncestor(startId: string, ancestorId: string): boolean {
   let cur: ReturnType<typeof pagesStore.getPage> = pagesStore.getPage(startId)
-  let guard = 0
-  while (cur && guard++ < 64) {
+  while (cur) {
     if (cur.id === ancestorId) return true
     cur = cur.parentId ? pagesStore.getPage(cur.parentId) : undefined
   }
@@ -416,6 +458,16 @@ function onRenameKey(e: KeyboardEvent) {
     cancelRename()
   }
 }
+
+/**
+ * Track which row is the keyboard focus anchor so that when the user
+ * clicks a different row the previously focused one gets reset to
+ * `-1` tabindex (and only this one becomes `0`). Not currently
+ * wired — left here as a placeholder in case keyboard navigation is
+ * re-introduced. Clicking a row uses the browser's default focus
+ * model: each row is a `<div draggable>` without tabindex, so the
+ * mouse focus is whatever the user clicked.
+ */
 
 async function duplicatePage(withChildren = false) {
   uiStore.closeMenu()
