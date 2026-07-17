@@ -12,6 +12,7 @@
   "dependencies": {
     "@power-wiki/shared": "workspace:*",
     "@tiptap/core": "^2.10.3",
+    "@tiptap/extension-blockquote": "^2.27.2",
     "@tiptap/extension-bubble-menu": "^2.27.2",
     "@tiptap/extension-code-block-lowlight": "^2.10.3",
     "@tiptap/extension-collaboration": "^2.27.2",

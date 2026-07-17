@@ -36,6 +36,13 @@ interface SlashItem {
   /** builtin: 选中后立即执行 run() */
   /** needsPicker: 选中后弹 picker(在 SlashMenu 内部渲染),run() 负责 hideMenu + 启 picker */
   kind?: 'builtin' | 'needsPicker'
+  /**
+   * 额外的搜索关键词。label / id 已经参与默认 substring 匹配;aliases 用来
+   * 补足跨语言 / 简称 / 驼峰 的差异 —— 例如 code 项加 `代码块` / `codeblock`,
+   * 让用户用中文长名或英文连写都能命中。匹配与 label/id 一样:大小写不敏感、
+   * includes substring。给常用项加,无则不写。
+   */
+  aliases?: string[]
   run: (editor: AnyEditor) => void
 }
 
@@ -51,6 +58,7 @@ const items: SlashItem[] = [
     description: '大号标题',
     icon: 'format_h1',
     group: 'basic',
+    aliases: ['标题', 'heading', 'title', 'h1'],
     run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(),
   },
   {
@@ -59,6 +67,7 @@ const items: SlashItem[] = [
     description: '中等标题',
     icon: 'format_h2',
     group: 'basic',
+    aliases: ['标题', 'heading', 'title', 'h2'],
     run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
   },
   {
@@ -67,6 +76,7 @@ const items: SlashItem[] = [
     description: '小号标题',
     icon: 'format_h3',
     group: 'basic',
+    aliases: ['标题', 'heading', 'title', 'h3'],
     run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(),
   },
   {
@@ -75,6 +85,7 @@ const items: SlashItem[] = [
     description: '• 圆点列表',
     icon: 'format_list_bulleted',
     group: 'basic',
+    aliases: ['列表', 'list', 'bullet', '圆点'],
     run: (e) => e.chain().focus().toggleBulletList().run(),
   },
   {
@@ -83,6 +94,7 @@ const items: SlashItem[] = [
     description: '1. 编号列表',
     icon: 'format_list_numbered',
     group: 'basic',
+    aliases: ['列表', 'list', 'ordered', '数字', '编号'],
     run: (e) => e.chain().focus().toggleOrderedList().run(),
   },
   {
@@ -91,6 +103,7 @@ const items: SlashItem[] = [
     description: '☑ 复选框列表',
     icon: 'checklist',
     group: 'basic',
+    aliases: ['待办', 'todo', 'checkbox', '任务', '清单'],
     run: (e) => e.chain().focus().toggleTaskList().run(),
   },
   {
@@ -99,6 +112,7 @@ const items: SlashItem[] = [
     description: '3×3 网格,首行表头',
     icon: 'table',
     group: 'media',
+    aliases: ['表格', 'table'],
     run: (e) =>
       e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
   },
@@ -108,6 +122,7 @@ const items: SlashItem[] = [
     description: '等宽字体块',
     icon: 'code',
     group: 'advanced',
+    aliases: ['代码', 'code', 'code-block', 'codeblock', 'code block'],
     run: (e) => e.chain().focus().toggleCodeBlock().run(),
   },
   {
@@ -116,6 +131,7 @@ const items: SlashItem[] = [
     description: '左侧蓝条引用',
     icon: 'format_quote',
     group: 'basic',
+    aliases: ['引用', 'quote', 'blockquote'],
     run: (e) => e.chain().focus().toggleBlockquote().run(),
   },
   {
@@ -124,6 +140,7 @@ const items: SlashItem[] = [
     description: '水平线',
     icon: 'horizontal_rule',
     group: 'basic',
+    aliases: ['分割线', 'divider', 'hr', 'line', '水平线', 'horizontal rule'],
     run: (e) => e.chain().focus().setHorizontalRule().run(),
   },
   {
@@ -132,6 +149,7 @@ const items: SlashItem[] = [
     description: '带颜色侧条的信息块',
     icon: 'lightbulb',
     group: 'advanced',
+    aliases: ['callout', '提示', 'tip', 'info'],
     run: (e) => e.chain().focus().toggleCallout('info').run(),
   },
   {
@@ -140,6 +158,7 @@ const items: SlashItem[] = [
     description: '可点击展开/收起的内容',
     icon: 'expand_more',
     group: 'advanced',
+    aliases: ['折叠', 'toggle', 'collapse', '详情', 'details'],
     run: (e) => e.chain().focus().setToggle().run(),
   },
   {
@@ -148,6 +167,7 @@ const items: SlashItem[] = [
     description: '上传图片或 PDF 文件',
     icon: 'image',
     group: 'media',
+    aliases: ['图片', 'image', 'img', '图', 'photo', '附件', 'attachment', 'attach', 'file', 'pdf'],
     kind: 'needsPicker',
     run: () => {
       // needsPicker:由 onSelectIndex 调 openAttachmentUpload 弹文件选择器
@@ -159,6 +179,7 @@ const items: SlashItem[] = [
     description: '插入一个可跳转的页面卡片',
     icon: 'description',
     group: 'advanced',
+    aliases: ['页面', 'page', 'link', '引用', 'pageref'],
     kind: 'needsPicker',
     run: () => {
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openPagePicker
@@ -166,10 +187,11 @@ const items: SlashItem[] = [
   },
   {
     id: 'at',
-    label: '@',
-    description: '提及成员 或 插入日期/时间',
+    label: '@ 提及 / 日期',
+    description: '提及成员 或 插入日期/时间(picker 内 Tab 切成员/日期)',
     icon: 'alternate_email',
     group: 'advanced',
+    aliases: ['提及', 'mention', '@', '日期', 'date', '时间', 'time', '成员'],
     kind: 'needsPicker',
     run: () => {
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openAtPicker
@@ -228,11 +250,12 @@ const { filtered, displayRows } = (() => {
   const filtered = computed<SlashItem[]>(() => {
     const q = filterText.value.trim().toLowerCase()
     if (q) {
-      return items.filter(
-        (it) =>
-          it.label.toLowerCase().includes(q) ||
-          it.id.toLowerCase().includes(q),
-      )
+      return items.filter((it) => {
+        if (it.label.toLowerCase().includes(q)) return true
+        if (it.id.toLowerCase().includes(q)) return true
+        if (it.aliases?.some((a) => a.toLowerCase().includes(q))) return true
+        return false
+      })
     }
     const recentIds = new Set(recentItemsState.recents.value)
     const recentsOrdered = recentItems.value

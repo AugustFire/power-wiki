@@ -25,6 +25,7 @@ import { PageRef } from './pageRefExtension'
 import { DateInline } from './dateInlineExtension'
 import { Mention } from './mentionExtension'
 import { ImageAttachment } from './imageAttachmentExtension'
+import { BlockquoteIndent } from './extensions/blockquoteIndent'
 
 /**
  * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
@@ -123,10 +124,12 @@ const extensions = [
   StarterKit.configure({
     heading: false, // 用下面 HeadingAnchor 替换 StarterKit 内置 heading
     codeBlock: false, // 关闭内置 codeBlock,用低光高亮的版本替换
+    blockquote: false, // 用下面 BlockquoteIndent 替换 StarterKit 内置 blockquote,带缩进深度上限
     // StarterKit 2.27 的 Markdown 输入规则默认开启(`## `→h2、`**bold**`→bold 等)。
     // Tiptap 通过 view.composing 字段跳过 IME composition 期间,
     // 中文打字不会被 inputRules 误判(见 @tiptap/core/src/InputRule.ts:97-104)。
   }),
+  BlockquoteIndent,
   TaskList,
   TaskItem.configure({ nested: true }),
   Table.configure({ resizable: true }),
