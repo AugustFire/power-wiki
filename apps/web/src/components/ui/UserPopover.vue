@@ -10,7 +10,8 @@
  *   <div v-for="w in watchers" :ref="el => setRef(w.id, el)">
  *     <UserAvatar ... @mouseenter="hovered = w.id" @mouseleave="hovered = null" />
  *     <UserPopover v-if="hovered === w.id" :name="w.name" :color="w.color"
- *                  :anchor="avatarRefs[w.id]" />
+ *                  :avatar-kind="w.avatarKind ?? null" :avatar-ref="w.avatarRef ?? null"
+ *                  :user-id="w.id" :anchor="avatarRefs[w.id]" />
  *   </div>
  *
  * 注意:
@@ -20,8 +21,12 @@
  *   - 不做滚动跟随:页面内容滚动时气泡会"留在原地",符合 Notion / Linear
  *     的 hover popover 习惯(用户已 hover 完锚点开始读气泡时,内容滚动
  *     是常见的副作用)
+ *
+ *   M11 头像:把 avatarKind/avatarRef/userId 透传给内嵌 <UserAvatar>。
+ *   若调用方没传(老代码,WATCHER API 没扩字段)→ 走旧逻辑,纯字母头像兜底。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -29,22 +34,23 @@ const props = withDefaults(
     color?: string
     avatarSize?: number
     anchor?: HTMLElement | null
+    /** M11 头像三态透传,可选(老调用点不传就回退到 initials+color) */
+    avatarKind?: 'preset' | 'custom' | null
+    avatarRef?: string | null
+    userId?: string | null
   }>(),
-  { color: 'var(--text-3)', avatarSize: 20, anchor: null },
+  {
+    color: 'var(--text-3)',
+    avatarSize: 20,
+    anchor: null,
+    avatarKind: null,
+    avatarRef: null,
+    userId: null,
+  },
 )
 
 const popRef = ref<HTMLElement | null>(null)
 const style = ref<{ top: string; left: string }>({ top: '0px', left: '0px' })
-
-const initials = computed(() => {
-  const trimmed = props.name.trim()
-  if (!trimmed) return '?'
-  // 跟 UserAvatar 同套:短无空格标签按字面大写;否则取前两个 token 首字母。
-  if (trimmed.length <= 3 && !/\s/.test(trimmed)) return trimmed.toUpperCase()
-  const parts = trimmed.split(/\s+/).filter(Boolean)
-  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase()
-  return trimmed.slice(0, 2).toUpperCase()
-})
 
 function position() {
   const anchor = props.anchor
@@ -83,7 +89,17 @@ watch(() => props.anchor, () => requestAnimationFrame(() => position()))
       :style="{ top: style.top, left: style.left }"
       role="tooltip"
     >
+      <UserAvatar
+        v-if="userId"
+        :size="(avatarSize as 20 | 24 | 28 | 32)"
+        :label="name"
+        :color="color"
+        :avatar-kind="avatarKind"
+        :avatar-ref="avatarRef"
+        :user-id="userId"
+      />
       <span
+        v-else
         class="up-avatar"
         :style="{
           width: avatarSize + 'px',
@@ -91,7 +107,7 @@ watch(() => props.anchor, () => requestAnimationFrame(() => position()))
           background: color,
         }"
         aria-hidden="true"
-      >{{ initials }}</span>
+      >{{ (name || '?').slice(0, 1).toUpperCase() }}</span>
       <span class="up-name">{{ name }}</span>
     </div>
   </Teleport>
@@ -117,6 +133,7 @@ watch(() => props.anchor, () => requestAnimationFrame(() => position()))
   pointer-events: none;
   animation: up-fade 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+/* 当内嵌 <UserAvatar> 时,把自己的 up-avatar 样式让位 —— UserAvatar 自带 .user-avatar 圆圈 */
 .up-avatar {
   display: inline-flex;
   align-items: center;

@@ -30,7 +30,7 @@
  * "提交吧" before any git commit/push.
  */
 import { Hono } from 'hono'
-import { and, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import {
   DashboardPayloadSchema,
   NotificationSchema,
@@ -45,6 +45,7 @@ import {
   notifications,
   pages,
   spaces,
+  userAvatars,
   users,
   userRecentPages,
   userWatchedPages,
@@ -56,6 +57,15 @@ import { rowToPageNode } from '../lib/rowToPageNode'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
+import { presignUpload, headObject, deleteObject } from '../lib/s3'
+import { generateAttachmentId } from '../lib/ids'
+import {
+  AvatarUploadUrlInputSchema,
+  AvatarUploadUrlResponseSchema,
+  AvatarFinalizeInputSchema,
+  AvatarFinalizeResponseSchema,
+} from '@power-wiki/shared/schemas'
+import { AVATAR_UPLOAD_MAX_BYTES, AVATAR_TARGET_DIM } from '@power-wiki/shared'
 
 /** 90 天之前的 visited_at 视为过期,read 路径 lazy 清理掉。 */
 const RECENT_TTL_MS = 90 * 24 * 60 * 60 * 1000
@@ -87,6 +97,10 @@ usersRouter.get('/me', async (c) => {
 // PATCH /api/admin/users/:id (UpdateUserInputSchema — name/color only).
 // Returns the updated user so the client can refresh its authStore in one
 // round-trip.
+// ─── PATCH /api/users/me ───────────────────────────────────────────────────
+// Self-service profile update (name + color + avatar 三态)。Avatar 子对象
+// 触发 cleanup:之前 kind='custom' 的话清掉当 ref 对应 user_avatars 行 +
+// best-effort deleteObject(S3 失败不报错)。
 usersRouter.patch('/me', async (c) => {
   const me = c.get('user')
   const body = await c.req.json().catch(() => ({}))
@@ -94,9 +108,23 @@ usersRouter.patch('/me', async (c) => {
   if (!parsed.success) {
     return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
   }
-  const patch: { name?: string; color?: string; updatedAt: number } = {
-    updatedAt: Date.now(),
-  }
+
+  // Pre-pull 当前 avatar state 供 cleanup 判断
+  const [prev] = await db
+    .select({ kind: users.avatarKind, ref: users.avatarRef })
+    .from(users)
+    .where(eq(users.id, me.id))
+    .limit(1)
+
+  const patch: {
+    name?: string
+    color?: string
+    avatarKind?: 'preset' | 'custom' | null
+    avatarRef?: string | null
+    updatedAt: number
+  } = { updatedAt: Date.now() }
+
+  // name
   if (parsed.data.name !== undefined) {
     const trimmed = parsed.data.name.trim()
     if (trimmed.length === 0) {
@@ -104,13 +132,197 @@ usersRouter.patch('/me', async (c) => {
     }
     patch.name = trimmed
   }
+  // color
   if (parsed.data.color !== undefined) patch.color = parsed.data.color
 
+  // avatar —— cleanup 旧 custom 后写新
+  if (parsed.data.avatar !== undefined) {
+    if (prev?.kind === 'custom' && prev.ref) {
+      const [gone] = await db
+        .delete(userAvatars)
+        .where(
+          and(eq(userAvatars.id, prev.ref), eq(userAvatars.userId, me.id)),
+        )
+        .returning({ bucketKey: userAvatars.bucketKey })
+      if (gone?.bucketKey) {
+        deleteObject(gone.bucketKey).catch(() => {/* best-effort */})
+      }
+    }
+    if (parsed.data.avatar.kind === null) {
+      patch.avatarKind = null
+      patch.avatarRef = null
+    } else {
+      // 'preset' 的 slug 已被 zod z.enum 卡死。'custom' 的 ref 必须真属于 me
+      if (parsed.data.avatar.kind === 'custom') {
+        const [avatar] = await db
+          .select({ userId: userAvatars.userId })
+          .from(userAvatars)
+          .where(eq(userAvatars.id, parsed.data.avatar.ref))
+          .limit(1)
+        if (!avatar || avatar.userId !== me.id) {
+          return c.json(
+            { error: 'invalid_input', message: '头像引用不存在或无权访问' },
+            400,
+          )
+        }
+      }
+      patch.avatarKind = parsed.data.avatar.kind
+      patch.avatarRef = parsed.data.avatar.ref
+    }
+  }
+
   await db.update(users).set(patch).where(eq(users.id, me.id))
-  const updated = (await db.select().from(users).where(eq(users.id, me.id)).limit(1))[0]
+  const updated = (await db
+    .select()
+    .from(users)
+    .where(eq(users.id, me.id))
+    .limit(1))[0]
   if (!updated) return c.json({ error: 'not_found' }, 404)
   return c.json(UserSchema.parse(rowToUser(updated)))
 })
+
+// ─── POST /api/users/me/avatar/upload-url ────────────────────────────────
+// 申请 presigned PUT URL。不写 DB,只返 S3 key + 签名 URL。
+usersRouter.post('/me/avatar/upload-url', async (c) => {
+  const me = c.get('user')
+  const body = await c.req.json().catch(() => ({}))
+  const parsed = AvatarUploadUrlInputSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+  const { mime, sizeBytes } = parsed.data
+  if (sizeBytes > AVATAR_UPLOAD_MAX_BYTES) {
+    return c.json({ error: 'too_large' }, 400)
+  }
+  const avatarId = generateAttachmentId()
+  // mime → ext 映射(子集,跟 ALLOWED_MIME_TYPES 等价)
+  const ext =
+    mime === 'image/jpeg' ? '.jpg'
+      : mime === 'image/png' ? '.png'
+      : mime === 'image/webp' ? '.webp'
+      : mime === 'image/gif' ? '.gif'
+      : '.bin'
+  const bucketKey = `users/${me.id}/${avatarId}${ext}`
+  const { url, expiresAt } = await presignUpload(bucketKey, mime)
+  return c.json(
+    AvatarUploadUrlResponseSchema.parse({
+      uploadUrl: url,
+      bucketKey,
+      avatarId,
+      expiresAt,
+    }),
+    200,
+  )
+})
+
+// ─── POST /api/users/me/avatar/finalize ──────────────────────────────────
+// HeadObject 校验 S3 真实 size + mime 后 INSERT user_avatars 行。
+// 然后 cleanup 该用户所有非新 ref 的 stale row + best-effort deleteObject
+// (write-time lazy),长期收敛到每用户 ≤ 1 active row。
+usersRouter.post('/me/avatar/finalize', async (c) => {
+  const me = c.get('user')
+  const body = await c.req.json().catch(() => ({}))
+  const parsed = AvatarFinalizeInputSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+  const { avatarId, bucketKey, mime, sizeBytes, width, height } = parsed.data
+
+  // 安全:必须以 users/{me.id}/ 开头,防 a 用户写 b 用户名下对象
+  if (!bucketKey.startsWith(`users/${me.id}/`)) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  if (
+    sizeBytes > AVATAR_UPLOAD_MAX_BYTES ||
+    width > AVATAR_TARGET_DIM ||
+    height > AVATAR_TARGET_DIM
+  ) {
+    return c.json({ error: 'too_large' }, 400)
+  }
+
+  let head: { size: number; contentType?: string }
+  try {
+    head = await headObject(bucketKey)
+  } catch (err) {
+    console.warn('[avatar finalize] headObject failed', bucketKey, err)
+    return c.json({ error: 'upload_not_found' }, 409)
+  }
+  if (head.size !== sizeBytes) {
+    return c.json(
+      { error: 'size_mismatch', expected: sizeBytes, actual: head.size },
+      409,
+    )
+  }
+  if (head.contentType && head.contentType !== mime) {
+    return c.json(
+      { error: 'mime_mismatch', expected: mime, actual: head.contentType },
+      409,
+    )
+  }
+
+  const now = Date.now()
+  await db.insert(userAvatars).values({
+    id: avatarId,
+    userId: me.id,
+    bucketKey,
+    mime,
+    sizeBytes: head.size,
+    width,
+    height,
+    createdAt: now,
+  })
+
+  // Cleanup 该用户所有非新 ref 的 stale row + best-effort deleteObject
+  const stale = await db
+    .delete(userAvatars)
+    .where(and(eq(userAvatars.userId, me.id), ne(userAvatars.id, avatarId)))
+    .returning({ bucketKey: userAvatars.bucketKey })
+  for (const row of stale) {
+    deleteObject(row.bucketKey).catch(() => {/* best-effort */})
+  }
+
+  return c.json(
+    AvatarFinalizeResponseSchema.parse({
+      avatarId,
+      bucketKey,
+      createdAt: now,
+    }),
+    201,
+  )
+})
+
+// ─── DELETE /api/users/me/avatar/custom ──────────────────────────────────
+// 用户主动清掉当前 custom avatar(头像立刻回退 initials+color 或 preset)。
+// 当前 ref 已 NULL 时 200 no-op。
+usersRouter.delete('/me/avatar/custom', async (c) => {
+  const me = c.get('user')
+  const [u] = await db
+    .select({ kind: users.avatarKind, ref: users.avatarRef })
+    .from(users)
+    .where(eq(users.id, me.id))
+    .limit(1)
+  if (u?.kind === 'custom' && u.ref) {
+    const [gone] = await db
+      .delete(userAvatars)
+      .where(
+        and(eq(userAvatars.id, u.ref), eq(userAvatars.userId, me.id)),
+      )
+      .returning({ bucketKey: userAvatars.bucketKey })
+    if (gone?.bucketKey) {
+      deleteObject(gone.bucketKey).catch(() => {/* best-effort */})
+    }
+    await db
+      .update(users)
+      .set({ avatarKind: null, avatarRef: null, updatedAt: Date.now() })
+      .where(eq(users.id, me.id))
+  }
+  return c.body(null, 204)
+})
+
+// 注意:GET /api/user-avatars/:userId/raw(raw 端点,公开)不在本 router。
+// 挂在独立的 publicAvatarsRouter 前缀 /api/user-avatars,在 index.ts
+// requireAuth gate 之前 mount。理由:头像跟 username 一样对外公开,
+// 不应该走 requireAuth 中间件;挂在 /api/users/* 又会被全局 gate 兜走。
 
 // ─── GET /api/users/me/watched ────────────────────────────────────────────
 // M13: 当前用户关注的页面列表 —— recipient-private,只返 me 的 watch 行。

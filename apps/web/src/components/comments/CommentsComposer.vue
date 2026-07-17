@@ -100,6 +100,9 @@ function onCancel(): void {
       :label="me.name"
       :color="me.color"
       :size="28"
+      :avatar-kind="me.avatarKind ?? null"
+      :avatar-ref="me.avatarRef ?? null"
+      :user-id="me.id"
       class="cc-avatar"
     />
     <textarea

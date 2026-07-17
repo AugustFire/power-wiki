@@ -23,6 +23,10 @@ import {
   AddLabelInputSchema,
   AdminSettingSchema,
   AttachmentSchema,
+  AvatarFinalizeInputSchema,
+  AvatarFinalizeResponseSchema,
+  AvatarUploadUrlInputSchema,
+  AvatarUploadUrlResponseSchema,
   CommentSchema,
   CreateCommentInputSchema,
   CreatePageInputSchema,
@@ -53,6 +57,10 @@ import type {
   AddLabelInput,
   AdminSetting,
   Attachment,
+  AvatarFinalizeInput,
+  AvatarFinalizeResponse,
+  AvatarUploadUrlInput,
+  AvatarUploadUrlResponse,
   Comment,
   CreateCommentInput,
   CreateGroupInput,
@@ -612,7 +620,7 @@ export const api = {
         const raw = await request<User>('/users/me')
         return UserSchema.parse(raw) as User
       },
-      /** PATCH /api/users/me — name/color only. */
+      /** PATCH /api/users/me — name/color/avatar 三态。 */
       update: async (input: UpdateUserInput): Promise<User> => {
         const raw = await request<User>('/users/me', {
           method: 'PATCH',
@@ -624,6 +632,39 @@ export const api = {
         // GETs for FETCH_CACHE_TTL_MS — see api.ts top).
         invalidatePrefix('/users/me')
         return UserSchema.parse(raw) as User
+      },
+
+      /**
+       * M11 自定义头像上传两步走(同 attachments):
+       *   1. requestAvatarUpload → 拿 presigned PUT URL + avatarId + bucketKey
+       *   2. 浏览器 PUT 到 uploadUrl(MinIO 直传)
+       *   3. finalizeAvatar → 服务端 HeadObject 校验后写 user_avatars 行
+       * 字节不经过 API;requestAvatarUpload / finalizeAvatar 都是 JSON body。
+       */
+      requestAvatarUpload: async (
+        input: AvatarUploadUrlInput,
+      ): Promise<AvatarUploadUrlResponse> => {
+        const parsed = AvatarUploadUrlInputSchema.parse(input)
+        const r = await request<AvatarUploadUrlResponse>(
+          '/users/me/avatar/upload-url',
+          { method: 'POST', body: JSON.stringify(parsed) },
+        )
+        return AvatarUploadUrlResponseSchema.parse(r)
+      },
+      finalizeAvatar: async (
+        input: AvatarFinalizeInput,
+      ): Promise<AvatarFinalizeResponse> => {
+        const parsed = AvatarFinalizeInputSchema.parse(input)
+        const r = await request<AvatarFinalizeResponse>(
+          '/users/me/avatar/finalize',
+          { method: 'POST', body: JSON.stringify(parsed) },
+        )
+        return AvatarFinalizeResponseSchema.parse(r)
+      },
+      /** DELETE /api/users/me/avatar/custom —— 清掉当前 custom 头像。 */
+      removeAvatar: async (): Promise<void> => {
+        await request<void>('/users/me/avatar/custom', { method: 'DELETE' })
+        invalidatePrefix('/users/me')
       },
       /**
        * M13 当前用户的关注页面列表 —— Sidebar「我的关注」section 传

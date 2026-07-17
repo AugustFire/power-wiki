@@ -152,6 +152,9 @@ async function onLogout() {
         :size="28"
         :label="authStore.user?.name ?? '?'"
         :color="authStore.user?.color"
+        :avatar-kind="authStore.user?.avatarKind ?? null"
+        :avatar-ref="authStore.user?.avatarRef ?? null"
+        :user-id="authStore.user?.id ?? null"
       />
     </button>
 
@@ -162,6 +165,9 @@ async function onLogout() {
             :size="36"
             :label="authStore.user?.name ?? '?'"
             :color="authStore.user?.color"
+            :avatar-kind="authStore.user?.avatarKind ?? null"
+            :avatar-ref="authStore.user?.avatarRef ?? null"
+            :user-id="authStore.user?.id ?? null"
           />
           <div class="um-header-text">
             <div class="um-name">{{ authStore.user?.name ?? '未登录' }}</div>

@@ -38,6 +38,8 @@ import { adminGroupsRouter } from './routes/adminGroups'
 import { adminSpacesRouter } from './routes/adminSpaces'
 import { adminSettingsRouter } from './routes/adminSettings'
 import { usersRouter } from './routes/users'
+import { avatarRawRouter } from './routes/avatarRaw'
+import { avatarPresetsRouter } from './routes/avatarPresets'
 import { requireAuth, type Variables } from './auth/middleware'
 import { runBootstrap } from './auth/bootstrap'
 
@@ -59,6 +61,16 @@ app.get('/health', (c) => c.json({ ok: true, env: NODE_ENV }))
 
 // Public — auth flow itself must not require an existing session.
 app.route('/api/auth', authRouter)
+
+// M11: 公开头像 raw proxy(同 username 一样对外公开,不在 requireAuth 之后)。
+// 必须放在 app.use('/api/*', requireAuth) 之前 —— 任何 /api/* 路径
+// 都会被全局 gate 兜走。用独立前缀 /api/user-avatars 也避免跟
+// usersRouter(自己 use('*', requireAuth)) 路径冲突
+app.route('/api/user-avatars', avatarRawRouter)
+
+// M11 v2: 公开预设清单(apps/web/public/avatars/ 扫盘结果)。
+// 同 avatarRaw 一样,头像元数据对外公开,放在 requireAuth 之前。
+app.route('/api', avatarPresetsRouter)
 
 // Everything else requires a valid session.
 app.use('/api/*', requireAuth)

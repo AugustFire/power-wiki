@@ -63,6 +63,22 @@ export const users = pgTable('users', {
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
   lastLoginAt: bigint('last_login_at', { mode: 'number' }),
+  /**
+   * 头像形态:NULL(默认,用 initials+color)/'preset'(静态预制,前端通过
+   * GET /api/avatars/presets 运行时扫 apps/web/public/avatars/ 动态发现
+   * slug,不写死)/'custom'(用户自定义上传,MinIO,元数据见 user_avatars 表)。
+   * 三态互斥,DB CHECK users_avatar_kind_check + users_avatar_consistency_check
+   * 限定合法值与 avatar_ref 同 NULL/同非 NULL,迁移 0022 加。M11 v2 起
+   * preset 不再依赖 AVATAR_PRESETS enum(原 shared/constants 常量已删)。
+   */
+  avatarKind: text('avatar_kind'),
+  /**
+   * 头像引用:与 avatar_kind 同 NULL/同非 NULL。'preset' 存 slug
+   * (后端 z.string 校验格式,不限 enum,文件不存在时前端 <img @error>
+   * 兜底回 initials);'custom' 存 user_avatars.id。NULL 时整段不渲染
+   * 头像图片,只走 initials+color。
+   */
+  avatarRef: text('avatar_ref'),
 })
 
 export const sessions = pgTable(
@@ -481,6 +497,47 @@ export const attachments = pgTable(
   (table) => [
     index('attachments_page_idx').on(table.pageId, table.createdAt),
     index('attachments_uploader_idx').on(table.uploaderId),
+  ],
+)
+
+/* ─────────────────────────────────────────────────────────────────
+ *  User avatars — 用户自定义头像对象(MinIO/S3)
+ *
+ *  一行 = 一个用户的一张自定义头像。文件字节存 MinIO/S3,DB 只存元数据。
+ *  与 page attachments 独立:本表没有 pageId 维度,不挂在任何页面下。
+ *  raw 端点 GET /api/user-avatars/:userId/raw(走 Hono 流式代理)从 S3 流
+ *  出 bytes;S3 object key 格式:users/{userId}/{avatarId}{ext}。
+ *
+ *  No FK — 用户禁用/删除时不级联,由 admin 路由 DELETE user 时显式清理
+ *  (同步删本表 row + best-effort deleteObject)。
+ *
+ *  write-time lazy cleanup:用户多次上传不切换时,finalize 路径会 INSERT
+ *  后 DELETE WHERE user_id=me AND id!=new,长期收敛到每用户 ≤ 1 active row。
+ *  PATCH /me 切到 preset/null 时同步清当前 ref 行的 row + S3 对象。
+ * ───────────────────────────────────────────────────────────────── */
+export const userAvatars = pgTable(
+  'user_avatars',
+  {
+    /** nanoid(12),与 attachments id 风格一致,也是 S3 object key 第二段。 */
+    id: text('id').primaryKey(),
+    /** 用户 id。No FK — 禁用/删除用户不级联,由 app 端 DELETE 用户时清理。 */
+    userId: text('user_id').notNull(),
+    /** S3 bucket key,例如 users/u_xxx/abc.png。 */
+    bucketKey: text('bucket_key').notNull(),
+    /** MIME 类型;落库时已在白名单 image/{png,jpeg,webp,gif}。 */
+    mime: text('mime').notNull(),
+    /** 文件字节数;HeadObject 验证写入(不信前端 size)。 ≤ AVATAR_UPLOAD_MAX_BYTES(5MB)。 */
+    sizeBytes: integer('size_bytes').notNull(),
+    /** 落库图宽(像素),≤ AVATAR_TARGET_DIM(256)。前端 canvas resize 后给到后端。 */
+    width: integer('width').notNull(),
+    /** 落库图高(像素),≤ AVATAR_TARGET_DIM(256)。 */
+    height: integer('height').notNull(),
+    /** Date.now() 毫秒,上传时间。 */
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    /** 「我的最新头像」索引 — finalize 写后 cleanup 路径走这里。 */
+    index('user_avatars_user_idx').on(table.userId, table.createdAt),
   ],
 )
 

@@ -10,7 +10,11 @@
 
 import { z } from 'zod'
 import type { TreeNode } from './types'
-import { MAX_UPLOAD_BYTES_DEFAULT } from './constants'
+import {
+  MAX_UPLOAD_BYTES_DEFAULT,
+  AVATAR_ALLOWED_MIME,
+  AVATAR_TARGET_DIM,
+} from './constants'
 
 /* ---------- 基础原子类型 ---------- */
 
@@ -139,6 +143,19 @@ export const UserSchema = z.object({
   createdAt: z.number().int().positive(),
   updatedAt: z.number().int().positive(),
   lastLoginAt: z.number().int().positive().nullable(),
+  /**
+   * 头像形态三态:NULL = 用 initials+color 渲染;'preset' = 静态预制
+   * (前端通过 GET /api/avatars/presets 运行时扫 apps/web/public/avatars/
+   * 动态发现 slug,不写死);'custom' = 用户自定义上传(MinIO)。
+   * Optional 是为老用户 / 老 cache 兼容;新数据统一两字段同步返回。
+   */
+  avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  /**
+   * 头像引用:preset 存 slug(后端 z.string 校验格式,不限 enum —— 文件
+   * 不存在时前端 <img @error> 兜底回 initials);custom 存 user_avatars.id。
+   * 与 avatarKind 同 NULL/同非 NULL(状态机一致性)。
+   */
+  avatarRef: z.string().min(1).max(64).nullable().optional(),
 })
 
 /** 用户组 schema */
@@ -192,6 +209,22 @@ export const ResetPasswordInputSchema = z.object({
   newPassword: z.string().min(8, '新密码至少 8 位').max(128),
 })
 
+/* ---------- User avatar API schemas ---------- */
+
+/** PATCH /api/users/me 与 /api/admin/users/:id 的 avatar 子对象 —— 三态互斥。
+ *  提到 UpdateUserInputSchema 之前,否则后者在 module 顶层引用时会撞 TDZ
+ *  (const 无 hoisting)。以下 union 三态(M11 v2 后 preset ref 放宽):
+ *   - { kind: 'preset', ref }:ref 是 slug,后端 z.string() 校验格式(不限
+ *     enum)。预设图清单由 GET /api/avatars/presets 运行时扫盘提供,放新
+ *     PNG 进 apps/web/public/avatars/ 即自动可用
+ *   - { kind: 'custom', ref }:ref 是 user_avatars.id,后端 finalize 路径已经写行
+ *   - { kind: null, ref: null }:清除,回到 initials+color 兜底 */
+export const AvatarSelectInputSchema = z.union([
+  z.object({ kind: z.literal('preset'), ref: z.string().min(1).max(64) }),
+  z.object({ kind: z.literal('custom'), ref: z.string().min(1).max(64) }),
+  z.object({ kind: z.null(), ref: z.null() }),
+])
+
 /* ---------- Admin API 输入 schema ---------- */
 
 /** POST /api/admin/users */
@@ -201,10 +234,58 @@ export const CreateUserInputSchema = z.object({
   role: z.enum(['admin', 'user']).optional(),
 })
 
-/** PATCH /api/admin/users/:id */
+/** PATCH /api/admin/users/:id 与 PATCH /api/users/me 共用。后端在两侧都用这个
+ *  schema 校验,所以 admin 路径理论上也可以 PATCH avatar 字段 —— 这不是 bug,
+ *  是 feature:admin 帮人改头像走 admin 路径也无副作用(用户希望禁用此能力时
+ *  在 routes/adminUsers.ts 里另加 if-defense 即可)。 */
 export const UpdateUserInputSchema = z.object({
   name: z.string().min(1).max(64).optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/).optional(),
+  /**
+   * 头像选择 —— 三态互斥。
+   *   - `{ kind: 'preset', ref: '<slug>' }`:ref 是 slug,后端 z.string()
+   *     校验格式不限 enum;预设图清单运行时由 GET /api/avatars/presets
+   *     扫 apps/web/public/avatars/ 提供,文件不存在时前端 <img @error> 兜底
+   *   - `{ kind: 'custom', ref: '<avatarId>' }`:ref 必须在 user_avatars 表存在且属于 me
+   *     (后端路线再查 DB)
+   *   - `{ kind: null, ref: null }`:清除头像,回到 initials+color
+   * 字段未传 = avatar 不变(等于「保持现状」)。
+   * PATCH 时 avatar ≠ undefined 就走 cleanup:之前是 custom 的话清掉。 */
+  avatar: AvatarSelectInputSchema.optional(),
+})
+
+/* ---------- User avatar API schemas ---------- */
+
+/** POST /api/users/me/avatar/upload-url —— 申请 presigned PUT。 */
+export const AvatarUploadUrlInputSchema = z.object({
+  mime: z.enum(AVATAR_ALLOWED_MIME),
+  /** 客户端上传字节数预估。后端 finalize 时 HeadObject 才是真实来源。 */
+  sizeBytes: z.number().int().positive(),
+})
+
+export const AvatarUploadUrlResponseSchema = z.object({
+  uploadUrl: z.string().url(),
+  bucketKey: z.string().min(1),
+  avatarId: z.string().min(1).max(64),
+  expiresAt: z.number().int().positive(),
+})
+
+/** POST /api/users/me/avatar/finalize —— 客户端 PUT 完告知后端写行。 */
+export const AvatarFinalizeInputSchema = z.object({
+  avatarId: z.string().min(1).max(64),
+  /** 必须以 users/{me.id}/ 开头 —— 后端 finalize 路径 hard check 防越权。 */
+  bucketKey: z.string().min(1).max(256),
+  mime: z.enum(AVATAR_ALLOWED_MIME),
+  sizeBytes: z.number().int().positive(),
+  /** 长边 ≤ AVATAR_TARGET_DIM。前端 canvas 压完报真实 dim,后端不宽容。 */
+  width: z.number().int().positive().max(AVATAR_TARGET_DIM),
+  height: z.number().int().positive().max(AVATAR_TARGET_DIM),
+})
+
+export const AvatarFinalizeResponseSchema = z.object({
+  avatarId: z.string().min(1),
+  bucketKey: z.string().min(1),
+  createdAt: z.number().int().positive(),
 })
 
 /** POST /api/admin/groups */
@@ -544,6 +625,14 @@ export type SignInInput = z.infer<typeof SignInInputSchema>
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>
+/** M11 用户头像三态 union(form state 用)。 */
+export type AvatarSelectInput = z.infer<typeof AvatarSelectInputSchema>
+/** M11 自定义上传 presigned PUT 输入/响应。 */
+export type AvatarUploadUrlInput = z.infer<typeof AvatarUploadUrlInputSchema>
+export type AvatarUploadUrlResponse = z.infer<typeof AvatarUploadUrlResponseSchema>
+/** M11 finalize(HeadObject 校验后写 user_avatars 行)输入/响应。 */
+export type AvatarFinalizeInput = z.infer<typeof AvatarFinalizeInputSchema>
+export type AvatarFinalizeResponse = z.infer<typeof AvatarFinalizeResponseSchema>
 export type CreateGroupInput = z.infer<typeof CreateGroupInputSchema>
 export type UpdateGroupInput = z.infer<typeof UpdateGroupInputSchema>
 export type CreateSpaceInput = z.infer<typeof CreateSpaceInputSchema>

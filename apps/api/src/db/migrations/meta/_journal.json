@@ -78,6 +78,20 @@
       "when": 1783700000000,
       "tag": "0021_user_recent_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783900000000,
+      "tag": "0022_user_avatar_kind_and_user_avatars",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0023_update_avatar_ref_comment",
+      "breakpoints": true
     }
   ]
 }

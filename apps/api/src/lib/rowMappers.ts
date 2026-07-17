@@ -22,6 +22,10 @@ export function rowToUser(row: UserRow): User {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastLoginAt: row.lastLoginAt ?? null,
+    // DB CHECK 约束限定值集合为 'preset' | 'custom' | NULL,但 text()
+    // 推不出 literal 联合。用窄化断言确保下游不会把任意字符串透出去
+    avatarKind: (row.avatarKind ?? null) as User['avatarKind'],
+    avatarRef: row.avatarRef ?? null,
   }
 }
 

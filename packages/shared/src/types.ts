@@ -138,6 +138,11 @@ export interface User {
   status: 'active' | 'disabled' | 'must_reset_password'
   /** 头像 / 标识色,Atlas 设计 token 兼容的色值 */
   color: string
+  /** M11 头像形态:null = initials+color;preset = 静态预制;custom = MinIO 用户头像
+   *  Optional 是为老用户 / 老 cache 兼容(UserSchema 同样 .nullable().optional()); */
+  avatarKind?: 'preset' | 'custom' | null
+  /** M11 头像引用:preset 存 slug,custom 存 user_avatars.id */
+  avatarRef?: string | null
   createdAt: number
   updatedAt: number
   lastLoginAt: number | null
@@ -244,4 +249,9 @@ export type {
   RequestUploadResponse,
   // Dashboard (Confluence model — personal space = scratchpad)
   DashboardPayload,
+  // M11 用户头像 (custom upload pipeline — MinIO)
+  AvatarUploadUrlInput,
+  AvatarUploadUrlResponse,
+  AvatarFinalizeInput,
+  AvatarFinalizeResponse,
 } from './schemas'

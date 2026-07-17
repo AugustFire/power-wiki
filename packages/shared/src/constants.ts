@@ -93,3 +93,38 @@ export const MIME_TO_EXT: Record<AllowedMimeType, string> = {
  *  但前端 FinalizeUploadInputSchema 也用它做 max() 边界 —— 客户端 sizeBytes
  *  不可信,这里是给前端友好提示,服务端 HeadObject 才是真实来源。 */
 export const MAX_UPLOAD_BYTES_DEFAULT = 20 * 1024 * 1024
+
+/* ─────────────────────────────────────────────────────────────────
+ *  用户头像(M11:颜色 + 预制 + 自定义上传;M11 v2:预制改运行时扫盘)
+ *  ─────────────────────────────────────────────────────────────────
+ *  前后端共用的事实来源:
+ *    - 预制头像清单(apps/web/public/avatars/):不在常量里写死,由后端
+ *      GET /api/avatars/presets 运行时扫盘,见 apps/api/src/lib/presetAvatars.ts。
+ *      放新 PNG 进 public/avatars/ → 等 60s 缓存过期或重启 api 即可用,
+ *      零代码改动。
+ *    - 前端 file picker 用 AVATAR_ALLOWED_MIME;后端 finalize 路径
+ *      同时拿 AVATAR_UPLOAD_MAX_BYTES + AVATAR_TARGET_DIM 校验上传图。
+ */
+
+/** 用户自定义头像上传白名单(子集 of ALLOWED_MIME_TYPES,不含 svg/avif)。
+ *  SVG 排除是防 SVG 注入(头像原始图在浏览器 <img> 渲染,SVG 内嵌 JS 风险);
+ *  avif 排除是浏览器兼容(W11 自带 Edge 17+ 才稳定)。 */
+export const AVATAR_ALLOWED_MIME = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+] as const
+export type AvatarAllowedMime = typeof AVATAR_ALLOWED_MIME[number]
+
+/** 用户自定义上传:客户端 sizeBytes 上限。前端先用这个拒,后端 finalize
+ *  HeadObject 再用同一个值兜底(不信前端 size)。 */
+export const AVATAR_UPLOAD_MAX_BYTES = 5 * 1024 * 1024 // 5MB
+
+/** 用户自定义上传:前端 canvas 压图后目标字节(经验值,后端不强制,仅记入行)。
+ *  JPEG/PNG 压到 256x256 后绝大多数图 ≤ 100KB,200KB 给余量。 */
+export const AVATAR_TARGET_BYTES = 200 * 1024 // 200KB
+
+/** 用户自定义上传:压图目标长边(像素)。前端 canvas 走这个,后端 finalize
+ *  拿 width/height 校验上限。 */
+export const AVATAR_TARGET_DIM = 256
