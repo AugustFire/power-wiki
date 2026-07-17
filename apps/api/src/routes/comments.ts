@@ -114,6 +114,8 @@ commentsRouter.get('/', async (c) => {
       deletedBy: comments.deletedBy,
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
     })
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
@@ -144,6 +146,8 @@ commentsRouter.get('/', async (c) => {
       deletedBy: comments.deletedBy,
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
     })
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
@@ -158,7 +162,12 @@ commentsRouter.get('/', async (c) => {
   const repliesByParent = new Map<string, ReturnType<typeof rowToComment>[]>()
   for (const r of replyRows) {
     if (!r.parentId) continue
-    const dto = rowToComment(r, { authorName: r.authorName, authorColor: r.authorColor })
+    const dto = rowToComment(r, {
+      authorName: r.authorName,
+      authorColor: r.authorColor,
+      authorAvatarKind: r.authorAvatarKind,
+      authorAvatarRef: r.authorAvatarRef,
+    })
     CommentSchema.parse(dto) // boundary validation
     const list = repliesByParent.get(r.parentId) ?? []
     list.push(dto)
@@ -166,7 +175,12 @@ commentsRouter.get('/', async (c) => {
   }
 
   const items = topLevel.map((r) => ({
-    ...rowToComment(r, { authorName: r.authorName, authorColor: r.authorColor }),
+    ...rowToComment(r, {
+      authorName: r.authorName,
+      authorColor: r.authorColor,
+      authorAvatarKind: r.authorAvatarKind,
+      authorAvatarRef: r.authorAvatarRef,
+    }),
     replies: repliesByParent.get(r.id) ?? [],
   }))
 
@@ -215,6 +229,8 @@ commentsRouter.get('/mention-candidates', async (c) => {
         name: cand.name,
         color: cand.color,
         email: cand.email,
+        avatarKind: cand.avatarKind ?? null,
+        avatarRef: cand.avatarRef ?? null,
       }),
     ),
   )
@@ -373,6 +389,8 @@ commentsRouter.post('/', async (c) => {
       deletedBy: comments.deletedBy,
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
     })
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
@@ -380,7 +398,12 @@ commentsRouter.post('/', async (c) => {
     .limit(1)
 
   if (!row) return c.json({ error: 'not_found' }, 404)
-  const dto = rowToComment(row, { authorName: row.authorName, authorColor: row.authorColor })
+  const dto = rowToComment(row, {
+    authorName: row.authorName,
+    authorColor: row.authorColor,
+    authorAvatarKind: row.authorAvatarKind,
+    authorAvatarRef: row.authorAvatarRef,
+  })
   return c.json(CommentSchema.parse(dto), 201)
 })
 
@@ -437,6 +460,8 @@ commentsRouter.patch('/:id', async (c) => {
       deletedBy: comments.deletedBy,
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
     })
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
@@ -445,7 +470,12 @@ commentsRouter.patch('/:id', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(
     CommentSchema.parse(
-      rowToComment(row, { authorName: row.authorName, authorColor: row.authorColor }),
+      rowToComment(row, {
+        authorName: row.authorName,
+        authorColor: row.authorColor,
+        authorAvatarKind: row.authorAvatarKind,
+        authorAvatarRef: row.authorAvatarRef,
+      }),
     ),
   )
 })

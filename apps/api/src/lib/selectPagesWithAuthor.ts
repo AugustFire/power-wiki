@@ -54,11 +54,17 @@ export function selectPagesWithAuthor(
         )
       `.as('liked_by_me')
     : sql<boolean>`false`.as('liked_by_me')
-  const likedBySampleExpr = sql<Array<{ id: string; name: string | null; color: string | null }>>`
+  const likedBySampleExpr = sql<Array<{ id: string; name: string | null; color: string | null; avatarKind?: string | null; avatarRef?: string | null }>>`
     COALESCE(
       (
         SELECT json_agg(
-          json_build_object('id', u.id, 'name', u.name, 'color', u.color)
+          json_build_object(
+            'id', u.id,
+            'name', u.name,
+            'color', u.color,
+            'avatarKind', u.avatar_kind,
+            'avatarRef', u.avatar_ref
+          )
         )
         FROM (
           SELECT pl.user_id
@@ -101,8 +107,12 @@ export function selectPagesWithAuthor(
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
       updatedByName: editorUsers.name,
       updatedByColor: editorUsers.color,
+      updatedByAvatarKind: editorUsers.avatarKind,
+      updatedByAvatarRef: editorUsers.avatarRef,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
       likesCount: likesCountExpr,
@@ -115,7 +125,17 @@ export function selectPagesWithAuthor(
     .leftJoin(users, eq(pages.authorId, users.id))
     .leftJoin(editorUsers, eq(pages.updatedBy, editorUsers.id))
     .leftJoin(pageLabels, eq(pageLabels.pageId, pages.id))
-    .groupBy(pages.id, users.name, users.color, editorUsers.name, editorUsers.color)
+    .groupBy(
+      pages.id,
+      users.name,
+      users.color,
+      users.avatarKind,
+      users.avatarRef,
+      editorUsers.name,
+      editorUsers.color,
+      editorUsers.avatarKind,
+      editorUsers.avatarRef,
+    )
   const filters: SQL[] = []
   if (!opts.includeDeleted) filters.push(isNull(pages.deletedAt))
   if (where) filters.push(where)

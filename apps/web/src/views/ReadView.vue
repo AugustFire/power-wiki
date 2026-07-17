@@ -528,7 +528,7 @@ watch(
             <h1 class="page-title">{{ page.title }}</h1>
             <div class="page-byline">
               <span class="author">
-                <UserAvatar :size="20" :color="editorAvatarColor" :label="editorDisplay" />
+                <UserAvatar :size="20" :color="editorAvatarColor" :label="editorDisplay" :avatar-kind="page.updatedByAvatarKind ?? page.authorAvatarKind ?? null" :avatar-ref="page.updatedByAvatarRef ?? page.authorAvatarRef ?? null" :user-id="page.updatedBy ?? page.authorId ?? null" />
                 {{ editorDisplay }}
               </span>
               <span class="dot">·</span>

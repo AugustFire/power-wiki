@@ -33,6 +33,8 @@ export interface MentionCandidateRow {
   name: string
   color: string
   email: string
+  avatarKind?: 'preset' | 'custom' | null
+  avatarRef?: string | null
 }
 
 export async function getMentionCandidates(
@@ -53,12 +55,16 @@ export async function getMentionCandidates(
     name: string
     color: string
     email: string
+    avatar_kind: string | null
+    avatar_ref: string | null
   }>(sql`
     SELECT DISTINCT ON (u.id)
       u.id,
       u.name,
       u.color,
-      u.email
+      u.email,
+      u.avatar_kind,
+      u.avatar_ref
     FROM users u
     JOIN user_group_members ugm ON ugm.user_id = u.id
     JOIN space_group_access sga ON sga.group_id = ugm.group_id

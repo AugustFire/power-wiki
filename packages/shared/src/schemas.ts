@@ -52,12 +52,18 @@ export const PageNodeSchema = z.object({
    *  authorId='me' (legacy seed) or refers to a now-deleted user. */
   authorName: z.string().nullable(),
   authorColor: z.string().nullable(),
+  /** M11 头像形态(DTO 透传):与 UserSchema 同 enum + nullable,user 已
+   *  disabled / 老 cache / authorId='me' 兜底回 null = initials。 */
+  authorAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  authorAvatarRef: z.string().min(1).max(64).nullable().optional(),
   /** 最后编辑者(PATCH / move / restore 同步写入);存量行 0012 已 backfill。
    *  UI 派生逻辑(updatedByName 优先 → authorName 兜底)在 ReadView 端,
    *  详见 pages.ts:`selectPagesWithAuthor` 的 editor_users 左连。 */
   updatedBy: z.string().min(1).nullable(),
   updatedByName: z.string().nullable(),
   updatedByColor: z.string().nullable(),
+  updatedByAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  updatedByAvatarRef: z.string().min(1).max(64).nullable().optional(),
   /** Material Symbols ligature name (e.g. `menu_book`, `edit_note`,
    *  `arrow_back_ios_new`). Capped at 40 to match `SpaceSchema.icon` —
    *  the previous `max(8)` silently broke Material Symbols names like
@@ -93,6 +99,9 @@ export const PageNodeSchema = z.object({
         id: z.string().min(1),
         name: z.string().nullable(),
         color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/).nullable(),
+        /** M11 头像 DTO 透传 —— 点赞堆叠 (WhoLikedList) 渲染真实头像 */
+        avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+        avatarRef: z.string().min(1).max(64).nullable().optional(),
       }),
     )
     .optional(),
@@ -362,6 +371,10 @@ export const CommentSchema = z.object({
   /** LEFT JOIN users 填充;authorId='me' 或 user 已 disabled 时为 null */
   authorName: z.string().nullable(),
   authorColor: z.string().nullable(),
+  /** M11 头像 DTO 透传 —— CommentItem 当前按设计不显示头像,但 schema
+   *  带齐字段便于未来启用 + 写一个 ProfilePopover 用。 */
+  authorAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  authorAvatarRef: z.string().min(1).max(64).nullable().optional(),
 })
 
 /** @mention 候选人(GET /api/comments/mention-candidates) —
@@ -371,6 +384,10 @@ export const MentionCandidateSchema = z.object({
   name: z.string().min(1).max(64),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/),
   email: z.string().email(),
+  /** M11 头像 DTO 透传 —— mention 弹层按当前设计不展示头像,
+   *  留 null 兼容;schema 带齐便于日后启用。 */
+  avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  avatarRef: z.string().min(1).max(64).nullable().optional(),
 })
 
 /** M2: 通知 kind 白名单 —— 跟 NotificationSchema.kind 同源,服务端
@@ -416,6 +433,9 @@ export const NotificationSchema = z.object({
   actorId: z.string().min(1),
   actorName: z.string().nullable(),
   actorColor: z.string().nullable(),
+  /** M11 头像 DTO 透传 —— NotificationBell 用真实头像替换手写首字母 */
+  actorAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  actorAvatarRef: z.string().min(1).max(64).nullable().optional(),
   // M13 扩 6 类 watch fanout kind。app 层 enum,Drizzle 端 text(无 DB native enum)。
   // page 作者同时满足 watcher 时,comment_add → comment_on_my_page(author 去重)。
   kind: NotificationKindSchema,
@@ -705,6 +725,9 @@ export const PageVersionSchema = z.object({
   editedBy: z.string().min(1),
   editedByName: z.string().nullable(),
   editedByColor: z.string().nullable(),
+  /** M11 头像 DTO 透传 —— VersionList 编辑者用真实头像 */
+  editedByAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  editedByAvatarRef: z.string().min(1).max(64).nullable().optional(),
   editedAt: z.number().int().positive(),
   changeNote: z.string().nullable().optional(),
 })
@@ -794,6 +817,9 @@ export const WatcherSchema = z.object({
     .string()
     .regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/)
     .nullable(),
+  /** M11 头像 DTO 透传 —— TocPanel watcher 堆叠用真实头像 */
+  avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  avatarRef: z.string().min(1).max(64).nullable().optional(),
   watchedAt: z.number().int().positive(),
 })
 
@@ -833,6 +859,9 @@ export const ActivityEventSchema = z.object({
   actorId: z.string().min(1),
   actorName: z.string().nullable(),
   actorColor: z.string().nullable(),
+  /** M11 头像 DTO 透传 —— ActivityView actor 用真实头像 */
+  actorAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  actorAvatarRef: z.string().min(1).max(64).nullable().optional(),
   /** 所属空间 — 左侧 chip 用。 */
   spaceId: PageIdSchema,
   spaceName: z.string(),

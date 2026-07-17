@@ -189,7 +189,7 @@ onMounted(async () => {
       <div class="section-title">最近登录</div>
       <ul class="mini-list">
         <li v-for="u in topLoggedIn" :key="u.id" class="mini-row">
-          <UserAvatar :size="24" :label="u.name" :color="u.color" />
+          <UserAvatar :size="24" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
           <div class="mini-text">
             <div class="mini-name">{{ u.name }}</div>
             <div class="mini-sub">{{ relativeShort(u.lastLoginAt!) }}</div>

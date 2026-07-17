@@ -225,6 +225,9 @@ function chipColor(kind: ActivityEvent['kind']): string {
             :size="32"
             :label="ev.actorName ?? ev.actorId"
             :color="ev.actorColor ?? undefined"
+            :avatar-kind="ev.actorAvatarKind ?? null"
+            :avatar-ref="ev.actorAvatarRef ?? null"
+            :user-id="ev.actorId ?? null"
           />
           <div class="row-body">
             <div class="row-line-1">

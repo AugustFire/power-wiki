@@ -51,6 +51,8 @@ type VersionRowWithEditor = {
   changeNote: string | null
   editedByName: string | null
   editedByColor: string | null
+  editedByAvatarKind: string | null
+  editedByAvatarRef: string | null
 }
 
 function rowToPageVersion(row: VersionRowWithEditor): PageVersion {
@@ -64,6 +66,8 @@ function rowToPageVersion(row: VersionRowWithEditor): PageVersion {
     editedBy: row.editedBy,
     editedByName: row.editedByName,
     editedByColor: row.editedByColor,
+    editedByAvatarKind: (row.editedByAvatarKind as PageVersion['editedByAvatarKind']) ?? null,
+    editedByAvatarRef: row.editedByAvatarRef ?? null,
     editedAt: row.editedAt,
     changeNote: row.changeNote,
   }
@@ -104,6 +108,8 @@ pageVersionsRouter.get('/:id/versions', async (c) => {
       ...getTableColumns(pageVersions),
       editedByName: users.name,
       editedByColor: users.color,
+      editedByAvatarKind: users.avatarKind,
+      editedByAvatarRef: users.avatarRef,
     })
     .from(pageVersions)
     .leftJoin(users, eq(users.id, pageVersions.editedBy))
@@ -220,6 +226,8 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
     })
@@ -227,8 +235,8 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
     .leftJoin(users, eq(users.id, pages.authorId))
     .leftJoin(sql`page_labels pl`, sql`pl.page_id = ${pages.id}`)
     .where(and(eq(pages.id, id), isNull(pages.deletedAt)))
-    .groupBy(pages.id, users.name, users.color)
+    .groupBy(pages.id, users.name, users.color, users.avatarKind, users.avatarRef)
   const row = rows[0]
   if (!row) return c.json({ error: 'not_found' }, 404)
-  return c.json(PageNodeSchema.parse(rowToPageNode(row as Parameters<typeof rowToPageNode>[0])))
+  return c.json(PageNodeSchema.parse(rowToPageNode(row as unknown as Parameters<typeof rowToPageNode>[0])))
 })

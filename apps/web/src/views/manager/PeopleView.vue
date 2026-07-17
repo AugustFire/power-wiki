@@ -467,7 +467,7 @@ watch(activeTab, (t) => {
           <tr v-for="u in users" :key="u.id" :class="{ 'is-disabled': u.status === 'disabled' }">
             <td>
               <div class="user-cell">
-                <UserAvatar :size="32" :label="u.name" :color="u.color" />
+                <UserAvatar :size="32" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
                 <div class="user-cell-text">
                   <div class="user-name">{{ u.name }}</div>
                   <div class="user-email">{{ u.email }}</div>

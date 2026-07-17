@@ -68,6 +68,8 @@ notificationsRouter.get('/', async (c) => {
       createdAt: notifications.createdAt,
       actorName: users.name,
       actorColor: users.color,
+      actorAvatarKind: users.avatarKind,
+      actorAvatarRef: users.avatarRef,
     })
     .from(notifications)
     .leftJoin(users, eq(notifications.actorId, users.id))
@@ -80,7 +82,12 @@ notificationsRouter.get('/', async (c) => {
     .slice(0, cappedLimit)
     .map((r) =>
       NotificationSchema.parse(
-        rowToNotification(r, { actorName: r.actorName, actorColor: r.actorColor }),
+        rowToNotification(r, {
+          actorName: r.actorName,
+          actorColor: r.actorColor,
+          actorAvatarKind: r.actorAvatarKind,
+          actorAvatarRef: r.actorAvatarRef,
+        }),
       ),
     )
   const result = applyPagination(items, cappedLimit, offset)

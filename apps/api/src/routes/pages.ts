@@ -236,6 +236,8 @@ pagesRouter.get('/activity', async (c) => {
       actorId: pageEvents.actorId,
       actorName: users.name,
       actorColor: users.color,
+      actorAvatarKind: users.avatarKind,
+      actorAvatarRef: users.avatarRef,
       createdAt: pageEvents.createdAt,
       spaceId: pageEvents.spaceId,
       spaceName: spaces.name,
@@ -274,6 +276,8 @@ pagesRouter.get('/activity', async (c) => {
         actorId: r.actorId ?? 'me',
         actorName: r.actorName,
         actorColor: r.actorColor,
+        actorAvatarKind: r.actorAvatarKind,
+        actorAvatarRef: r.actorAvatarRef,
         updatedAt: r.createdAt,
         spaceId: r.spaceId!,
         spaceName: r.spaceName ?? '(已删除空间)',
@@ -598,12 +602,14 @@ pagesRouter.post('/:id/snapshots', async (c) => {
     })
   })
 
-  // refetch + 渲染 DTO(LEFT JOIN users 拿编辑者姓名/颜色)
+  // refetch + 渲染 DTO(LEFT JOIN users 拿编辑者姓名/颜色/头像)
   const rows = await db
     .select({
       ...getTableColumns(pageVersions),
       editedByName: users.name,
       editedByColor: users.color,
+      editedByAvatarKind: users.avatarKind,
+      editedByAvatarRef: users.avatarRef,
     })
     .from(pageVersions)
     .leftJoin(users, eq(users.id, pageVersions.editedBy))
@@ -623,6 +629,8 @@ pagesRouter.post('/:id/snapshots', async (c) => {
     editedBy: row.editedBy,
     editedByName: row.editedByName,
     editedByColor: row.editedByColor,
+    editedByAvatarKind: (row.editedByAvatarKind as PageVersion['editedByAvatarKind']) ?? null,
+    editedByAvatarRef: row.editedByAvatarRef ?? null,
     editedAt: row.editedAt,
     changeNote: row.changeNote,
   }
@@ -856,6 +864,8 @@ pagesRouter.get('/:id/watchers', async (c) => {
       id: userWatchedPages.userId,
       name: users.name,
       color: users.color,
+      avatarKind: users.avatarKind,
+      avatarRef: users.avatarRef,
       watchedAt: userWatchedPages.watchedAt,
     })
     .from(userWatchedPages)
@@ -873,6 +883,8 @@ pagesRouter.get('/:id/watchers', async (c) => {
         id: r.id,
         name: r.name,
         color: r.color,
+        avatarKind: r.avatarKind ?? null,
+        avatarRef: r.avatarRef ?? null,
         watchedAt: r.watchedAt,
       }),
     ),

@@ -116,6 +116,9 @@ const mentionLabel = computed<string>(() => {
         :size="32"
         :label="authorName ?? (notification?.actorId ?? '?')"
         :color="authorColor ?? undefined"
+        :avatar-kind="notification?.actorAvatarKind ?? null"
+        :avatar-ref="notification?.actorAvatarRef ?? null"
+        :user-id="notification?.actorId ?? null"
         :title="authorName ?? ''"
       />
       <span v-else class="material-symbols-outlined">description</span>

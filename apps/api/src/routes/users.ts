@@ -646,6 +646,8 @@ usersRouter.get('/me/dashboard', async (c) => {
         createdAt: notifications.createdAt,
         actorName: users.name,
         actorColor: users.color,
+        actorAvatarKind: users.avatarKind,
+        actorAvatarRef: users.avatarRef,
       })
       .from(notifications)
       .leftJoin(users, eq(notifications.actorId, users.id))
@@ -660,7 +662,12 @@ usersRouter.get('/me/dashboard', async (c) => {
       .limit(limit)
     return rows.map((r) =>
       NotificationSchema.parse(
-        rowToNotification(r, { actorName: r.actorName, actorColor: r.actorColor }),
+        rowToNotification(r, {
+          actorName: r.actorName,
+          actorColor: r.actorColor,
+          actorAvatarKind: r.actorAvatarKind,
+          actorAvatarRef: r.actorAvatarRef,
+        }),
       ),
     )
   })()

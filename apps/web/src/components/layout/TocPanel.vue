@@ -412,6 +412,9 @@ watch(
             :size="20"
             :color="w.color ?? 'var(--text-3)'"
             :label="w.name ?? w.id"
+            :avatar-kind="w.avatarKind ?? null"
+            :avatar-ref="w.avatarRef ?? null"
+            :user-id="w.id ?? null"
             class="toc-follower-av"
             :class="{ 'is-me': w.id === authStore.user?.id }"
           />

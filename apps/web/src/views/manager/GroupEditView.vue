@@ -346,7 +346,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
                 class="member-row"
                 :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
               >
-                <UserAvatar :size="28" :label="u.name" :color="u.color" />
+                <UserAvatar :size="28" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
                 <div class="member-text">
                   <div class="member-name">{{ u.name }}</div>
                   <div class="member-email">{{ u.email }}</div>
@@ -390,7 +390,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
                 class="member-row"
                 :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
               >
-                <UserAvatar :size="28" :label="u.name" :color="u.color" />
+                <UserAvatar :size="28" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
                 <div class="member-text">
                   <div class="member-name">{{ u.name }}</div>
                   <div class="member-email">{{ u.email }}</div>

@@ -199,7 +199,7 @@ const colorPresets = [
 
     <header class="ue-header">
       <Skeleton v-if="loading" width="56px" height="56px" radius="50%" />
-      <UserAvatar v-else-if="user" :size="56" :label="user.name" :color="user.color" />
+      <UserAvatar v-else-if="user" :size="56" :label="user.name" :color="user.color" :avatar-kind="user.avatarKind" :avatar-ref="user.avatarRef" :user-id="user.id" />
       <div class="ue-header-text">
         <h1 class="ue-title">
           <Skeleton v-if="loading" width="180px" height="22px" />

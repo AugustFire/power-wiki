@@ -27,6 +27,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import Drawer from '@/components/ui/Drawer.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 
 type TabKey = 'all' | 'unread'
 
@@ -198,9 +199,15 @@ function relTime(ts: number): string {
         type="button"
         @click="onItemClick(n.id, n.pageId, n.commentId)"
       >
-        <span class="nd-avatar" :style="{ background: n.actorColor ?? '#0052CC' }">
-          {{ (n.actorName ?? n.actorId).slice(0, 1) }}
-        </span>
+        <UserAvatar
+          :size="32"
+          :label="n.actorName ?? n.actorId ?? '?'"
+          :color="n.actorColor ?? undefined"
+          :avatar-kind="n.actorAvatarKind ?? null"
+          :avatar-ref="n.actorAvatarRef ?? null"
+          :user-id="n.actorId ?? null"
+          :title="n.actorName ?? n.actorId ?? ''"
+        />
         <span class="nd-text">
           <span class="nd-line1">
             <strong class="nd-actor">{{ n.actorName ?? n.actorId }}</strong>

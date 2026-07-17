@@ -46,6 +46,9 @@ const tooltipText = computed(() => {
         :size="20"
         :color="u.color ?? 'var(--text-3)'"
         :label="u.name ?? u.id"
+        :avatar-kind="u.avatarKind ?? null"
+        :avatar-ref="u.avatarRef ?? null"
+        :user-id="u.id ?? null"
         class="stack-avatar"
       />
       <span

@@ -24,10 +24,18 @@ function asMentionedUserIds(value: unknown): string[] {
  * `authorName` / `authorColor` are nullable on purpose: legacy comment rows
  * with authorId='me' or rows where the user has been disabled should render
  * with a fallback avatar in the UI.
+ *
+ * `authorAvatarKind` / `authorAvatarRef` 同步透传(M11 头像三态);前端
+ * 当前按设计 CommentItem 不显示头像,但 DTO 带齐字段便于未来启用。
  */
 export function rowToComment(
   row: CommentRow,
-  opts: { authorName?: string | null; authorColor?: string | null } = {},
+  opts: {
+    authorName?: string | null
+    authorColor?: string | null
+    authorAvatarKind?: string | null
+    authorAvatarRef?: string | null
+  } = {},
 ): Comment {
   return {
     id: row.id,
@@ -43,6 +51,8 @@ export function rowToComment(
     updatedAt: row.updatedAt,
     authorName: opts.authorName ?? null,
     authorColor: opts.authorColor ?? null,
+    authorAvatarKind: (opts.authorAvatarKind as Comment['authorAvatarKind']) ?? null,
+    authorAvatarRef: opts.authorAvatarRef ?? null,
   }
 }
 
@@ -52,10 +62,18 @@ export function rowToComment(
  * no LEFT JOIN on pages is necessary (rows may outlive the page — purge).
  *
  * `actorName` / `actorColor` mirror the comment pattern.
+ *
+ * `actorAvatarKind` / `actorAvatarRef` 同步透传(M11 头像三态);NotificationBell
+ * 用真实头像替换手写首字母圆。
  */
 export function rowToNotification(
   row: NotificationRow,
-  opts: { actorName?: string | null; actorColor?: string | null } = {},
+  opts: {
+    actorName?: string | null
+    actorColor?: string | null
+    actorAvatarKind?: string | null
+    actorAvatarRef?: string | null
+  } = {},
 ): Notification {
   return {
     id: row.id,
@@ -63,6 +81,8 @@ export function rowToNotification(
     actorId: row.actorId,
     actorName: opts.actorName ?? null,
     actorColor: opts.actorColor ?? null,
+    actorAvatarKind: (opts.actorAvatarKind as Notification['actorAvatarKind']) ?? null,
+    actorAvatarRef: opts.actorAvatarRef ?? null,
     kind: row.kind,
     pageId: row.pageId,
     pageTitle: row.pageTitle ?? null,

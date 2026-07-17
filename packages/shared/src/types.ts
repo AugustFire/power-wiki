@@ -42,6 +42,10 @@ export interface PageNode {
   authorName: string | null
   /** 创建者头像色,同上 */
   authorColor: string | null
+  /** M11 头像 DTO 透传。authorId='me' / 用户已 disabled 时为 null。 */
+  authorAvatarKind?: 'preset' | 'custom' | null
+  /** M11 头像 DTO 透传。 */
+  authorAvatarRef?: string | null
   /**
    * 最后编辑者 user id(每次 PATCH / move / restore 同步更新)。
    * `0012 migration` 已 backfill 成 author_id,所以存量行不会为 null;
@@ -53,6 +57,10 @@ export interface PageNode {
   updatedByName: string | null
   /** 最后编辑者头像色,同上 */
   updatedByColor: string | null
+  /** M11 头像 DTO 透传。updatedBy 为空 / 用户已 disabled 时为 null。 */
+  updatedByAvatarKind?: 'preset' | 'custom' | null
+  /** M11 头像 DTO 透传。 */
+  updatedByAvatarRef?: string | null
   /**
    * Stage 8: page labels (Notion-style, global lowercase). Always present
    *  on list/get responses — backend LEFT JOIN aggregates distinct labels.
@@ -84,7 +92,15 @@ export interface PageNode {
   /** 点赞者 sample(前 5 人,按 created_at 升序) —— 给 ReadView 头像组用。
    *  user 已 disabled 时 name/color 为 null。Optional:未走 selectPagesWithAuthor
    *  的 fallback 路径给 []。 */
-  likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
+  likedBySample?: Array<{
+    id: string
+    name: string | null
+    color: string | null
+    /** M11 头像 DTO 透传 —— 点赞者头像组用真实头像 */
+    avatarKind?: 'preset' | 'custom' | null
+    /** M11 头像 DTO 透传 */
+    avatarRef?: string | null
+  }>
   /**
    * M13 👁 visibility — 当前用户是否关注此页。EXISTS(user_watched_pages
    *  WHERE page_id=? AND user_id=me)。Optional:种子页 / 老 cache 没填时

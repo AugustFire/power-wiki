@@ -31,10 +31,18 @@ import type { PageRow } from '../db/schema'
 export type PageRowWithAuthor = PageRow & {
   authorName: string | null
   authorColor: string | null
+  /** M11 头像 DTO 透传 —— PageNode.authorAvatarKind */
+  authorAvatarKind?: string | null
+  /** M11 头像 DTO 透传 —— PageNode.authorAvatarRef */
+  authorAvatarRef?: string | null
   /** 最后编辑者姓名,LEFT JOIN users 填充;updated_by 为空或用户已删时为 null */
   updatedByName: string | null
   /** 最后编辑者头像色,同上 */
   updatedByColor: string | null
+  /** M11 头像 DTO 透传 —— PageNode.updatedByAvatarKind */
+  updatedByAvatarKind?: string | null
+  /** M11 头像 DTO 透传 —— PageNode.updatedByAvatarRef */
+  updatedByAvatarRef?: string | null
   /** Stage 8: labels aggregator from pages.ts LEFT JOIN.
    *  Always present on the row after the join; default [] otherwise. */
   labels: string[]
@@ -50,9 +58,20 @@ export type PageRowWithAuthor = PageRow & {
   /** 当前用户是否已赞。Joined rows 为 boolean(SELECT COALESCE) ,
    *  未传 viewerUserId 时返回 false。Fallback 路径给 false。 */
   likedByMe?: boolean
-  /** 点赞者 sample(前 5 人) —— LEFT JOIN users 拿 name/color,user 被
-   *  disabled 时 name/color 为 null。Fallback 路径给 []。 */
-  likedBySample?: Array<{ id: string; name: string | null; color: string | null }>
+  /** 点赞者 sample(前 5 人) —— LEFT JOIN users 拿 name/color/avatar,user 被
+   *  disabled 时 name/color/avatar 为 null。Fallback 路径给 []。
+   *
+   *  `avatarKind` 这里写成 `string | null`(匹配 selectPagesWithAuthor 的
+   *  `sql<...>` 类型),窄化到 `'preset' | 'custom' | null` 在 rowToPageNode
+   *  输出构造处一次性做完(参考下方 body 里的 `as` cast)。直接给窄并集会和
+   *  SELECT helper 推出的 `string | null` 产生结构性不兼容。 */
+  likedBySample?: Array<{
+    id: string
+    name: string | null
+    color: string | null
+    avatarKind?: string | null
+    avatarRef?: string | null
+  }>
   /** M13 👁 当前用户是否关注此页。EXISTS correlated subquery,未传
    *  viewerUserId 时 selectPagesWithAuthor 给 false。Fallback 给 false。 */
   watchedByMe?: boolean
@@ -79,16 +98,20 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     authorId: row.authorId,
     authorName: row.authorName,
     authorColor: row.authorColor,
+    authorAvatarKind: (row.authorAvatarKind as PageNode['authorAvatarKind']) ?? null,
+    authorAvatarRef: row.authorAvatarRef ?? null,
     updatedBy: row.updatedBy,
     updatedByName: row.updatedByName,
     updatedByColor: row.updatedByColor,
+    updatedByAvatarKind: (row.updatedByAvatarKind as PageNode['updatedByAvatarKind']) ?? null,
+    updatedByAvatarRef: row.updatedByAvatarRef ?? null,
     labels: row.labels ?? [],
     deletedAt: row.deletedAt,
     deletedBy: row.deletedBy,
     hasChildren: row.hasChildren,
     likesCount: row.likesCount ?? 0,
     likedByMe: row.likedByMe ?? false,
-    likedBySample: row.likedBySample ?? [],
+    likedBySample: (row.likedBySample ?? []) as unknown as PageNode['likedBySample'],
     watchedByMe: row.watchedByMe ?? false,
     watchersCount: row.watchersCount ?? 0,
   }

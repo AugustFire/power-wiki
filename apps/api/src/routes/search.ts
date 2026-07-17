@@ -111,8 +111,12 @@ searchRouter.get('/', async (c) => {
       ...getTableColumns(pages),
       authorName: users.name,
       authorColor: users.color,
+      authorAvatarKind: users.avatarKind,
+      authorAvatarRef: users.avatarRef,
       updatedByName: editorUsers.name,
       updatedByColor: editorUsers.color,
+      updatedByAvatarKind: editorUsers.avatarKind,
+      updatedByAvatarRef: editorUsers.avatarRef,
       labels: labelsAgg,
       hasChildren: hasChildrenExpr,
     })
@@ -129,7 +133,17 @@ searchRouter.get('/', async (c) => {
         accessibleScope,
       ),
     )
-    .groupBy(pages.id, users.name, users.color, editorUsers.name, editorUsers.color)
+    .groupBy(
+      pages.id,
+      users.name,
+      users.color,
+      users.avatarKind,
+      users.avatarRef,
+      editorUsers.name,
+      editorUsers.color,
+      editorUsers.avatarKind,
+      editorUsers.avatarRef,
+    )
     // updatedAt DESC: freshest first. v0 doesn't need a relevance score —
     // title substring + recency covers the "what changed recently" use case
     // well enough. Sort by relevance only if a user reports that the most

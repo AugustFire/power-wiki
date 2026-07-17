@@ -42,6 +42,9 @@ useDocumentTitle(() => '首页')
 const activeSpaceId = computed(() => spacesStore.activeSpaceId.value)
 const activeSpace = computed(() => spacesStore.activeSpace.value)
 
+/** 当前用户 — HomeView hero 显示「{me.name}」byline + 个人头像。 */
+const me = computed(() => authStore.user)
+
 /**
  * 个人空间走 Dashboard 而不是 page tree。「空间的概念」在 personal 里就是
  * awareness(被 @ / 草稿 / 我创建 / 关注 / 最近)而不是 root page tree;
@@ -205,7 +208,7 @@ function excerpt(html: string): string {
             <div class="home-hero">
               <h1 class="page-title">{{ activeSpace?.name ?? '我的知识库' }}</h1>
               <div class="page-byline">
-                <span class="author"><UserAvatar :size="20" /> 我</span>
+                <span class="author"><UserAvatar :size="20" :label="me?.name ?? '我'" :color="me?.color" :avatar-kind="me?.avatarKind ?? null" :avatar-ref="me?.avatarRef ?? null" :user-id="me?.id ?? null" /> {{ me?.name ?? '我' }}</span>
                 <span class="dot">·</span>
                 <span>共 {{ stats.total }} 个页面 · {{ stats.roots }} 个根页面 · {{ stats.children }} 个子页面</span>
               </div>

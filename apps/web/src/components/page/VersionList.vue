@@ -172,6 +172,9 @@ function noteFor(v: PageVersion): string {
                   :size="20"
                   :color="v.editedByColor ?? 'var(--text-3)'"
                   :label="v.editedByName ?? v.editedBy"
+                  :avatar-kind="v.editedByAvatarKind ?? null"
+                  :avatar-ref="v.editedByAvatarRef ?? null"
+                  :user-id="v.editedBy ?? null"
                 />
                 <span class="vp-author">{{ v.editedByName ?? '未知作者' }}</span>
                 <span class="vp-line-2-dot" aria-hidden="true">·</span>
