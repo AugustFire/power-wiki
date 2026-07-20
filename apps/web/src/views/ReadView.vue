@@ -20,6 +20,7 @@ import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
+import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -377,21 +378,8 @@ watch(
 // ─── 图片附件 lightbox(只在 ReadView 挂载)───────────────────
 // 点击 figure.attachment-image > img → 全屏查看;Esc 关闭;点击背景关闭。
 // 不和 task checkbox 的 onContentClick 冲突(task 点击是 INPUT,这里是 IMG,
-// 走的是不同 path)。
-interface LightboxState {
-  open: boolean
-  src: string
-  alt: string
-  filename?: string
-}
-const lightbox = ref<LightboxState>({ open: false, src: '', alt: '' })
-
-function openLightbox(state: LightboxState) {
-  lightbox.value = state
-}
-function closeLightbox() {
-  lightbox.value = { open: false, src: '', alt: '' }
-}
+// 走的是不同 path)。状态与打开逻辑共用 useAttachmentLightbox,绑定策略见下。
+const { lightbox, closeLightbox, openFromImg } = useAttachmentLightbox()
 
 function onAttachmentImgClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
@@ -401,9 +389,7 @@ function onAttachmentImgClick(e: MouseEvent) {
   if (!img) return
   // 已被 sanitize 替换为 span.blocked-image 的占位符不会到这里(它是 span)
   e.preventDefault()
-  const fig = img.closest('figure.attachment-image') as HTMLElement | null
-  const filename = fig?.getAttribute('data-attachment-filename') || undefined
-  openLightbox({ open: true, src: img.src, alt: img.alt, filename })
+  openFromImg(img)
 }
 
 const boundAttachmentRoots = new WeakSet<HTMLElement>()

@@ -16,6 +16,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
+import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
@@ -76,19 +77,8 @@ function captureEditorEl() {
 // 在 capture 阶段拦,既能抢在 Tiptap 之前处理,也能 cover ProseMirror 节点
 // 重建。filter `.ProseMirror` 是为了不误吃 ReadView / 其它视图的 img(罕见,
 // 因为 Edit 路由时其它视图都已 unmount,但留一道检查更稳)。
-interface LightboxState {
-  open: boolean
-  src: string
-  alt: string
-  filename?: string
-}
-const lightbox = ref<LightboxState>({ open: false, src: '', alt: '' })
-function openLightbox(state: LightboxState) {
-  lightbox.value = state
-}
-function closeLightbox() {
-  lightbox.value = { open: false, src: '', alt: '' }
-}
+// 状态与打开逻辑共用 useAttachmentLightbox;绑定策略与 ReadView 不同(见上)。
+const { lightbox, closeLightbox, openFromImg } = useAttachmentLightbox()
 
 function onAttachmentImgClickInEditor(e: MouseEvent) {
   const target = e.target as HTMLElement | null
@@ -100,9 +90,7 @@ function onAttachmentImgClickInEditor(e: MouseEvent) {
   // stopPropagation,只走我们的 lightbox path。
   e.preventDefault()
   e.stopPropagation()
-  const fig = img.closest('figure.attachment-image') as HTMLElement | null
-  const filename = fig?.getAttribute('data-attachment-filename') || undefined
-  openLightbox({ open: true, src: img.src, alt: img.alt, filename })
+  openFromImg(img)
 }
 onMounted(() =>
   document.addEventListener('click', onAttachmentImgClickInEditor, true),
