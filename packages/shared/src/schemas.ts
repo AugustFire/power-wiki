@@ -748,11 +748,16 @@ export const AddLabelInputSchema = z.object({
  * cookie 鉴权由全局 app.use('/api/*', requireAuth) 兜底。
  */
 
-/** 响应 DTO —— 单条 attachment。 */
+/** 响应 DTO —— 单条 attachment。
+ *  `uploaderName` 由 GET /attachments LEFT JOIN users.name 拼上;deleted /
+ *  disabled user 时为 null,前端兜底显示 id 截断。其它三个字段
+ *  (color / avatarKind / avatarRef)v1 不暴露 —— 见 plan:page-idempotent-metcalfe
+ *  「DTO 变更」段,attachments 不挂 page-scoped 头像,扩展前不要塞死字段。 */
 export const AttachmentSchema = z.object({
   id: z.string().min(1).max(32),
   pageId: PageIdSchema,
   uploaderId: z.string().min(1),
+  uploaderName: z.string().nullable().optional(),
   originalFilename: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(127),
   sizeBytes: z.number().int().nonnegative(),

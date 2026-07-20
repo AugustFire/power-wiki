@@ -9,6 +9,7 @@ import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import UploadStatus from '@/components/editor/UploadStatus.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
+import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
@@ -641,6 +642,11 @@ onBeforeUnmount(() => {
             @ready="onEditorReady"
             @content-mount="captureEditorEl"
           />
+
+          <!-- 附件汇总:与 ReadView 同款,放在 Labels 之上。
+               EditView 顶部已有 UploadStatus 处理上传进度,这里只展示
+               当前页所有附件的最终落地列表。 -->
+          <AttachmentsSection v-if="page" :page-id="page.id" />
 
           <LabelPills v-if="page" :page="page" />
 

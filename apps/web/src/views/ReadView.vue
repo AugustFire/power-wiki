@@ -16,6 +16,7 @@ import PageWatchButton from '@/components/page/PageWatchButton.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
+import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
@@ -571,6 +572,10 @@ watch(
                 此页面尚未发布内容,等待作者编辑发布。
               </div>
             </div>
+
+            <!-- 附件汇总:放在 Labels 之上,与 page-reactions / subpages
+                 同级。count=0 时整个 section 不渲染,无视觉干扰。 -->
+            <AttachmentsSection v-if="page" :page-id="page.id" />
 
             <!-- 点赞区:放在正文下方(Labels 之上),左对齐,跟 .labels
                  同 margin / 同左起点,视觉上跟标签条同一类"行内元数据"。 -->

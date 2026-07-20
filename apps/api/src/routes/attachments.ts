@@ -32,7 +32,7 @@ import {
 import { mimeKind, MIME_TO_EXT, MAX_UPLOAD_BYTES_DEFAULT } from '@power-wiki/shared'
 import type { Attachment, AllowedMimeType } from '@power-wiki/shared'
 import { db } from '../db/client'
-import { attachments, pages } from '../db/schema'
+import { attachments, pages, users } from '../db/schema'
 import type { AttachmentRow } from '../db/schema'
 import { canAccessSpace } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
@@ -51,12 +51,18 @@ const MAX_UPLOAD_BYTES = Number(
   process.env.MAX_UPLOAD_BYTES ?? MAX_UPLOAD_BYTES_DEFAULT,
 )
 
-/** row → 响应 DTO(补 src)。 */
-function rowToAttachment(row: AttachmentRow): Attachment {
+/** row → 响应 DTO(补 src)。`uploaderName` 由 `getRowsForPage()` 显式
+ *  LEFT JOIN users 拼上,rowToAttachment 接受可选 second arg;upload-url /
+ *  finalize 路径不 JOIN(写入即时,无用户上下文外引),uploaderName = null。 */
+function rowToAttachment(
+  row: AttachmentRow,
+  uploaderName?: string | null,
+): Attachment {
   return {
     id: row.id,
     pageId: row.pageId,
     uploaderId: row.uploaderId,
+    uploaderName: uploaderName ?? null,
     originalFilename: row.originalFilename,
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes,
@@ -200,12 +206,41 @@ attachmentsRouter.get('/', async (c) => {
   }
 
   const rows = await db
-    .select()
+    .select({
+      id: attachments.id,
+      pageId: attachments.pageId,
+      uploaderId: attachments.uploaderId,
+      originalFilename: attachments.originalFilename,
+      storageKey: attachments.storageKey,
+      mimeType: attachments.mimeType,
+      sizeBytes: attachments.sizeBytes,
+      kind: attachments.kind,
+      createdAt: attachments.createdAt,
+      uploaderName: users.name,
+    })
     .from(attachments)
+    .leftJoin(users, eq(attachments.uploaderId, users.id))
     .where(eq(attachments.pageId, pageId))
     .orderBy(desc(attachments.createdAt))
 
-  return c.json(rows.map(rowToAttachment))
+  return c.json(
+    rows.map((r) =>
+      rowToAttachment(
+        {
+          id: r.id,
+          pageId: r.pageId,
+          uploaderId: r.uploaderId,
+          originalFilename: r.originalFilename,
+          storageKey: r.storageKey,
+          mimeType: r.mimeType,
+          sizeBytes: r.sizeBytes,
+          kind: r.kind,
+          createdAt: r.createdAt,
+        },
+        r.uploaderName,
+      ),
+    ),
+  )
 })
 
 /* ─── GET /api/attachments/:id/raw ────────────────────────────────────
