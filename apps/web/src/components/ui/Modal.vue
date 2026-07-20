@@ -162,7 +162,7 @@ useFocusTrap(dialogRef, () => props.open)
   justify-content: center;
   flex-shrink: 0;
 }
-.modal-close:hover { background: var(--hover-bg, #f4f5f7); }
+.modal-close:hover { background: var(--bg-canvas); }
 .modal-close .material-symbols-outlined { font-size: 20px; }
 
 .modal-body {

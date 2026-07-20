@@ -681,12 +681,12 @@ const ownerNameById = computed<Record<string, string>>(() =>
   letter-spacing: 0.02em;
 }
 .sc-kind-badge-personal {
-  background: var(--accent-soft, #E9F2FF);
-  color: var(--accent, #0052CC);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .sc-kind-badge-shared {
-  background: var(--bg-canvas, #F4F5F7);
-  color: var(--text-3, #6B778C);
+  background: var(--bg-canvas);
+  color: var(--text-3);
 }
 .sc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
 .sc-owner {
@@ -723,7 +723,7 @@ const ownerNameById = computed<Record<string, string>>(() =>
 }
 .sc-access-empty {
   font-size: 12px;
-  color: var(--danger, #DE350B);
+  color: var(--danger);
   font-weight: 500;
 }
 .sc-access-avatars {

@@ -229,14 +229,14 @@ function relTime(ts: number): string {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .bell-btn:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .bell-icon {
   width: 18px;
@@ -250,7 +250,7 @@ function relTime(ts: number): string {
   height: 14px;
   padding: 0 4px;
   border-radius: 7px;
-  background: var(--danger, #de350b);
+  background: var(--danger);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -263,7 +263,7 @@ function relTime(ts: number): string {
 .nd-mark-all {
   background: transparent;
   border: 0;
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -278,7 +278,7 @@ function relTime(ts: number): string {
   display: flex;
   gap: 4px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #ebeef0);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .nd-tab {
@@ -287,18 +287,18 @@ function relTime(ts: number): string {
   padding: 6px 12px;
   border-radius: 16px;
   font-size: 13px;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 .nd-tab:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .nd-tab.is-active {
   background: rgba(0, 82, 204, 0.08);
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   font-weight: 600;
 }
 .nd-tab-count {
@@ -306,13 +306,13 @@ function relTime(ts: number): string {
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 10px;
-  background: var(--hover-bg, #f4f5f7);
-  color: var(--text-3, #5e6c84);
+  background: var(--bg-canvas);
+  color: var(--text-3);
   min-width: 18px;
   text-align: center;
 }
 .nd-tab.is-active .nd-tab-count {
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   color: #fff;
 }
 
@@ -330,7 +330,7 @@ function relTime(ts: number): string {
   padding: 12px 16px;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--border, #ebeef0);
+  border-bottom: 1px solid var(--border);
   text-align: left;
   font: inherit;
   color: inherit;
@@ -339,7 +339,7 @@ function relTime(ts: number): string {
   transition: background 100ms ease;
 }
 .nd-row:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .nd-row.is-unread {
   background: rgba(0, 82, 204, 0.04);
@@ -351,7 +351,7 @@ function relTime(ts: number): string {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--accent, #0052cc);
+  background: var(--accent);
 }
 .nd-avatar {
   width: 32px;
@@ -380,27 +380,27 @@ function relTime(ts: number): string {
 .nd-actor {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   white-space: nowrap;
   flex-shrink: 0;
 }
 .nd-kind {
   font-size: 12px;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .nd-page {
   font-size: 12px;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .nd-time {
   font-size: 11px;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -414,14 +414,14 @@ function relTime(ts: number): string {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .nd-kebab:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .nd-kebab .material-symbols-outlined {
   font-size: 18px;
@@ -431,8 +431,8 @@ function relTime(ts: number): string {
   top: calc(100% + 6px);
   right: 0;
   min-width: 160px;
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dfe1e6);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
   z-index: 10000;
@@ -451,10 +451,10 @@ function relTime(ts: number): string {
   font-family: inherit;
 }
 .nd-menu-item:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .nd-menu-item.is-danger {
-  color: var(--danger, #de350b);
+  color: var(--danger);
 }
 
 /* backdrop / panel 的过渡由 ui/Drawer.vue 提供 */

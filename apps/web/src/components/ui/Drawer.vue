@@ -146,7 +146,7 @@ useFocusTrap(panelRef, () => props.open)
   align-items: center;
   justify-content: center;
 }
-.drw-close:hover { background: var(--hover-bg, #f4f5f7); }
+.drw-close:hover { background: var(--bg-canvas); }
 .drw-close .material-symbols-outlined { font-size: 18px; }
 
 .drw-body {

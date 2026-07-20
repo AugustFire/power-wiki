@@ -291,18 +291,18 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 16px;
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border, #dfe1e6);
+  border-bottom: 1px solid var(--border);
 }
 .title-block { flex: 1; min-width: 0; }
 .title {
   font-size: 20px;
   font-weight: 700;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   margin: 0 0 4px;
 }
 .subtitle {
   font-size: 13px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   margin: 0;
   max-width: 640px;
 }
@@ -316,23 +316,23 @@ function chipColor(kind: ActivityEvent['kind']): string {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
 }
 .filter-select select {
   height: 30px;
   padding: 0 24px 0 8px;
   font-family: inherit;
   font-size: 13px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
-  background: var(--bg, #ffffff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
   cursor: pointer;
 }
-.filter-select select:hover { border-color: var(--border-strong, #c1c7d0); }
+.filter-select select:hover { border-color: var(--border-strong); }
 .filter-select select:focus {
   outline: none;
-  border-color: var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
 }
 .refresh-btn {
   display: inline-flex;
@@ -340,17 +340,17 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 4px;
   height: 30px;
   padding: 0 12px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
-  background: var(--bg, #ffffff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
   font-size: 13px;
   cursor: pointer;
   font-family: inherit;
 }
 .refresh-btn:hover:not(:disabled) {
-  border-color: var(--border-strong, #c1c7d0);
-  background: var(--bg-subtle, #f4f5f7);
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
 }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .is-loading { animation: spin 0.9s linear infinite; }
@@ -369,13 +369,13 @@ function chipColor(kind: ActivityEvent['kind']): string {
   align-items: center;
   gap: 12px;
   padding: 12px 12px;
-  border-bottom: 1px solid var(--border, #ebecf0);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--duration-fast);
 }
-.activity-row:hover { background: var(--bg-subtle, #f4f5f7); }
+.activity-row:hover { background: var(--bg-subtle); }
 .activity-row:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
   border-radius: var(--radius-sm, 3px);
 }
@@ -391,11 +391,11 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 6px;
   flex-wrap: wrap;
   font-size: 14px;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
 }
 .actor-name {
   font-weight: 600;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
 }
 .kind-chip {
   display: inline-block;
@@ -421,7 +421,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
 .ev-page-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -432,7 +432,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
 }
 .space-chip {
   display: inline-block;
@@ -449,12 +449,12 @@ function chipColor(kind: ActivityEvent['kind']): string {
   overflow: hidden;
   max-width: 160px;
 }
-.time { color: var(--text-3, #6b778c); font-variant-numeric: tabular-nums; }
+.time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .row-arrow {
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-size: 18px;
 }
-.activity-row:hover .row-arrow { color: var(--accent, #0052cc); }
+.activity-row:hover .row-arrow { color: var(--accent); }
 
 .load-more-row {
   display: flex;
@@ -467,22 +467,22 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 4px;
   height: 32px;
   padding: 0 16px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
-  background: var(--bg, #ffffff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
   font-size: 13px;
   cursor: pointer;
   font-family: inherit;
 }
 .load-more-btn:hover:not(:disabled) {
-  border-color: var(--border-strong, #c1c7d0);
-  background: var(--bg-subtle, #f4f5f7);
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
 }
 .load-more-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .end-hint {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   padding: 8px 0;
 }
 
@@ -492,7 +492,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
   align-items: center;
   gap: 12px;
   padding: 12px 12px;
-  border-bottom: 1px solid var(--border, #ebecf0);
+  border-bottom: 1px solid var(--border);
 }
 .row-skeleton-text {
   display: flex;
@@ -506,17 +506,17 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 8px;
   padding: 12px 16px;
   margin-top: 16px;
-  background: var(--error-soft, #ffebe6);
-  border: 1px solid var(--error, #de350b);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   border-radius: var(--radius, 4px);
-  color: var(--error, #de350b);
+  color: var(--danger);
   font-size: 14px;
 }
 .link-btn {
   margin-left: auto;
   background: transparent;
   border: 0;
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   font-family: inherit;
   font-size: 14px;
   cursor: pointer;

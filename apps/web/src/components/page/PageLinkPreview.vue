@@ -155,7 +155,7 @@ watch(() => props.pageId, (id) => loadPage(id))
   width: 320px;
   max-width: calc(100vw - 16px);
   padding: 12px 14px;
-  background: var(--bg, #fff);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 6px);
   box-shadow: var(--shadow-lg);

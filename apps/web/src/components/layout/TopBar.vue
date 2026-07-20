@@ -70,13 +70,13 @@ const uiStore = useUiStore()
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   text-decoration: none;
   transition: background var(--duration-fast);
 }
 .activity-btn:hover {
-  background: var(--hover-bg, #f4f5f7);
-  color: var(--text-1, #172b4d);
+  background: var(--bg-canvas);
+  color: var(--text-1);
 }
 .activity-btn.router-link-active {
   background: var(--accent-soft);

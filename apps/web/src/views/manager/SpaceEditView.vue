@@ -505,12 +505,12 @@ function formatDate(ts: number): string {
   flex-shrink: 0;
 }
 .se-kind-personal {
-  background: var(--accent-soft, #E9F2FF);
-  color: var(--accent, #0052CC);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .se-kind-shared {
-  background: var(--bg-canvas, #F4F5F7);
-  color: var(--text-3, #6B778C);
+  background: var(--bg-canvas);
+  color: var(--text-3);
 }
 .se-sub { font-size: 13px; color: var(--text-3); margin: 4px 0 0 52px; }
 .se-sub a { color: var(--accent); text-decoration: none; }
@@ -518,7 +518,7 @@ function formatDate(ts: number): string {
 .se-sub code {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
-  background: var(--bg-canvas, #F4F5F7);
+  background: var(--bg-canvas);
   padding: 1px 4px;
   border-radius: 3px;
 }

@@ -51,14 +51,14 @@ function onClick(): void {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .help-btn:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .help-icon {
   width: 18px;

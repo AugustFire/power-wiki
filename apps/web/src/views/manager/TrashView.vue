@@ -827,7 +827,7 @@ async function onPurge(id: string, title: string) {
   align-items: center;
   gap: 4px;
   font-size: 12.5px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-style: italic;
 }
 .ret-dirty-hint .icon-sm { font-size: 14px; }
@@ -859,7 +859,7 @@ async function onPurge(id: string, title: string) {
   color: var(--text-3);
   font-weight: 400;
 }
-.parent-trashed { color: var(--danger, #DE350B); font-weight: 500; }
+.parent-trashed { color: var(--danger); font-weight: 500; }
 
 .row-btn {
   display: inline-flex;
@@ -878,8 +878,8 @@ async function onPurge(id: string, title: string) {
 }
 .row-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text-1); }
 .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.row-btn.danger { color: var(--danger, #DE350B); border-color: var(--danger, #DE350B); }
-.row-btn.danger:hover:not(:disabled) { background: var(--danger, #DE350B); color: white; }
+.row-btn.danger { color: var(--danger); border-color: var(--danger); }
+.row-btn.danger:hover:not(:disabled) { background: var(--danger); color: white; }
 .row-btn.restore { color: var(--accent); border-color: var(--accent); }
 .row-btn.restore:hover:not(:disabled) { background: var(--accent-soft); }
 

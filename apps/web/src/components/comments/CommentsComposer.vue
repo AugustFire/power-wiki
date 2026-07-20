@@ -142,7 +142,7 @@ function onCancel(): void {
   column-gap: 10px;
   row-gap: 8px;
   padding: 16px 0 20px;
-  border-top: 1px solid var(--border, #ebeef0);
+  border-top: 1px solid var(--border);
 }
 .cc-avatar {
   grid-row: 1;
@@ -154,11 +154,11 @@ function onCancel(): void {
   resize: vertical;
   min-height: 60px;
   padding: 8px 10px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font: inherit;
-  background: var(--bg, #fff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
 }
 .cc-actions {
   grid-row: 2;
@@ -181,22 +181,22 @@ function onCancel(): void {
 }
 .cc-cancel {
   background: transparent;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3);
 }
 .cc-cancel:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .cc-submit {
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   color: #fff;
 }
 .cc-submit:hover:not([disabled]) {
-  background: var(--accent-hover, #0747a6);
+  background: var(--accent-hover);
 }
 .cc-error {
   grid-row: 3;
   grid-column: 2;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   font-size: 12px;
   margin: 0;
 }

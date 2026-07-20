@@ -103,7 +103,7 @@ function iconFor(kind: Toast['kind']): string {
   min-width: 240px;
   max-width: 360px;
   padding: 11px 14px;
-  background: var(--bg-subtle, #ebecf0);
+  background: var(--bg-subtle);
   border: 1px solid transparent;
   border-radius: var(--radius-lg, 6px);
   box-shadow: var(--shadow-sm);
@@ -111,16 +111,16 @@ function iconFor(kind: Toast['kind']): string {
 }
 
 .toast-success {
-  background: var(--success-soft, #e3fcef);
-  color: var(--success, #36b37e);
+  background: var(--success-soft);
+  color: var(--success);
 }
 .toast-error {
-  background: var(--danger-soft, #ffebe6);
-  color: var(--danger, #de350b);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .toast-info {
-  background: var(--accent-soft, #deebff);
-  color: var(--accent, #0052cc);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .toast-icon {
@@ -138,7 +138,7 @@ function iconFor(kind: Toast['kind']): string {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.45;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   word-break: break-word;
 }
 

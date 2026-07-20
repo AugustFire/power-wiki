@@ -64,7 +64,7 @@ function select(tab: TabId) {
   align-items: center;
   gap: 4px;
   padding: 4px;
-  background: var(--bg-canvas, #F4F5F7);
+  background: var(--bg-canvas);
   border-radius: 8px;
   border: 1px solid var(--border);
 }
@@ -79,7 +79,7 @@ function select(tab: TabId) {
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
   font-family: inherit;
@@ -88,7 +88,7 @@ function select(tab: TabId) {
   color: var(--text-1);
 }
 .kt-tab-active {
-  background: var(--surface, #FFFFFF);
+  background: var(--bg);
   color: var(--text-1);
   box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
@@ -101,12 +101,12 @@ function select(tab: TabId) {
   padding: 0 6px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-3, #6B778C);
-  background: var(--bg-canvas, #F4F5F7);
+  color: var(--text-3);
+  background: var(--bg-canvas);
   border-radius: 9px;
 }
 .kt-tab-active .kt-count {
-  color: var(--accent, #0052CC);
-  background: var(--accent-soft, #E9F2FF);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 </style>

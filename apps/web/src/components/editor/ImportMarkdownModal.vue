@@ -547,7 +547,7 @@ async function submit(): Promise<void> {
   align-items: center;
   justify-content: center;
 }
-.import-close:hover { background: var(--hover-bg, #f4f5f7); }
+.import-close:hover { background: var(--bg-canvas); }
 .import-close .material-symbols-outlined { font-size: 20px; }
 
 .import-body {

@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   padding: 4px 8px;
   background: var(--bg-code);
-  color: var(--text-invert, #fff);
+  color: var(--text-invert);
   font-size: 12px;
   line-height: 1.5;
   border-radius: var(--radius-sm);

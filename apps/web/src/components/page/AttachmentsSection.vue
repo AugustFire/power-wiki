@@ -257,7 +257,7 @@ async function onDelete(a: Attachment): Promise<void> {
 .as-title {
   font-size: var(--text-base, 14px);
   font-weight: 600;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -265,24 +265,24 @@ async function onDelete(a: Attachment): Promise<void> {
 }
 .as-title-icon {
   font-size: 18px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   transition: color var(--duration-fast, 120ms) var(--ease-out, ease);
 }
 .as-count {
   font-weight: 400;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-size: var(--text-sm, 13px);
 }
 .as-chevron {
   font-size: 18px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   transition: color var(--duration-fast, 120ms) var(--ease-out, ease);
 }
 .as-header:hover .as-title,
 .as-header:hover .as-title-icon,
-.as-header:hover .as-chevron { color: var(--accent, #0052cc); }
+.as-header:hover .as-chevron { color: var(--accent); }
 .as-header:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -326,7 +326,7 @@ async function onDelete(a: Attachment): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-subtle, #ebecf0);
+  background: var(--bg-subtle);
   border-radius: var(--radius-md, 4px);
   overflow: hidden;
 }
@@ -351,7 +351,7 @@ async function onDelete(a: Attachment): Promise<void> {
 .as-name {
   font-size: var(--text-sm, 13px);
   font-weight: 500;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -360,11 +360,11 @@ async function onDelete(a: Attachment): Promise<void> {
   display: inline-block;
 }
 .as-name:hover {
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   text-decoration: underline;
 }
 .as-name:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
   border-radius: 2px;
 }
@@ -374,7 +374,7 @@ async function onDelete(a: Attachment): Promise<void> {
   align-items: center;
   gap: 6px;
   font-size: var(--text-xs, 12px);
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   min-width: 0;
 }
 .as-uploader {
@@ -389,7 +389,7 @@ async function onDelete(a: Attachment): Promise<void> {
   white-space: nowrap;
   max-width: 140px;
 }
-.as-dot { color: var(--text-3, #6b778c); }
+.as-dot { color: var(--text-3); }
 .as-size, .as-time {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -404,7 +404,7 @@ async function onDelete(a: Attachment): Promise<void> {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-md, 4px);
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   text-decoration: none;
   opacity: 0;
   transition: opacity var(--duration-fast, 120ms) var(--ease-out, ease),
@@ -416,10 +416,10 @@ async function onDelete(a: Attachment): Promise<void> {
 .as-download:focus-visible { opacity: 1; }
 .as-download:hover {
   background: var(--accent-bg-active, rgba(0, 82, 204, 0.16));
-  color: var(--accent, #0052cc);
+  color: var(--accent);
 }
 .as-download:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -434,7 +434,7 @@ async function onDelete(a: Attachment): Promise<void> {
   border: 0;
   background: transparent;
   border-radius: var(--radius-md, 4px);
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--duration-fast, 120ms) var(--ease-out, ease),
@@ -445,11 +445,11 @@ async function onDelete(a: Attachment): Promise<void> {
 .as-row:hover .as-delete,
 .as-delete:focus-visible { opacity: 1; }
 .as-delete:hover {
-  background: var(--danger-soft, #ffebe6);
-  color: var(--danger, #de350b);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .as-delete:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .as-delete:disabled { cursor: not-allowed; }
@@ -461,9 +461,9 @@ async function onDelete(a: Attachment): Promise<void> {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--danger-soft, #ffebe6);
+  background: var(--danger-soft);
   border-radius: var(--radius-md, 4px);
-  color: var(--danger, #de350b);
+  color: var(--danger);
   font-size: var(--text-sm, 13px);
 }
 .as-err-icon { font-size: 18px; }

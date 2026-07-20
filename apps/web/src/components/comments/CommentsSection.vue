@@ -267,20 +267,20 @@ function onEdited(updated: Comment): void {
    - hover bg --bg-subtle 仍是行级高亮的关键 */
 .comments-section {
   margin-top: 56px;
-  border-top: 1px solid var(--text-3, #6b778c);
+  border-top: 1px solid var(--text-3);
   background: transparent;
 }
 .cs-title {
   font-size: 16px;
   font-weight: 700;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   margin: 0;
   padding: 28px 0 16px;
 }
 .cs-loading,
 .cs-empty {
   font-size: 13px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   padding: 12px 0 20px;
   text-align: center;
 }
@@ -291,14 +291,14 @@ function onEdited(updated: Comment): void {
   padding: 4px 0 12px;
 }
 .cs-load-end {
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-size: 12px;
   padding: 4px 0 8px;
   text-align: center;
 }
 .cs-error {
   font-size: 13px;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   padding: 8px 0;
 }
 .cs-list {
@@ -320,17 +320,17 @@ function onEdited(updated: Comment): void {
   padding: 7px 18px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-2, #44546f);
-  background: var(--bg, #fff);
-  border: 1px solid var(--border, #dfe1e6);
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 16px;
   cursor: pointer;
   transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
 }
 .cs-load-more-btn:hover:not(:disabled) {
-  background: var(--bg-canvas, #f4f5f7);
-  border-color: var(--border-strong, #c1c7d0);
-  color: var(--text-1, #172b4d);
+  background: var(--bg-canvas);
+  border-color: var(--border-strong);
+  color: var(--text-1);
 }
 .cs-load-more-btn:disabled {
   opacity: 0.6;
@@ -340,8 +340,8 @@ function onEdited(updated: Comment): void {
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid var(--border, #dfe1e6);
-  border-top-color: var(--accent, #0052cc);
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: cs-spin 0.7s linear infinite;
 }
@@ -361,7 +361,7 @@ function onEdited(updated: Comment): void {
   content: '';
   position: absolute;
   inset: 0;
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   animation: cs-progress 1.2s ease-in-out infinite;
 }
 @keyframes cs-progress {

@@ -237,9 +237,9 @@ async function exportAs(fmt: 'html' | 'md' | 'pdf') {
 
 .ex-error {
   font-size: 12px;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   padding: 6px 10px;
-  background: var(--danger-soft, #ffebe6);
+  background: var(--danger-soft);
   border-radius: var(--radius-sm, 3px);
   margin: 4px 0 0;
 }

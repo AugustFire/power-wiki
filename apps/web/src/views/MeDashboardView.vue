@@ -482,10 +482,10 @@ const heroSubtitle = computed(() => {
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border, #DFE1E6);
+  border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
-  background: var(--bg, #FFFFFF);
-  color: var(--text-2, #42526E);
+  background: var(--bg);
+  color: var(--text-2);
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -494,13 +494,13 @@ const heroSubtitle = computed(() => {
     color var(--duration-fast) ease-out;
 }
 .refresh-btn:hover:not(:disabled) {
-  border-color: var(--accent, #0052CC);
-  background: var(--accent-bg-soft, #E9F2FF);
-  color: var(--accent, #0052CC);
+  border-color: var(--accent);
+  background: var(--accent-bg-soft);
+  color: var(--accent);
 }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .refresh-btn:focus-visible {
-  outline: 2px solid var(--focus-ring, #4C9AFF);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .refresh-btn .material-symbols-outlined { font-size: 18px; }
@@ -531,7 +531,7 @@ const heroSubtitle = computed(() => {
   align-items: center;
   padding: 12px 0 36px;
   margin-bottom: 32px;
-  border-bottom: 1px solid var(--border, #EBECF0);
+  border-bottom: 1px solid var(--border);
 }
 .dash-hero-text {
   grid-area: meta / meta / sub / sub;
@@ -547,7 +547,7 @@ const heroSubtitle = computed(() => {
   bottom: 6px;
   width: 3px;
   border-radius: 2px;
-  background: linear-gradient(180deg, var(--accent, #0052CC) 0%, var(--accent-bg-active, #B3D4FF) 100%);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-bg-active) 100%);
 }
 .hero-meta {
   grid-area: meta;
@@ -556,26 +556,26 @@ const heroSubtitle = computed(() => {
   gap: 8px;
   margin: 0 0 4px;
   font-size: 13px;
-  color: var(--text-2, #42526E);
+  color: var(--text-2);
   letter-spacing: 0.01em;
 }
 .hero-meta-greeting {
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
 }
 .hero-meta-dot {
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
 }
 .hero-meta-date {
   font-weight: 500;
-  color: var(--text-2, #42526E);
+  color: var(--text-2);
 }
 .hero-name {
   grid-area: name;
   margin: 0;
   font-size: 44px;
   font-weight: 700;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   letter-spacing: -0.035em;
   line-height: 1.05;
 }
@@ -583,7 +583,7 @@ const heroSubtitle = computed(() => {
   grid-area: sub;
   margin: 6px 0 0;
   font-size: 15px;
-  color: var(--text-2, #42526E);
+  color: var(--text-2);
   line-height: 1.6;
   max-width: 68ch;
 }
@@ -605,7 +605,7 @@ const heroSubtitle = computed(() => {
   font-size: 22px;
   font-weight: 700;
   line-height: 1;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.05em;
@@ -613,20 +613,20 @@ const heroSubtitle = computed(() => {
 .clock-progress {
   margin-top: 10px;
   height: 4px;
-  background: var(--bg-subtle, #F4F5F7);
+  background: var(--bg-subtle);
   border-radius: 2px;
   overflow: hidden;
 }
 .clock-progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-bg-active, #B3D4FF) 0%, var(--accent, #0052CC) 100%);
+  background: linear-gradient(90deg, var(--accent-bg-active) 0%, var(--accent) 100%);
   transition: width 1s linear;
 }
 .clock-label {
   margin-top: 6px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
@@ -638,17 +638,17 @@ const heroSubtitle = computed(() => {
   gap: 8px;
   padding: 12px 16px;
   margin-bottom: 16px;
-  background: var(--error-soft, #FFEBE6);
-  border: 1px solid var(--error, #DE350B);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   border-radius: var(--radius, 4px);
-  color: var(--error, #DE350B);
+  color: var(--danger);
   font-size: 14px;
 }
 .link-btn {
   margin-left: auto;
   background: transparent;
   border: 0;
-  color: var(--accent, #0052CC);
+  color: var(--accent);
   font-family: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -658,15 +658,15 @@ const heroSubtitle = computed(() => {
 /* Section 容器 —— 单页滚动,每个 section 留 24px 间距 */
 .dash-section {
   margin-bottom: 20px;
-  background: var(--bg, #FFFFFF);
-  border: 1px solid var(--border, #EBECF0);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   transition: box-shadow var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out);
 }
 .dash-section:hover {
-  border-color: var(--border-strong, #C1C7D0);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(9, 30, 66, 0.06));
 }
 .section-head {
@@ -674,8 +674,8 @@ const heroSubtitle = computed(() => {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #EBECF0);
-  background: var(--bg, #FFFFFF);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 .section-title {
   display: flex;
@@ -683,33 +683,33 @@ const heroSubtitle = computed(() => {
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   margin: 0;
   flex: 1;
   min-width: 0;
 }
 .section-icon {
   font-size: 20px !important;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
 }
 .section-icon.mention-icon { color: var(--danger); }
-.section-icon.personal-icon { color: var(--accent, #0052CC); }
+.section-icon.personal-icon { color: var(--accent); }
 .section-meta {
   font-size: 12px;
-  color: var(--text-3, #6B778C);
-  background: var(--bg-subtle, #F4F5F7);
+  color: var(--text-3);
+  background: var(--bg-subtle);
   padding: 2px 8px;
   border-radius: 10px;
   font-weight: 500;
 }
 .section-link {
   font-size: 13px;
-  color: var(--accent, #0052CC);
+  color: var(--accent);
   text-decoration: none;
   margin-left: auto;
   transition: color var(--duration-fast) ease-out;
 }
-.section-link:hover { color: var(--accent-hover, #0747A6); text-decoration: underline; }
+.section-link:hover { color: var(--accent-hover); text-decoration: underline; }
 
 .section-list {
   list-style: none;
@@ -729,7 +729,7 @@ const heroSubtitle = computed(() => {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border, #EBECF0);
+  border-bottom: 1px solid var(--border);
 }
 .row-skeleton:last-child { border-bottom: 0; }
 .row-skeleton-text {

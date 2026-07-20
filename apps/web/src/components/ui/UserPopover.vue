@@ -121,7 +121,7 @@ watch(() => props.anchor, () => requestAnimationFrame(() => position()))
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--bg, #fff);
+  background: var(--bg);
   color: var(--text-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);

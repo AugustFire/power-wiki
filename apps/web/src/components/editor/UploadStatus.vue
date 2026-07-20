@@ -124,13 +124,13 @@ const visible = computed(() => store.list.length > 0)
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  background: var(--accent-soft, #deebff);
+  background: var(--accent-soft);
   border: 1px solid transparent;
   border-radius: var(--radius-md, 4px);
   min-width: 0;
 }
 .upload-row.is-failed {
-  background: var(--danger-soft, #ffebe6);
+  background: var(--danger-soft);
 }
 
 .us-icon {
@@ -143,10 +143,10 @@ const visible = computed(() => store.list.length > 0)
 }
 .us-icon .material-symbols-outlined {
   font-size: 18px;
-  color: var(--accent, #0052cc);
+  color: var(--accent);
 }
 .upload-row.is-failed .us-icon .material-symbols-outlined {
-  color: var(--danger, #de350b);
+  color: var(--danger);
 }
 
 .us-icon .is-spin {
@@ -172,7 +172,7 @@ const visible = computed(() => store.list.length > 0)
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   min-width: 0;
 }
 .us-filename {
@@ -185,12 +185,12 @@ const visible = computed(() => store.list.length > 0)
 }
 .us-meta {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .us-meta-failed {
-  color: var(--danger, #de350b);
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -206,7 +206,7 @@ const visible = computed(() => store.list.length > 0)
 }
 .us-progress-bar {
   height: 100%;
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   border-radius: 2px;
   transition: width 120ms linear;
 }
@@ -240,7 +240,7 @@ const visible = computed(() => store.list.length > 0)
   font-size: 14px;
 }
 .upload-row.is-failed .us-retry {
-  color: var(--danger, #de350b);
+  color: var(--danger);
 }
 
 .us-close {

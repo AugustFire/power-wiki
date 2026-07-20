@@ -358,15 +358,15 @@ canvas:active {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: var(--bg-subtle, #f4f5f7);
+  background: var(--bg-subtle);
   border-radius: 50%;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   padding: 16px;
   text-align: center;
 }
 .avatar-cropper-error {
-  background: var(--error-soft, #ffebe6);
-  color: var(--danger, #de350b);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .avatar-cropper-loading .material-symbols-outlined,
 .avatar-cropper-error .material-symbols-outlined {

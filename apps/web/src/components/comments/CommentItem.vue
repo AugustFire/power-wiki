@@ -398,7 +398,7 @@ function onEditKeydown(ev: KeyboardEvent): void {
   transition: background 80ms ease;
 }
 .comment-item:hover {
-  background: var(--bg-subtle, #ebecf0);
+  background: var(--bg-subtle);
 }
 .ci-body {
   min-width: 0;
@@ -409,34 +409,34 @@ function onEditKeydown(ev: KeyboardEvent): void {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   line-height: 1.5;
   margin-bottom: 6px;
 }
 .ci-author {
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   font-weight: 600;
   font-size: 13px;
   flex-shrink: 0;
 }
 .ci-dot {
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   opacity: 0.5;
   flex-shrink: 0;
 }
 .ci-time {
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   flex-shrink: 0;
 }
 .ci-edited {
   font-size: 11px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   opacity: 0.85;
   flex-shrink: 0;
 }
 
 .ci-text {
-  color: var(--text-2, #44546f);
+  color: var(--text-2);
   font-size: 14px;
   line-height: 1.55;
   word-wrap: break-word;
@@ -460,7 +460,7 @@ function onEditKeydown(ev: KeyboardEvent): void {
   margin-top: 4px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -492,26 +492,26 @@ function onEditKeydown(ev: KeyboardEvent): void {
   background: transparent;
   border: 0;
   border-radius: 4px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   cursor: pointer;
   transition: background 80ms ease, color 80ms ease, box-shadow 80ms ease;
 }
 /* 整行 hover 时 actions 浮起(白底+阴影) — 让用户清楚这条评论"被激活"了,
    不需要精确 hover 到按钮上才看到。按钮自身 hover 进一步加蓝色。 */
 .comment-item:hover .ci-icon-btn {
-  background: var(--bg, #fff);
+  background: var(--bg);
   box-shadow: var(--shadow-sm);
 }
 .ci-icon-btn:hover {
-  color: var(--accent, #0052cc);
+  color: var(--accent);
 }
 .ci-icon-btn.is-active {
-  background: var(--bg, #fff);
-  color: var(--accent, #0052cc);
+  background: var(--bg);
+  color: var(--accent);
   box-shadow: var(--shadow-sm);
 }
 .ci-icon-btn-danger:hover {
-  color: var(--danger, #de350b);
+  color: var(--danger);
 }
 .ci-icon-btn .material-symbols-outlined {
   font-size: 18px;
@@ -525,11 +525,11 @@ function onEditKeydown(ev: KeyboardEvent): void {
   margin-top: 4px;
   margin-left: 4px;
   padding-left: 14px;
-  border-left: 2px solid var(--border, #ebeef0);
+  border-left: 2px solid var(--border);
 }
 .ci-error {
   margin: 4px 0 0;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -544,15 +544,15 @@ function onEditKeydown(ev: KeyboardEvent): void {
   resize: vertical;
   min-height: 80px;
   padding: 8px 10px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font: inherit;
-  background: var(--bg, #fff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
   box-sizing: border-box;
 }
 .ci-edit-textarea:focus {
-  outline: 2px solid var(--accent, #0052cc);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
   border-color: transparent;
 }
@@ -581,22 +581,22 @@ function onEditKeydown(ev: KeyboardEvent): void {
 }
 .ci-edit-cancel {
   background: transparent;
-  color: var(--text-3, #5e6c84);
+  color: var(--text-3);
 }
 .ci-edit-cancel:hover:not([disabled]) {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .ci-edit-save {
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   color: #fff;
 }
 .ci-edit-save:hover:not([disabled]) {
-  background: var(--accent-hover, #0747a6);
+  background: var(--accent-hover);
 }
 
 .ci-edit-error {
   margin: 6px 0 0;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   font-size: 12px;
 }
 </style>

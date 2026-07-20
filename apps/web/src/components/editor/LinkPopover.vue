@@ -134,11 +134,11 @@ watch(url, () => {
   box-sizing: border-box;
 }
 .link-input:focus { border-color: var(--accent); }
-.link-input-error { border-color: var(--danger, #de350b) !important; }
+.link-input-error { border-color: var(--danger) !important; }
 .link-error {
   margin-top: 6px;
   font-size: 12px;
-  color: var(--danger, #de350b);
+  color: var(--danger);
   line-height: 1.4;
 }
 .link-actions {

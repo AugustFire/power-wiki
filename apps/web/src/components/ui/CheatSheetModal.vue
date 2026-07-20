@@ -223,7 +223,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
   gap: 16px;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border, #dfe1e6);
+  border-bottom: 1px solid var(--border);
 }
 .cheat-title {
   font-size: 18px;
@@ -233,7 +233,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
 }
 .cheat-subtitle {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   margin: 0;
 }
 .cheat-mini-kbd {
@@ -266,7 +266,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
   flex-shrink: 0;
 }
 .cheat-close:hover {
-  background: var(--hover-bg, #f4f5f7);
+  background: var(--bg-canvas);
 }
 .cheat-close .material-symbols-outlined {
   font-size: 20px;
@@ -282,7 +282,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   margin: 0 0 12px;
 }
 
@@ -314,7 +314,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
   font-size: 12.5px;
 }
 .cheat-desc {
-  color: var(--text-2, #44546f);
+  color: var(--text-2);
   min-width: 0;
   line-height: 1.4;
 }
@@ -373,7 +373,7 @@ useEscape(cheatSheetOpen, () => uiStore.closeCheatSheet())
 }
 .cheat-tip-desc {
   font-size: 12.5px;
-  color: var(--text-2, #44546f);
+  color: var(--text-2);
   margin: 0;
   line-height: 1.5;
 }

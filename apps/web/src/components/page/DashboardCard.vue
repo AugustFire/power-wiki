@@ -151,13 +151,13 @@ const mentionLabel = computed<string>(() => {
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border-bottom: 1px solid var(--border, #EBECF0);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--duration-fast, 0.1s) ease-out;
 }
-.dash-card:hover { background: var(--bg-subtle, #F4F5F7); }
+.dash-card:hover { background: var(--bg-subtle); }
 .dash-card:focus-visible {
-  outline: 2px solid var(--focus-ring, #4C9AFF);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
   border-radius: var(--radius-sm, 3px);
 }
@@ -168,11 +168,11 @@ const mentionLabel = computed<string>(() => {
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
 }
 .dash-icon .material-symbols-outlined {
   font-size: 24px;
-  color: var(--text-2, #44546F);
+  color: var(--text-2);
 }
 .dash-body {
   display: flex;
@@ -185,7 +185,7 @@ const mentionLabel = computed<string>(() => {
   align-items: baseline;
   gap: 6px;
   font-size: 14px;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -202,13 +202,13 @@ const mentionLabel = computed<string>(() => {
 }
 .mention-actor {
   font-weight: 600;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   flex-shrink: 0;
 }
 .dash-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-1, #172B4D);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -219,7 +219,7 @@ const mentionLabel = computed<string>(() => {
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   flex-wrap: wrap;
 }
 .space-chip {
@@ -238,18 +238,18 @@ const mentionLabel = computed<string>(() => {
   overflow: hidden;
 }
 .mention-comment {
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 12px;
 }
 .time {
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .dash-arrow {
-  color: var(--text-3, #6B778C);
+  color: var(--text-3);
   font-size: 18px;
 }
-.dash-card:hover .dash-arrow { color: var(--accent, #0052CC); }
+.dash-card:hover .dash-arrow { color: var(--accent); }
 
 .variant-mention .dash-icon .user-avatar {
   /* Mention 用 actor 头像,不需要再叠加 icon。 */

@@ -1062,14 +1062,14 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .lead {
   font-size: 13px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   margin: 0;
   line-height: 1.55;
   letter-spacing: 0.01em;
 }
 .loading-state {
   font-size: 13px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   padding: 24px 0;
   text-align: center;
 }
@@ -1084,9 +1084,9 @@ const previewAvatarSrc = computed<string | null>(() => {
  *  collapsible variant:折叠 details —— 容器 padding 0,summary 自管 padding
  * ───────────────────────────────────────────────────────────────── */
 .section-card {
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg, 6px);
-  background: var(--bg, #fff);
+  background: var(--bg);
   padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -1127,7 +1127,7 @@ const previewAvatarSrc = computed<string | null>(() => {
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-2, #44546f);
+  color: var(--text-2);
   letter-spacing: 0;
   text-transform: none;
   line-height: 1.4;
@@ -1136,7 +1136,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 .avatar-panel-label .material-symbols-outlined,
 .field-label .material-symbols-outlined {
   font-size: 16px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-weight: 400;
 }
 
@@ -1152,7 +1152,7 @@ const previewAvatarSrc = computed<string | null>(() => {
   user-select: none;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-2, #44546f);
+  color: var(--text-2);
   transition: background var(--duration-fast);
 }
 .sd-summary::-webkit-details-marker { display: none; }
@@ -1160,7 +1160,7 @@ const previewAvatarSrc = computed<string | null>(() => {
   content: 'chevron_right';
   font-family: 'Material Symbols Outlined';
   font-size: 16px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-weight: 400;
   transition: transform var(--duration-fast);
   margin-right: 2px;
@@ -1168,10 +1168,10 @@ const previewAvatarSrc = computed<string | null>(() => {
 .section-card--collapsible[open] > .sd-summary::before {
   transform: rotate(90deg);
 }
-.sd-summary:hover { background: var(--bg-subtle, #f4f5f7); }
+.sd-summary:hover { background: var(--bg-subtle); }
 .sd-summary .material-symbols-outlined {
   font-size: 16px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-weight: 400;
 }
 
@@ -1179,7 +1179,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 .preview-name {
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-1, #172b4d);
+  color: var(--text-1);
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1188,7 +1188,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .preview-email {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   line-height: 1.3;
   margin-top: 2px;
 }
@@ -1199,16 +1199,16 @@ const previewAvatarSrc = computed<string | null>(() => {
   padding: 0 12px;
   font-family: inherit;
   font-size: 14px;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-  background: var(--bg, #fff);
-  color: var(--text-1, #172b4d);
+  background: var(--bg);
+  color: var(--text-1);
 }
-.field-input:hover { border-color: var(--border-strong, #c1c7d0); }
+.field-input:hover { border-color: var(--border-strong); }
 .field-input:focus {
   outline: none;
-  border-color: var(--focus-ring, #4c9aff);
-  box-shadow: 0 0 0 1px var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
 /* 密码输入框 + 眼睛 toggle —— 输入框 padding-right 留位置给 icon button */
@@ -1234,14 +1234,14 @@ const previewAvatarSrc = computed<string | null>(() => {
   justify-content: center;
   border: 0;
   background: transparent;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   cursor: pointer;
   border-radius: var(--radius, 4px);
   transition: color var(--duration-fast), background var(--duration-fast);
 }
-.input-action:hover { color: var(--text-1, #172b4d); background: var(--bg-subtle, #f4f5f7); }
+.input-action:hover { color: var(--text-1); background: var(--bg-subtle); }
 .input-action:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .input-action .material-symbols-outlined {
@@ -1250,9 +1250,9 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .field-hint {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
 }
-.field-hint.error { color: var(--danger, #de350b); }
+.field-hint.error { color: var(--danger); }
 
 /* ─────────────────────────────────────────────────────────────────
  *  M11 头像三态 panel —— 在 .section-card--avatar 容器内部排版
@@ -1267,26 +1267,26 @@ const previewAvatarSrc = computed<string | null>(() => {
   transition: background var(--duration-fast);
 }
 .avatar-panel.active .avatar-panel-label {
-  color: var(--accent-strong, #0747a6);
+  color: var(--accent-hover);
 }
 .avatar-panel.active .avatar-panel-label .material-symbols-outlined {
-  color: var(--accent, #0052cc);
+  color: var(--accent);
 }
 .mode-check {
   margin-left: auto;
   font-size: 16px !important;
-  color: var(--accent, #0052cc) !important;
+  color: var(--accent) !important;
 }
 .panel-hint {
   margin-left: auto;
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   font-weight: 400;
 }
 
 .preset-loading {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   padding: 12px 0;
 }
 .preset-grid {
@@ -1298,8 +1298,8 @@ const previewAvatarSrc = computed<string | null>(() => {
   width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 50%;
-  border: 2px solid var(--border, #dfe1e6);
-  background: var(--bg, #fff);
+  border: 2px solid var(--border);
+  background: var(--bg);
   padding: 3px;
   cursor: pointer;
   display: flex;
@@ -1311,14 +1311,14 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .preset-cell:hover {
   transform: scale(1.05);
-  border-color: var(--border-strong, #c1c7d0);
+  border-color: var(--border-strong);
 }
 .preset-cell.active {
-  border-color: var(--accent, #0052cc);
-  box-shadow: 0 0 0 2px var(--accent-soft, #deebff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .preset-cell:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .preset-cell img {
@@ -1346,11 +1346,11 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .palette-swatch:hover { transform: scale(1.1); }
 .palette-swatch.active {
-  border-color: var(--text-1, #172b4d);
-  box-shadow: 0 0 0 2px var(--bg, #fff) inset;
+  border-color: var(--text-1);
+  box-shadow: 0 0 0 2px var(--bg) inset;
 }
 .palette-swatch:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1361,11 +1361,11 @@ const previewAvatarSrc = computed<string | null>(() => {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px dashed var(--border, #dfe1e6);
+  border: 1px dashed var(--border);
   border-radius: 50%;
   cursor: pointer;
-  color: var(--text-3, #6b778c);
-  background: var(--bg, #fff);
+  color: var(--text-3);
+  background: var(--bg);
 }
 .palette-custom .material-symbols-outlined {
   font-size: 16px;
@@ -1392,10 +1392,10 @@ const previewAvatarSrc = computed<string | null>(() => {
   width: 104px;
   height: 104px;
   margin: 4px auto 0;
-  border: 2px dashed var(--border-strong, #c1c7d0);
+  border: 2px dashed var(--border-strong);
   border-radius: 50%;
-  background: var(--accent-softer, #f4f8ff);
-  color: var(--text-2, #44546f);
+  background: var(--accent-softer);
+  color: var(--text-2);
   cursor: pointer;
   transition: border-color var(--duration-fast), background var(--duration-fast),
     transform var(--duration-fast), color var(--duration-fast);
@@ -1403,22 +1403,22 @@ const previewAvatarSrc = computed<string | null>(() => {
   position: relative;
 }
 .upload-zone:hover {
-  border-color: var(--accent, #0052cc);
+  border-color: var(--accent);
   border-style: solid;
-  background: var(--accent-soft, #deebff);
-  color: var(--accent, #0052cc);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .upload-zone:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .upload-zone.uploading {
   cursor: progress;
-  border-color: var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
 }
 .upload-zone.is-dragover {
-  border-color: var(--focus-ring, #4c9aff);
-  background: var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
+  background: var(--focus-ring);
   color: #fff;
   transform: scale(1.04);
 }
@@ -1428,7 +1428,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .upload-meta {
   font-size: 12px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   text-align: center;
   margin-top: 6px;
   /* 长文件名截断 */
@@ -1466,21 +1466,21 @@ const previewAvatarSrc = computed<string | null>(() => {
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-2, #42526e);
-  background: var(--bg, #fff);
-  border: 1px dashed var(--border-strong, #c1c7d0);
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius, 4px);
   cursor: pointer;
   transition: border-color var(--duration-fast), color var(--duration-fast),
     background var(--duration-fast);
 }
 .upload-trigger:hover:not(:disabled) {
-  border-color: var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
   border-style: solid;
-  color: var(--focus-ring, #4c9aff);
+  color: var(--focus-ring);
 }
 .upload-trigger:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .upload-trigger:disabled {
@@ -1497,13 +1497,13 @@ const previewAvatarSrc = computed<string | null>(() => {
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
-  background: var(--bg-subtle, #f4f5f7);
+  background: var(--bg-subtle);
   border-radius: var(--radius, 4px);
 }
 .upload-summary-text {
   flex: 1;
   font-size: 13px;
-  color: var(--text-2, #42526e);
+  color: var(--text-2);
   font-weight: 500;
 }
 .upload-summary .upload-actions {
@@ -1519,7 +1519,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .cropper-hint {
   font-size: 11px;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   text-align: center;
   margin-top: 12px;
   letter-spacing: 0.02em;
@@ -1537,21 +1537,21 @@ const previewAvatarSrc = computed<string | null>(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border, #dfe1e6);
+  border: 1px solid var(--border);
   border-radius: 50%;
-  background: var(--bg, #fff);
-  color: var(--text-2, #42526e);
+  background: var(--bg);
+  color: var(--text-2);
   cursor: pointer;
   padding: 0;
   transition: border-color var(--duration-fast), background var(--duration-fast),
     color var(--duration-fast);
 }
 .btn-icon:hover:not(:disabled) {
-  border-color: var(--focus-ring, #4c9aff);
-  color: var(--focus-ring, #4c9aff);
+  border-color: var(--focus-ring);
+  color: var(--focus-ring);
 }
 .btn-icon:focus-visible {
-  outline: 2px solid var(--focus-ring, #4c9aff);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .btn-icon:disabled {
@@ -1563,19 +1563,19 @@ const previewAvatarSrc = computed<string | null>(() => {
   pointer-events: none;
 }
 .btn-icon-primary {
-  background: var(--accent, #0052cc);
-  border-color: var(--accent, #0052cc);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 .btn-icon-primary:hover:not(:disabled) {
-  background: var(--accent-strong, #0747a6);
-  border-color: var(--accent-strong, #0747a6);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
   color: #fff;
 }
 .btn-icon-danger:hover:not(:disabled) {
-  border-color: var(--danger, #de350b);
-  color: var(--danger, #de350b);
-  background: var(--error-soft, #ffebe6);
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .error-bar {
@@ -1583,10 +1583,10 @@ const previewAvatarSrc = computed<string | null>(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--error-soft, #ffebe6);
-  border: 1px solid var(--error, #de350b);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   border-radius: var(--radius, 4px);
-  color: var(--error, #de350b);
+  color: var(--danger);
   font-size: 13px;
 }
 .error-bar .material-symbols-outlined { font-size: 18px; }
@@ -1612,10 +1612,10 @@ const previewAvatarSrc = computed<string | null>(() => {
   gap: 6px;
 }
 .btn-primary {
-  background: var(--accent, #0052cc);
+  background: var(--accent);
   color: #fff;
 }
-.btn-primary:hover:not(:disabled) { background: var(--accent-strong, #0747a6); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary.is-saved {
   background: #36B37E;
@@ -1630,14 +1630,14 @@ const previewAvatarSrc = computed<string | null>(() => {
 }
 .btn-link {
   background: transparent;
-  color: var(--accent, #0052cc);
+  color: var(--accent);
   padding: 0;
   border: 0;
   text-decoration: underline;
   height: auto;
 }
-.btn-link:hover:not(:disabled) { color: var(--accent-strong, #0747a6); }
-.btn-link.danger { color: var(--danger, #de350b); }
+.btn-link:hover:not(:disabled) { color: var(--accent-hover); }
+.btn-link.danger { color: var(--danger); }
 .btn-link.danger:hover:not(:disabled) { color: #bf2600; }
 .btn-link:disabled { opacity: 0.5; cursor: not-allowed; }
 .icon-sm { font-size: 16px; }
@@ -1653,7 +1653,7 @@ const previewAvatarSrc = computed<string | null>(() => {
   flex-direction: column;
   gap: 12px;
   padding: 14px 16px 16px;
-  border-top: 1px solid var(--border, #ebecf0);
+  border-top: 1px solid var(--border);
 }
 .pwd-actions {
   display: flex;
@@ -1671,7 +1671,7 @@ const previewAvatarSrc = computed<string | null>(() => {
 .pwd-strength-bar {
   flex: 1;
   height: 4px;
-  background: var(--bg-subtle, #ebecf0);
+  background: var(--bg-subtle);
   border-radius: 2px;
   overflow: hidden;
   position: relative;
@@ -1682,14 +1682,14 @@ const previewAvatarSrc = computed<string | null>(() => {
   border-radius: 2px;
   transition: width var(--duration-fast), background var(--duration-fast);
 }
-.pwd-strength-fill[data-level='0'] { width: 25%; background: var(--text-3, #6b778c); }
+.pwd-strength-fill[data-level='0'] { width: 25%; background: var(--text-3); }
 .pwd-strength-fill[data-level='1'] { width: 50%; background: #de350b; }
 .pwd-strength-fill[data-level='2'] { width: 75%; background: #ff991f; }
 .pwd-strength-fill[data-level='3'] { width: 100%; background: #36B37E; }
 .pwd-strength-text {
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-3, #6b778c);
+  color: var(--text-3);
   white-space: nowrap;
   min-width: 90px;
   text-align: right;
