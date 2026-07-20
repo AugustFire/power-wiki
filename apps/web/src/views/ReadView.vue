@@ -115,6 +115,35 @@ function collapseTogglesByDefault(html: string): string {
   return wrap.innerHTML
 }
 
+/**
+ * 页面是否真的没有内容。区分「空 doc shell(只有 paragraph 节点、没文字)」
+ * 和「有非文字内容(图 / 标题 / 代码块 / 折叠块 / 引用 / 列表 / 表格 等)」。
+ *
+ * 判定规则:
+ *   - 非 paragraph 顶层块一律算有内容(覆盖 imageAttachment / heading /
+ *     codeBlock / blockquote / bulletList / orderedList / details / table 等
+ *     void 或自带语义的块)
+ *   - paragraph 必须含 text 子节点才算有内容(空 paragraph 是用户按 Enter
+ *     留下的痕迹,跟真正空 doc 等价)
+ */
+function isPageContentEmpty(json: unknown): boolean {
+  if (!json || typeof json !== 'object') return true
+  const doc = json as { type?: string; content?: unknown[] }
+  if (doc.type !== 'doc' || !Array.isArray(doc.content)) return true
+  return !doc.content.some((node) => isMeaningfulTopNode(node))
+}
+
+function isMeaningfulTopNode(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false
+  const n = node as { type?: string; content?: unknown[] }
+  if (n.type !== 'paragraph') return true
+  if (!Array.isArray(n.content)) return false
+  return n.content.some((c) => {
+    if (!c || typeof c !== 'object') return false
+    return typeof (c as { text?: unknown }).text === 'string'
+  })
+}
+
 const safeHtml = computed(() =>
   collapseTogglesByDefault(sanitizeAndHardenLinks(page.value?.contentHTML ?? '')),
 )
@@ -126,14 +155,16 @@ const contentEl = ref<HTMLElement | null>(null)
  * Confluence 风格是显示一行说明 + edit 引导(若有权限),而不是空白页面
  * 让 reader 摸不着头脑。
  *
- * 判定策略:strip 后空字符串即视为空。sanitizeAndHardenLinks 会保留
- * Tiptap 空 doc 的骨架 paragraph + heading,但纯文字 0 长度。
+ * 判定走 `isPageContentEmpty` 走 contentJSON 的节点结构:任何非 paragraph
+ * 块(图 / 标题 / 代码 / 折叠 / 列表 / 引用 / 表格)都算有内容,paragraph
+ * 必须有 text 子节点才算。EMPTY_HTML 短路保留,以兼容 seed 页 / 旧存量
+ * 没有 contentJSON 的退化场景。
  */
 const isEmptyContent = computed(() => {
-  const raw = page.value?.contentHTML ?? ''
-  if (!raw || raw === EMPTY_HTML) return true
-  const stripped = raw.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim()
-  return stripped.length === 0
+  const p = page.value
+  if (!p) return true
+  if (!p.contentHTML || p.contentHTML === EMPTY_HTML) return true
+  return isPageContentEmpty(p.contentJSON)
 })
 
 /**
@@ -519,7 +550,7 @@ watch(
               </span>
               <span class="dot">·</span>
               <span>最后编辑于 {{ relativeTime(page.updatedAt) }}</span>
-              <template v-if="!isEmptyContent">
+              <template v-if="!isEmptyContent && charCount(page.contentHTML) > 0">
                 <span class="dot">·</span>
                 <span>{{ charCount(page.contentHTML) }} 字</span>
               </template>
