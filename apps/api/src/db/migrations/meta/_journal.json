@@ -61,33 +61,75 @@
     {
       "idx": 8,
       "version": "7",
+      "when": 1783100000000,
+      "tag": "0008_add_column_comments",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
       "when": 1783200000000,
       "tag": "0009_add_attachments",
       "breakpoints": true
     },
     {
-      "idx": 9,
+      "idx": 10,
+      "version": "7",
+      "when": 1783250000000,
+      "tag": "0010_add_page_likes",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0011_fix_schema_drift",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1783350000000,
+      "tag": "0012_pages_updated_by",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783400000000,
+      "tag": "0013_admin_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783450000000,
+      "tag": "0014_page_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
       "version": "7",
       "when": 1783500000000,
       "tag": "0019_user_watched_pages",
       "breakpoints": true
     },
     {
-      "idx": 10,
+      "idx": 16,
       "version": "7",
       "when": 1783700000000,
       "tag": "0021_user_recent_pages",
       "breakpoints": true
     },
     {
-      "idx": 11,
+      "idx": 17,
       "version": "7",
       "when": 1783900000000,
       "tag": "0022_user_avatar_kind_and_user_avatars",
       "breakpoints": true
     },
     {
-      "idx": 12,
+      "idx": 18,
       "version": "7",
       "when": 1784000000000,
       "tag": "0023_update_avatar_ref_comment",
