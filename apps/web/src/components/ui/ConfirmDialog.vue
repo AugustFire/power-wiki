@@ -163,6 +163,9 @@ useFocusTrap(dialogRef, () => state.value.open, {
   color: var(--text-2);
   line-height: 1.5;
   word-break: break-word;
+  /* message 支持换行 / 多段:用 \n\n 段落、\n 行。其它弹窗都是单行
+     不带 \n,加这个不影响它们。 */
+  white-space: pre-wrap;
 }
 
 .confirm-actions {

@@ -91,9 +91,10 @@ async function onDelete(a: Attachment): Promise<void> {
     title: '删除附件?',
     message:
       `「${a.originalFilename}」将被永久删除,无法恢复。\n\n` +
-      `• 当前正文中引用此文件的地方会显示为占位 / 404\n` +
-      `• 此页所有历史快照(版本历史中的内容)将同时失效\n` +
-      `• 复制 / 导出 / 还原到含此附件的旧版本都会断链`,
+      `影响范围:\n` +
+      `• 正文中的引用会显示为占位或 404\n` +
+      `• 此页所有历史快照(版本历史)将同时失效\n` +
+      `• 复制、导出或还原到含此附件的旧版本都会断链`,
     danger: true,
     confirmText: '永久删除',
     cancelText: '取消',
