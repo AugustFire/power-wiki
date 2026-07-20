@@ -24,6 +24,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { db, pool } from './db/client'
+import { mapPgError } from './lib/dbErrors'
 import { pagesRouter } from './routes/pages'
 import { pageVersionsRouter } from './routes/pageVersions'
 import { pageLabelsRouter } from './routes/pageLabels'
@@ -100,6 +101,8 @@ app.route('/api/search', searchRouter)
 app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404))
 
 app.onError((err, c) => {
+  const mapped = mapPgError(err)
+  if (mapped) return c.json(mapped.body, mapped.status)
   console.error('[api] unhandled', err)
   return c.json({ error: 'internal', message: err.message }, 500)
 })
