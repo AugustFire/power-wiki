@@ -9,6 +9,18 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('@tiptap') || id.includes('prosemirror')) return 'tiptap'
+            if (id.includes('lowlight') || id.includes('highlight.js')) return 'lowlight'
+          }
+        },
+      },
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: 5173,
