@@ -23,12 +23,16 @@ import {
   AddLabelInputSchema,
   AdminSettingSchema,
   AttachmentSchema,
+  AuditEntrySchema,
+  AuditListResponseSchema,
   AvatarFinalizeInputSchema,
   AvatarFinalizeResponseSchema,
   AvatarUploadUrlInputSchema,
   AvatarUploadUrlResponseSchema,
   CommentSchema,
   CreateCommentInputSchema,
+  CreateShareInputSchema,
+  CreateShareResponseSchema,
   CreatePageInputSchema,
   DashboardPayloadSchema,
   FinalizeUploadInputSchema,
@@ -36,11 +40,15 @@ import {
   MentionCandidateSchema,
   NotificationSchema,
   PageNodeSchema,
+  PageRestrictionsSchema,
+  RestrictionCandidatesSchema,
   PageVersionSchema,
   PaginatedListSchema,
+  PublicPageSchema,
   PublishPageInputSchema,
   RequestUploadInputSchema,
   ResetPasswordInputSchema,
+  ShareListResponseSchema,
   ResetPasswordResponseSchema,
   SignInInputSchema,
   SpaceSchema,
@@ -58,6 +66,8 @@ import type {
   AddLabelInput,
   AdminSetting,
   Attachment,
+  AuditEntry,
+  AuditListQuery,
   AvatarFinalizeInput,
   AvatarFinalizeResponse,
   AvatarUploadUrlInput,
@@ -66,6 +76,8 @@ import type {
   CreateCommentInput,
   CreateGroupInput,
   CreatePageInput,
+  CreateShareInput,
+  CreateShareResponse,
   CreateSpaceInput,
   CreateUserInput,
   DashboardPayload,
@@ -78,7 +90,11 @@ import type {
   Notification,
   NotificationKind,
   PageNode,
+  PageRestrictions,
+  PublicPage,
+  RestrictionCandidates,
   PageVersion,
+  ShareRow,
   Paginated,
   PaginatedQuery,
   PublishPageInput,
@@ -86,6 +102,12 @@ import type {
   RequestUploadResponse,
   ResetPasswordInput,
   SetSpaceAccessInput,
+  SetSpacePermissionsInput,
+  SetPageRestrictionsInput,
+  SpaceGrants,
+  SpaceRole,
+  UpsertGroupGrantInput,
+  UpsertUserGrantInput,
   SignInInput,
   Space,
   ToggleLikeResponse,
@@ -144,7 +166,23 @@ const PUBLIC_AUTH_PATHS = new Set([
   '/auth/sign-in',
   '/auth/sign-out',
   '/auth/reset-password',
+  // Phase D + M11: 这些 path 都是公开的(挂在 backend requireAuth 之前),
+  // 即便偶然 401(vite proxy 临时故障 / 5xx fallback / token 解析异常)
+  // 也不该触发登录跳转。401 在公开端点上语义本就矛盾(bacnkend 不该返)
+  // —— 把它们列入豁免名单,unauthorizedHandler 不会针对它们跳登录。
+  // 见 docs/permissions.md §"公开链接为什么重定向到登录页"
+  '/public/pages',
+  '/user-avatars',
+  '/avatar-presets',
 ])
+
+function isPublicAuthPath(path: string): boolean {
+  const pathname = path.split('?', 1)[0] ?? path
+  for (const publicPath of PUBLIC_AUTH_PATHS) {
+    if (pathname === publicPath || pathname.startsWith(`${publicPath}/`)) return true
+  }
+  return false
+}
 
 /* ─── GET cache ────────────────────────────────────────────────────────
  * A 30s in-memory cache for GET responses. Two motivations:
@@ -239,7 +277,7 @@ async function fetchAndParse<T>(path: string, init?: RequestInit): Promise<T> {
     // so a burst of parallel requests only triggers one navigation.
     if (
       res.status === 401 &&
-      !PUBLIC_AUTH_PATHS.has(path) &&
+      !isPublicAuthPath(path) &&
       !unauthorizedFiring
     ) {
       unauthorizedFiring = true
@@ -521,6 +559,86 @@ export const api = {
         WatcherSchema,
       )
     },
+
+    /**
+     * Phase B — 页面级限制(挂 /api/pages/:id/restrictions)。view 限制沿父
+     * 链继承、edit 限制不继承(Confluence 语义,后端 permissions.ts 实现)。
+     * 全整组走 PUT full-replace;mutation 后 invalidatePrefix('/pages') 让
+     * 列表 / 详情的 hasViewRestriction / hasEditRestriction chip 立刻刷新。
+     */
+    restrictions: {
+      get: async (pageId: string): Promise<PageRestrictions> => {
+        const raw = await request<PageRestrictions>(
+          `/pages/${encodeURIComponent(pageId)}/restrictions`,
+        )
+        return PageRestrictionsSchema.parse(raw)
+      },
+      set: async (
+        pageId: string,
+        input: SetPageRestrictionsInput,
+      ): Promise<PageRestrictions> => {
+        const raw = await request<PageRestrictions>(
+          `/pages/${encodeURIComponent(pageId)}/restrictions`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/pages')
+        return PageRestrictionsSchema.parse(raw)
+      },
+      candidates: async (pageId: string): Promise<RestrictionCandidates> => {
+        const raw = await request<RestrictionCandidates>(
+          `/pages/${encodeURIComponent(pageId)}/restrictions/candidates`,
+        )
+        return RestrictionCandidatesSchema.parse(raw)
+      },
+    },
+    /**
+     * Phase D — 公开链接分享(挂 /api/pages/:id/share[/...])。edit-access
+     * on page 是 gate;page 作者 / 空间 admin / global admin / 空间 editor
+     * 都能管理。create 返回的 token 是**明文,只此一次**,丢失即失效。
+     */
+    shares: {
+      list: async (pageId: string): Promise<ShareRow[]> => {
+        const raw = await request<{ shares: ShareRow[] }>(
+          `/pages/${encodeURIComponent(pageId)}/shares`,
+        )
+        return ShareListResponseSchema.parse(raw).shares
+      },
+      create: async (
+        pageId: string,
+        input: CreateShareInput,
+      ): Promise<CreateShareResponse> => {
+        const raw = await request<unknown>(
+          `/pages/${encodeURIComponent(pageId)}/share`,
+          { method: 'POST', body: JSON.stringify(input) },
+        )
+        // mutation 后清 /pages 前缀缓存,否则 dialog 里 await load() 命中
+        // 30s 内的旧 list,新 share 不显示 —— 同 restrictions.set 的处理。
+        invalidatePrefix('/pages')
+        return CreateShareResponseSchema.parse(raw) as CreateShareResponse
+      },
+      revoke: async (pageId: string, shareId: string): Promise<void> => {
+        await request<void>(
+          `/pages/${encodeURIComponent(pageId)}/share/${encodeURIComponent(shareId)}`,
+          { method: 'DELETE' },
+        )
+        // 关键:invalidate 后 dialog 的 load() 才会拿到 revokedAt 非空的
+        // 行;漏了这一步,用户看到 status pill 一直停留在「有效」,只有
+        // 30s 后缓存过期或硬刷新才更新。
+        invalidatePrefix('/pages')
+      },
+    },
+  },
+
+  /**
+   * Phase D — 公开链接 GET(/api/public/pages/:token)。**无 auth**,
+   * 公开访问。挂这一层 api 方法是为了让 PublicPageView 走统一 request
+   * helper(自动处理 JSON / 错误),而不是裸 fetch。
+   */
+  public: {
+    getPage: async (token: string): Promise<PublicPage> => {
+      const raw = await request<unknown>(`/public/pages/${encodeURIComponent(token)}`)
+      return PublicPageSchema.parse(raw) as PublicPage
+    },
   },
 
   spaces: {
@@ -534,6 +652,99 @@ export const api = {
     get: async (id: string): Promise<Space> => {
       const raw = await request<Space>(`/spaces/${encodeURIComponent(id)}`)
       return SpaceSchema.parse(raw) as Space
+    },
+    /**
+     * Phase A — 空间角色管理(挂 /api/spaces/:id/permissions,跟 spaces
+     * 共前缀但职责不同:spaces 的 GET 是「我能看见这个 space 吗」的
+     * 可见性查询,permissions 是 admin / space-admin 才能访问的 grant
+     * CRUD)。
+     *
+     * 所有 mutation 完成后同时失效空间列表和页面列表缓存,让空间管理 UI
+     * 立即看到新授权,页面上的 `viewerRole` 也不会保留变更前的角色。
+     */
+    permissions: {
+      get: async (spaceId: string): Promise<SpaceGrants> => {
+        return request<SpaceGrants>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions`,
+        )
+      },
+      /**
+       * 列出"可被授权进本空间的候选 group + user"。由 SpaceEditView 的
+       * 「+ 添加组 / + 添加用户」下拉消费 —— gate 是 admin 或 space-admin,
+       * 不走 `/api/admin/*`。`q` 是前端输入的搜索词,后端做 ILIKE 过滤。
+       *
+       * 不分页:UI 下拉全量过滤,后端有 max=500 兜底。
+       */
+      candidates: async (
+        spaceId: string,
+        q?: string,
+      ): Promise<{ groups: UserGroup[]; users: User[] }> => {
+        const search = q && q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''
+        return request<{ groups: UserGroup[]; users: User[] }>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions/candidates?limit=200${search}`,
+        )
+      },
+      set: async (
+        spaceId: string,
+        input: SetSpacePermissionsInput,
+      ): Promise<SpaceGrants> => {
+        const g = await request<SpaceGrants>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions`,
+          { method: 'PUT', body: JSON.stringify(input) },
+        )
+        invalidatePrefix('/spaces')
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/pages')
+        return g
+      },
+      upsertGroup: async (
+        spaceId: string,
+        groupId: string,
+        role: SpaceRole,
+      ): Promise<SpaceGrants> => {
+        const body: UpsertGroupGrantInput = { role }
+        const g = await request<SpaceGrants>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions/groups/${encodeURIComponent(groupId)}`,
+          { method: 'POST', body: JSON.stringify(body) },
+        )
+        invalidatePrefix('/spaces')
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/pages')
+        return g
+      },
+      removeGroup: async (spaceId: string, groupId: string): Promise<void> => {
+        await request<void>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions/groups/${encodeURIComponent(groupId)}`,
+          { method: 'DELETE' },
+        )
+        invalidatePrefix('/spaces')
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/pages')
+      },
+      upsertUser: async (
+        spaceId: string,
+        userId: string,
+        role: SpaceRole,
+      ): Promise<SpaceGrants> => {
+        const body: UpsertUserGrantInput = { role }
+        const g = await request<SpaceGrants>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions/users/${encodeURIComponent(userId)}`,
+          { method: 'POST', body: JSON.stringify(body) },
+        )
+        invalidatePrefix('/spaces')
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/pages')
+        return g
+      },
+      removeUser: async (spaceId: string, userId: string): Promise<void> => {
+        await request<void>(
+          `/spaces/${encodeURIComponent(spaceId)}/permissions/users/${encodeURIComponent(userId)}`,
+          { method: 'DELETE' },
+        )
+        invalidatePrefix('/spaces')
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/pages')
+      },
     },
   },
 
@@ -803,6 +1014,24 @@ export const api = {
         invalidatePrefix('/admin/users')
         return r.initialPassword
       },
+      /**
+       * 匿名化(软删,不可逆):
+       *   - 后端覆盖 name / email / password / avatar / color,status='disabled'
+       *   - 同步 sweep 该用户的 group membership / recent / watched / likes /
+       *     notifications / space_role_grants / page_restrictions
+       *   - 保留 pages / comments / versions / attachments / audit 行内的
+       *     userId 引用,LEFT JOIN fallback 显示「已注销用户」
+       *   - 写一条 permission_audit(kind='user_anonymized')留痕
+       * 自删 / 最后一个 admin 会被服务端挡,前端只需把 409 转成 UI 文案。
+       */
+      anonymize: async (id: string): Promise<User> => {
+        const u = await request<User>(
+          `/admin/users/${encodeURIComponent(id)}/anonymize`,
+          { method: 'POST' },
+        )
+        invalidatePrefix('/admin/users')
+        return UserSchema.parse(u) as User
+      },
     },
     groups: {
       list: (q?: PaginatedQuery): Promise<Paginated<UserGroup>> => {
@@ -837,6 +1066,20 @@ export const api = {
           method: 'DELETE',
         })
         invalidatePrefix('/admin/groups')
+      },
+      /**
+       * Dry-run impact for the delete confirmation dialog.
+       * Returns how many rows the cascading DELETE would touch
+       * (members / space grants / page restrictions). Cheap — 4 COUNT(*)
+       * queries by PK. `pg-*` ids return 404 same as DELETE.
+       */
+      impact: async (id: string): Promise<{
+        memberCount: number
+        legacyGrantCount: number
+        roleGrantCount: number
+        restrictionCount: number
+      }> => {
+        return request(`/admin/groups/${encodeURIComponent(id)}/impact`)
       },
       addMember: async (groupId: string, userId: string): Promise<UserGroup> => {
         const g = await request<UserGroup>(
@@ -891,6 +1134,8 @@ export const api = {
         invalidatePrefix('/admin/spaces')
       },
       setAccess: async (id: string, input: SetSpaceAccessInput): Promise<Space> => {
+        // @deprecated Phase A.5: use `api.spaces.permissions.set(id, …)` instead.
+        // Kept as a thin wrapper for backward compat / external scripts; no UI calls it.
         const s = await request<Space>(
           `/admin/spaces/${encodeURIComponent(id)}/access`,
           { method: 'PUT', body: JSON.stringify(input) },
@@ -899,6 +1144,8 @@ export const api = {
         return SpaceSchema.parse(s) as Space
       },
       addAccess: async (id: string, groupId: string): Promise<Space> => {
+        // @deprecated Phase A.5: use `api.spaces.permissions.addGroup(id, groupId, role)` instead.
+        // Kept as a thin wrapper for backward compat; no UI calls it.
         const s = await request<Space>(
           `/admin/spaces/${encodeURIComponent(id)}/access/${encodeURIComponent(groupId)}`,
           { method: 'POST' },
@@ -907,6 +1154,8 @@ export const api = {
         return SpaceSchema.parse(s) as Space
       },
       removeAccess: async (id: string, groupId: string): Promise<Space> => {
+        // @deprecated Phase A.5: use `api.spaces.permissions.removeGroup(id, groupId)` instead.
+        // Kept as a thin wrapper for backward compat; no UI calls it.
         const s = await request<Space>(
           `/admin/spaces/${encodeURIComponent(id)}/access/${encodeURIComponent(groupId)}`,
           { method: 'DELETE' },
@@ -921,6 +1170,33 @@ export const api = {
      * Backend lazy-purges trashed pages whose `deleted_at` is older than
      * the configured window on every GET /api/pages/trash.
      */
+    audit: {
+      /**
+       * GET /api/admin/audit — Phase C 权限变更审计日志。
+       *
+       * Append-only,GET 是唯一入口。所有过滤字段可选;不传 = 不过滤。
+       * 返回按 created_at DESC 排序的分页列表,actor 通过 LEFT JOIN users
+       * 拼展示字段(denormalize),不再二次拉取。
+       */
+      list: async (q: AuditListQuery = {}): Promise<{ total: number; entries: AuditEntry[] }> => {
+        const params = new URLSearchParams()
+        if (q.kind) params.set('kind', q.kind)
+        if (q.actorId) params.set('actorId', q.actorId)
+        if (q.targetKind) params.set('targetKind', q.targetKind)
+        if (q.targetId) params.set('targetId', q.targetId)
+        if (q.from !== undefined) params.set('from', String(q.from))
+        if (q.to !== undefined) params.set('to', String(q.to))
+        if (q.limit !== undefined) params.set('limit', String(q.limit))
+        if (q.offset !== undefined) params.set('offset', String(q.offset))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        const raw = await request<unknown>(`/admin/audit${qs}`)
+        const parsed = AuditListResponseSchema.parse(raw)
+        return {
+          total: parsed.total,
+          entries: parsed.entries.map((e) => AuditEntrySchema.parse(e) as AuditEntry),
+        }
+      },
+    },
     settings: {
       list: async (): Promise<AdminSetting[]> => {
         const r = await request<{ items: AdminSetting[] }>('/admin/settings')

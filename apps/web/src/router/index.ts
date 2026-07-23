@@ -29,6 +29,17 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/ResetPasswordView.vue'),
     meta: { public: true, requiresAuth: true },
   },
+  {
+    // Phase D — 公开链接匿名只读渲染。meta.public 让 beforeEach 跳过
+    // requireAuth;组件自己调 GET /api/public/pages/:token(后端也挂在
+    // requireAuth 之前)。已登录用户访问也不 bounce(只有 name==='login'
+    // 才 bounce),所以作者本人点自己生成的链接也能直接看到公开视图。
+    path: '/public/pages/:token',
+    name: 'public-page',
+    component: () => import('@/views/PublicPageView.vue'),
+    props: true,
+    meta: { public: true },
+  },
 
   // ─── Authed app ─────────────────────────────────────────────────────
   {
@@ -103,6 +114,20 @@ const routes: RouteRecordRaw[] = [
   // 2026-07-01: 删除了原来的 `/notifications` 顶级路由 + NotificationsView.
   // 通知中心现在是 TopBar 铃铛 → 右侧抽屉, 没有独立页面.
 
+  // ─── Space edit (admin OR space-admin) ────────────────────────────
+  // 同一个 SpaceEditView 有两个入口:
+  // - /manager/spaces/:id:全局 admin,保留 ManagerLayout。
+  // - /spaces/:id:space-admin,绕开 /manager 的 requiresAdmin gate。
+  // 组件内部继续按身份切 section:全局 admin 看全功能,space-admin 只看
+  // 访问控制。基本信息和危险操作对 space-admin 隐藏。
+  {
+    path: '/spaces/:id',
+    name: 'space-edit',
+    component: () => import('@/views/manager/SpaceEditView.vue'),
+    props: true,
+    meta: { requiresAuth: true },
+  },
+
   // ─── Manager (admin-only, Stage 4b+) ─────────────────────────────
   // Layout renders the subnav; children render the section content.
   {
@@ -175,6 +200,12 @@ const routes: RouteRecordRaw[] = [
         path: 'trash',
         name: 'manager-trash',
         component: () => import('@/views/manager/TrashView.vue'),
+      },
+      {
+        // Phase C: admin-only 审计日志。append-only 列表,无 context panel。
+        path: 'audit',
+        name: 'manager-audit',
+        component: () => import('@/views/manager/AuditView.vue'),
       },
     ],
   },
@@ -271,20 +302,23 @@ export function scrollToHashAsync(hash: string) {
  * Per-route auth gate.
  *
  * Order matters:
- *   1. Idempotent auth init — concurrent first navigations share one promise.
- *   2. public routes (login / reset-password) skip auth checks but still
+ *   1. Public share pages bypass session probing entirely.
+ *   2. Idempotent auth init — concurrent first navigations share one promise.
+ *   3. public auth routes (login / reset-password) skip auth checks but still
  *      need init() to know whether to bounce a logged-in user.
- *   3. mustResetPassword → force /reset-password (only escape is sign-out).
- *   4. requiresAdmin → NotFound, not /login, to avoid leaking /manager/*.
- *   5. requiresAuth (default) → /login?redirect=<from>.
+ *   4. mustResetPassword → force /reset-password (only escape is sign-out).
+ *   5. requiresAdmin → NotFound, not /login, to avoid leaking /manager/*.
+ *   6. requiresAuth (default) → /login?redirect=<from>.
  *
  * Note: requiresAdmin implies requiresAuth, so admin check runs after auth.
  */
 router.beforeEach(async (to) => {
+  if (to.name === 'public-page') return true
+
   const authStore = useAuthStore()
   await authStore.init()
 
-  // 2. public pages: login is reachable unauthed; reset-password requires
+  // 3. public auth pages: login is reachable unauthed; reset-password requires
   //    the mustResetPassword session to actually be present, so we still
   //    gate it below.
   if (to.meta.public && to.name !== 'reset-password') {
@@ -295,19 +329,19 @@ router.beforeEach(async (to) => {
     return true
   }
 
-  // 3. force password reset — bypass everything except the reset page itself
+  // 4. force password reset — bypass everything except the reset page itself
   if (authStore.needsPasswordReset) {
     if (to.name === 'reset-password') return true
     return { name: 'reset-password' }
   }
 
-  // 4. admin gate — fall through to NotFound rather than /login so non-admins
+  // 5. admin gate — fall through to NotFound rather than /login so non-admins
   //    can't probe whether /manager exists.
   if (to.meta.requiresAdmin && !authStore.isAdmin) {
     return { name: 'not-found' }
   }
 
-  // 5. auth gate — most routes require a session
+  // 6. auth gate — most routes require a session
   if (!authStore.isAuthed) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }

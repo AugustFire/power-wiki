@@ -18,10 +18,14 @@
  *   - Disabled user / soft-deleted page → 404.
  */
 import type { Context } from 'hono'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { comments, pages } from '../db/schema'
-import { canAccessSpace } from './accessibleSpaceIds'
+import {
+  canEditPage,
+  canReadPage,
+  principalFromUser,
+} from './permissions'
 import { assertAdminNotWritingPersonalSpace } from './personalSpaceGuard'
 import type { AuthenticatedUser } from '../auth/session'
 
@@ -48,7 +52,8 @@ interface PostArgs extends BaseArgs {
 /**
  * Guard for POST /api/comments:
  *   - page must exist + not be soft-deleted
- *   - page.spaceId must be accessible
+ *   - page.spaceId must be writable (Phase A.5: canEditPage 替代 canReadPage;
+ *     viewer 不能发评论;author 自身可发)
  *   - admin → must not be writing a personal space
  */
 export async function guardCreateComment(args: PostArgs): Promise<GuardOutcome> {
@@ -57,8 +62,13 @@ export async function guardCreateComment(args: PostArgs): Promise<GuardOutcome> 
   if (!page || page.deletedAt !== null || page.spaceId === null) {
     return notFound(c)
   }
-  const accessible = await canAccessSpace(me.id, me.role === 'admin', page.spaceId)
-  if (!accessible) return notFound(c)
+  const writable = await canEditPage(
+    principalFromUser(me),
+    page.id,
+    page.spaceId,
+    page.authorId,
+  )
+  if (!writable) return notFound(c)
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
   if (blocked) return { ok: false, response: blocked }
   return { ok: true, data: { page } }
@@ -105,7 +115,7 @@ export async function guardMutateComment(args: MutateArgs): Promise<GuardOutcome
   const page = await loadPageRow(row.pageId)
   if (!page || page.spaceId === null) return notFound(c)
 
-  const accessible = await canAccessSpace(me.id, me.role === 'admin', page.spaceId)
+  const accessible = await canReadPage(principalFromUser(me), page.id, page.spaceId)
   if (!accessible) return notFound(c)
 
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
@@ -159,7 +169,7 @@ export async function guardReadPage(args: ListArgs): Promise<GuardOutcome> {
   if (!page || page.deletedAt !== null || page.spaceId === null) {
     return notFound(c)
   }
-  const accessible = await canAccessSpace(me.id, me.role === 'admin', page.spaceId)
+  const accessible = await canReadPage(principalFromUser(me), page.id, page.spaceId)
   if (!accessible) return notFound(c)
   return { ok: true, data: { page } }
 }
@@ -172,6 +182,7 @@ async function loadPageRow(pageId: string) {
       id: pages.id,
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
+      authorId: pages.authorId,
     })
     .from(pages)
     .where(eq(pages.id, pageId))
@@ -182,7 +193,3 @@ async function loadPageRow(pageId: string) {
 function notFound(c: Context): { ok: false; response: Response } {
   return { ok: false, response: c.json({ error: 'not_found' }, 404) }
 }
-
-/** Convenience: re-export the canAccessSpace flag for callers that already
- *  loaded the row but want to check without recomputing. */
-export { canAccessSpace }

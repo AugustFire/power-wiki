@@ -477,6 +477,18 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   /**
+   * 本地-only 字段合并 —— 不打 API。用于「服务端字段客户端 cache 同步」类
+   * 场景:PageRestrictionsDialog Save 已走自己的 PUT /restrictions,这里
+   * 只把返回的 `hasViewRestriction / hasEditRestriction` 标志写进 store
+   * 让 chip 立刻反映。Server data 已经 ack 过,不会 race。
+   */
+  function patchPage(id: string, patch: Partial<PageNode>): void {
+    const idx = pages.value.findIndex((p) => p.id === id)
+    if (idx < 0) return
+    pages.value[idx] = { ...pages.value[idx]!, ...patch }
+  }
+
+  /**
    * 更新内容字段(title / contentJSON / contentHTML / icon)。
    * 父级变更请走 `movePage`。订阅状态请走 watch/unwatch。
    */
@@ -1296,6 +1308,7 @@ export const usePagesStore = defineStore('pages', () => {
     createPage,
     getPage,
     getChildren,
+    patchPage,
     updatePage,
     softDeletePage,
     renamePage,

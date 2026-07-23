@@ -1,14 +1,16 @@
 /**
- * Spaces routes (Stage 4c — access-scoped).
+ * Spaces routes (Stage 4c — access-scoped; Phase A — add accessGrants).
  *
  *   GET /api/spaces         list spaces visible to the current user
  *   GET /api/spaces/:id     single space (must be visible to current user)
  *
  * Visibility:
- *   - admin sees every space, with full `accessGroupIds`.
+ *   - admin sees every space, with full `accessGroupIds` + `accessGrants`。
+ *     `accessGrants` 是 Phase A 新增结构:{groups:[{groupId,role,...}],
+ *     users:[{userId,role,...}]},全量 grant 信息,供管理 UI 渲染。
  *   - regular user only sees spaces whose access groups intersect with their
- *     own group memberships (single query: space_group_access × user_group_members).
- *     `accessGroupIds` is omitted from the response — it's admin metadata.
+ *     own group memberships (single query: space_group_access × user_group_members)。
+ *     `accessGroupIds` 与 `accessGrants` 都省略 —— 都是管理元信息。
  *
  * Inaccessible spaces are indistinguishable from non-existent ones (404, not 403)
  * to prevent probing the space list.
@@ -23,25 +25,32 @@ import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { rowToSpace } from '../lib/rowMappers'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
+import { loadGrantsForSpace, loadGrantsForSpaces } from '../lib/permissions'
+import { getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
 import type { Variables } from '../auth/middleware'
 
 export const spacesRouter = new Hono<{ Variables: Variables }>()
 
 /**
  * Build space list response.
- *  - Admin → all spaces, each with its `accessGroupIds`.
- *  - Non-admin → only spaces in `accessible`, no `accessGroupIds`.
+ *  - Admin → all spaces, each with its `accessGroupIds` + `accessGrants`。
+ *  - Non-admin → only spaces in `accessible`, no `accessGroupIds` /
+ *    `accessGrants`(管理元信息)。
  *
  * `limit` undefined = 全量(向后兼容 stores);否则取前 limit+1 行用于
  * hasMore 探测,accessRows 仍然一次性拉全(只为聚合 accessGroupIds),
  * 因为单次 admin list 的总 space 数本身就在可接受量级。
+ *
+ * Phase A 增量:`loadGrantsForSpaces` 一次 SQL 拿所有 grants,JS 端
+ * group by spaceId,无 N+1。
  */
 async function listVisibleSpaces(
-  isAdmin: boolean,
+  me: { id: string; role: 'admin' | 'user' },
   accessible: string[] | '*',
   limit?: number,
   offset = 0,
 ) {
+  const isAdmin = me.role === 'admin'
   if (isAdmin) {
     let q = db.select().from(spaces).orderBy(asc(spaces.createdAt)).$dynamic()
     if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
@@ -56,6 +65,8 @@ async function listVisibleSpaces(
       list.push(r.groupId)
       accessBySpace.set(r.spaceId, list)
     }
+    // Phase A: grants(包含 groups + users 两类 principal)批量聚合
+    const grantsBySpace = await loadGrantsForSpaces(rows.map((r) => r.id))
     const statsBySpace = await getSpacePageStats(rows.map((r) => r.id))
     // Owner names for personal spaces — admin path only. Non-admin never
     // sees other users' personal space names (info leak protection).
@@ -65,8 +76,10 @@ async function listVisibleSpaces(
       return SpaceSchema.parse({
         ...rowToSpace(row, { includeOwner: true }),
         accessGroupIds: accessBySpace.get(row.id) ?? [],
+        accessGrants: grantsBySpace.get(row.id) ?? { groups: [], users: [] },
         ...statsToDto(statsBySpace.get(row.id)),
         ...(ownerName ? { ownerName } : {}),
+        viewerRole: 'admin',
       })
     })
   }
@@ -83,10 +96,16 @@ async function listVisibleSpaces(
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
   const statsBySpace = await getSpacePageStats(rows.map((r) => r.id))
+  // viewerRole 一次 SQL 拿全,挂到每条 space 上,前端用来 gate + 新建按钮。
+  const roleMap = await getEffectiveSpaceRolesForUser(
+    principalFromUser(me),
+    rows.map((r) => r.id),
+  )
   return rows.map((row) =>
     SpaceSchema.parse({
       ...rowToSpace(row, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(row.id)),
+      viewerRole: roleMap.get(row.id) ?? null,
     }),
   )
 }
@@ -111,7 +130,7 @@ spacesRouter.get('/', async (c) => {
   if (!parsed.ok) return parsed.response
   const { limit, offset } = parsed.args
   const accessible = await getAccessibleSpaceIds(me.id, isAdmin)
-  const items = await listVisibleSpaces(isAdmin, accessible, limit, offset)
+  const items = await listVisibleSpaces(me, accessible, limit, offset)
   const result = applyPagination(items, limit, offset)
   return c.json(PaginatedListSchema(SpaceSchema).parse(result))
 })
@@ -138,6 +157,8 @@ spacesRouter.get('/:id', async (c) => {
       .select({ groupId: spaceGroupAccess.groupId })
       .from(spaceGroupAccess)
       .where(eq(spaceGroupAccess.spaceId, id))
+    // Phase A: structured grants(groups + users,每个带 role)
+    const grants = await loadGrantsForSpace(id)
     const statsBySpace = await getSpacePageStats([id])
     const ownerNameBySpace = await getSpaceOwnerNames([id])
     const ownerName = ownerNameBySpace.get(id)
@@ -145,17 +166,21 @@ spacesRouter.get('/:id', async (c) => {
       SpaceSchema.parse({
         ...rowToSpace(row, { includeOwner: true }),
         accessGroupIds: accessRows.map((r) => r.groupId),
+        accessGrants: grants,
         ...statsToDto(statsBySpace.get(id)),
         ...(ownerName ? { ownerName } : {}),
+        viewerRole: 'admin',
       }),
     )
   }
 
   const statsBySpace = await getSpacePageStats([id])
+  const roleMap = await getEffectiveSpaceRolesForUser(principalFromUser(me), [id])
   return c.json(
     SpaceSchema.parse({
       ...rowToSpace(row, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(id)),
+      viewerRole: roleMap.get(id) ?? null,
     }),
   )
 })

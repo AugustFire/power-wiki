@@ -5,7 +5,8 @@
  *   POST   /api/admin/groups              create group
  *   GET    /api/admin/groups/:id          single group WITH memberIds array
  *   PATCH  /api/admin/groups/:id          update name/description
- *   DELETE /api/admin/groups/:id          delete group (sweeps members + access)
+ *   DELETE /api/admin/groups/:id          delete group (sweeps members + access +
+ *                                              page restrictions; audit row written)
  *   POST   /api/admin/groups/:id/members           body {userId}; idempotent
  *   DELETE /api/admin/groups/:id/members/:userId   idempotent (404 only if group missing)
  *
@@ -20,6 +21,15 @@
  * admin never sees or edits them through /manager/groups. The 1-person
  * group + space_group_access row keep working underneath; we just hide
  * the row from the admin UI.
+ *
+ * DELETE sweeps (all in one transaction):
+ *   - user_group_members: user → group membership
+ *   - space_group_access (legacy): group → space grant
+ *   - space_role_grants where principal_kind='group': group → space grant (Phase A)
+ *   - page_restrictions where principal_kind='group': page-level view/edit allow-list
+ *     (sweeping this relaxes the affected pages' restrictions — expected behavior,
+ *     documented in the UI confirm dialog)
+ *   - permission_audit row: 'group_deleted' in same tx (rolls back together)
  */
 import { Hono } from 'hono'
 import { and, eq, not, like, sql } from 'drizzle-orm'
@@ -30,10 +40,18 @@ import {
   UserGroupSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { spaceGroupAccess, userGroupMembers, userGroups, users } from '../db/schema'
+import {
+  pageRestrictions,
+  spaceGroupAccess,
+  spaceRoleGrants,
+  userGroupMembers,
+  userGroups,
+  users,
+} from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
+import { recordPermissionAudit } from '../lib/auditLog'
 import type { UserGroup } from '@power-wiki/shared'
 import type { UserGroupRow as DbUserGroupRow } from '../db/schema'
 
@@ -174,8 +192,11 @@ adminGroupsRouter.patch('/:id', async (c) => {
 
 // DELETE /api/admin/groups/:id — refuses to delete personal groups (system
 // artifact; the owning user's personal space depends on this row, deleting
-// it would silently lock them out of their personal space).
+// it would silently lock them out of their personal space). Sweeps all
+// references in one transaction: members, both grant tables (legacy +
+// Phase A), and Phase B page-level restrictions.
 adminGroupsRouter.delete('/:id', async (c) => {
+  const me = c.get('user')
   const id = c.req.param('id')
   if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)
   const existing = (await db.select().from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]
@@ -185,9 +206,87 @@ adminGroupsRouter.delete('/:id', async (c) => {
   await db.transaction(async (tx) => {
     await tx.delete(userGroupMembers).where(eq(userGroupMembers.groupId, id))
     await tx.delete(spaceGroupAccess).where(eq(spaceGroupAccess.groupId, id))
+    await tx
+      .delete(spaceRoleGrants)
+      .where(
+        and(
+          eq(spaceRoleGrants.principalKind, 'group'),
+          eq(spaceRoleGrants.principalId, id),
+        ),
+      )
+    // Phase B: page-level restrictions also reference this group as a
+    // principal. Sweeping these relaxes the affected pages' view/edit
+    // allow-lists (any user no longer covered by an allow-list loses
+    // access — same semantic as manually removing the group from the
+    // restrictions UI). The UI confirm dialog previews the affected count
+    // so admins know what they're about to relax.
+    await tx
+      .delete(pageRestrictions)
+      .where(
+        and(
+          eq(pageRestrictions.principalKind, 'group'),
+          eq(pageRestrictions.principalId, id),
+        ),
+      )
     await tx.delete(userGroups).where(eq(userGroups.id, id))
+    // Audit row written inside the same transaction — rolls back together
+    // with the deletes if any sweep fails (Phase C invariant).
+    await recordPermissionAudit(tx, {
+      kind: 'group_deleted',
+      actorId: me.id,
+      targetKind: 'group',
+      targetId: id,
+      payload: { before: { id, name: existing.name } },
+    })
   })
   return c.body(null, 204)
+})
+
+// GET /api/admin/groups/:id/impact — dry-run counts for the delete confirmation
+// dialog. Returns how many rows the cascading delete would touch, so the UI can
+// show concrete numbers ("会删除 X 个成员、Y 个空间授权、Z 个页面限制")
+// instead of a generic "members will be removed". `pg-*` ids 404.
+adminGroupsRouter.get('/:id/impact', async (c) => {
+  const id = c.req.param('id')
+  if (isPersonalGroupId(id)) return c.json({ error: 'not_found' }, 404)
+  const existing = (await db.select({ id: userGroups.id }).from(userGroups).where(eq(userGroups.id, id)).limit(1))[0]
+  if (!existing) return c.json({ error: 'not_found' }, 404)
+  // Four count queries, all by-index PK lookups — cheap. Run sequentially
+  // since each is a small point query and parallelizing via Promise.all
+  // doesn't save meaningful round-trips on a single Postgres connection.
+  // `rows[0] ?? { count: 0 }` defends against the (impossible-but-typed)
+  // empty-rows case — COUNT(*) always returns exactly one row.
+  const memberCount =
+    (await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(userGroupMembers)
+      .where(eq(userGroupMembers.groupId, id)))[0]?.count ?? 0
+  const legacyGrantCount =
+    (await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(spaceGroupAccess)
+      .where(eq(spaceGroupAccess.groupId, id)))[0]?.count ?? 0
+  const roleGrantCount =
+    (await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(spaceRoleGrants)
+      .where(
+        and(
+          eq(spaceRoleGrants.principalKind, 'group'),
+          eq(spaceRoleGrants.principalId, id),
+        ),
+      ))[0]?.count ?? 0
+  const restrictionCount =
+    (await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(pageRestrictions)
+      .where(
+        and(
+          eq(pageRestrictions.principalKind, 'group'),
+          eq(pageRestrictions.principalId, id),
+        ),
+      ))[0]?.count ?? 0
+  return c.json({ memberCount, legacyGrantCount, roleGrantCount, restrictionCount })
 })
 
 // POST /api/admin/groups/:id/members — add member. `pg-*` groupId 404.

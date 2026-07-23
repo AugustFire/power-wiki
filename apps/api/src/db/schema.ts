@@ -144,6 +144,22 @@ export const spaces = pgTable('spaces', {
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
 })
 
+/**
+ * @deprecated Phase A.5 起停止写入。新授权一律走 space_role_grants,
+ *  并由 lib/permissions.migrateLegacyGroupGrant 在写入时把同 (space,
+ *  group) 的 legacy 行就地迁入新表(role='editor',同事务 DELETE 本表)。
+ *
+ *  代码路径仍读取本表(effectiveSpaceRole UNION ALL、loadGrantsForSpace
+ *  NOT EXISTS 互补去重),作为短期 fallback —— 既保留旧行为(legacy 行
+ *  视为 'editor',最宽松)又给全量迁移留窗口。本表没有任何新写入入口:
+ *  - adminSpaces 三个 PUT/POST/DELETE /access[/:groupId] 端点已加
+ *    @deprecated + console.warn,保留仅作 rollback 安全网;
+ *  - spacePermissions 写入路径全部走 space_role_grants,经 helper
+ *    DELETE 本表对应行。
+ *
+ *  全量收尾(follow-up migration job)任务:扫剩余 legacy 行
+ *  bulk insert 进 space_role_grants role='editor',DROP 本表 + 唯一索引。
+ */
 export const spaceGroupAccess = pgTable(
   'space_group_access',
   {
@@ -785,3 +801,258 @@ export const pageEvents = pgTable(
 )
 export type PageEventRow = typeof pageEvents.$inferSelect
 export type NewPageEventRow = typeof pageEvents.$inferInsert
+
+/* ─────────────────────────────────────────────────────────────────────
+ *  space_role_grants — Phase A 空间角色授予表(Confluence 风格)。
+ *
+ *  替代隐式「space_group_access 一行 = 全文读写」的二元模型,用一行
+ *  (space, principal, role) 显式表达空间角色。principal 可以是单个
+ *  user(外部协作者 / 直接授权)或一个 group(组授权),由 principal_kind
+ *  区分。同 (space, principal) 唯一(由 uniqueIndex 保证)。
+ *
+ *  角色三档:'viewer' 只读 / 'editor' 读+写 / 'admin' 读+写+管理。
+ *  - 'admin' 不能授予 group(由 routes/spacePermissions.ts
+ *    assertNotAdminToGroup 强制 —— Confluence 也不允许组级 space admin,
+ *    否则审计语义模糊「谁代表组执行了?」)。
+ *  - 共享空间始终有兜底:全局 admin 视为 super admin(由
+ *    lib/permissions.effectiveSpaceRole 短路返回 'admin')。
+ *  - 个人空间兜底:ensurePersonalSpace 在创建时插入 role='admin' 的
+ *    group grant 绑定 pg-<ownerId> 组,owner 是该空间的唯一 admin。
+ *
+ *  向后兼容(Phase A.5):legacy space_group_access 行由
+ *  lib/permissions.migrateLegacyGroupGrant 在通过新权限端点为某 group
+ *  写 grant 时**就地迁入**本表(role='editor',同事务),并 DELETE 掉
+ *  对应 legacy 行(主 INSERT 用 onConflictDoUpdate 保证用户选的角色
+ *  优先,helper 用 onConflictDoNothing 不覆盖)。新写入一律走本表;
+ *  老 system 仍可能写 legacy(保留 adminSpaces 三个 @deprecated 端点
+ *  作 rollback 安全网,命中会 console.warn)—— 由后续全量 migration job
+ *  收尾(DROP legacy 表 + 唯一索引)。
+ *
+ *  代码路径仍读 legacy:lib/permissions.effectiveSpaceRole UNION ALL
+ *  legacy 行(视为 'editor',最宽松,保留旧行为),loadGrantsForSpace
+ *  用 NOT EXISTS 互补去重(UI 列表不重复显示同一 group 的 legacy +
+ *  新表两行)。功能正确,行重复占位由全量收尾统一处理。
+ *
+ *  无 FK(CLAUDE.md 硬约束):principal_id 是 user_groups.id 或 users.id,
+ *  deleted/disabled 用户的行保留,前端 LEFT JOIN 兜底 null。级联清理
+ *  在 adminGroups / adminUsers / adminSpaces DELETE 显式 sweep
+ *  (同事务内 DELETE FROM space_role_grants WHERE ...)。
+ *
+ *  索引:
+ *  - (space_id) — 空间设置页拉该空间所有 grants 的热路径
+ *  - (principal_kind, principal_id) — 解析一个用户的有效角色(对
+ *    当前用户的所有空间),permission SQL 核心 join
+ *  - UNIQUE (space_id, principal_kind, principal_id) — 幂等 UPSERT
+ * ───────────────────────────────────────────────────────────────────── */
+export const spaceRoleGrants = pgTable(
+  'space_role_grants',
+  {
+    /** nanoid(10) — 跟其他表 ID 同套(id.ts generatePageId 字母表)。 */
+    id: text('id').primaryKey(),
+    /** spaces.id。无 FK —— adminSpaces DELETE 同事务 sweep。 */
+    spaceId: text('space_id').notNull(),
+    /** 'user' = 单个用户直接授予(可用于未入任何组的外部协作者);
+     *  'group' = 整组授予(与 legacy space_group_access 同构语义)。 */
+    principalKind: text('principal_kind', { enum: ['user', 'group'] }).notNull(),
+    /** principal_id:
+     *  - principal_kind='user'  → users.id
+     *  - principal_kind='group' → user_groups.id
+     *  No FK。disabled / deleted 主体的行保留(由 admin 端 sweep)。 */
+    principalId: text('principal_id').notNull(),
+    /** 'viewer' | 'editor' | 'admin'。CHECK 约束在迁移里限定合法值。
+     *  admin 路由拒绝对 group 写 'admin'(assertNotAdminToGroup)。 */
+    role: text('role', { enum: ['viewer', 'editor', 'admin'] }).notNull(),
+    /** 授予人 user id。null = 系统操作(ensurePersonalSpace /
+     *  bootstrap 等)。No FK —— 授予人被 disable / delete 后行保留,
+     *  audit 列能看到「当时谁给的」。 */
+    grantedBy: text('granted_by'),
+    /** Date.now() 毫秒。 */
+    grantedAt: bigint('granted_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    index('space_role_grants_space_idx').on(t.spaceId),
+    index('space_role_grants_principal_idx').on(t.principalKind, t.principalId),
+    uniqueIndex('space_role_grants_space_principal_uq').on(
+      t.spaceId,
+      t.principalKind,
+      t.principalId,
+    ),
+  ],
+)
+export type SpaceRoleGrantRow = typeof spaceRoleGrants.$inferSelect
+export type NewSpaceRoleGrantRow = typeof spaceRoleGrants.$inferInsert
+
+/**
+ * Phase B — 页面级限制表(Confluence 风格)。
+ *
+ * 一行 = 「某 page 的某类型限制下,某 principal 被显式列入 allow-list」。
+ * 没有行 = 没有 page-level 限制(默认按 space 角色走)。
+ *
+ * 反 default-deny 语义:某 page 出现 kind='view' 行 = 限制生效,除了
+ * 列表里的 principal,其他人都不能读(本表行都是 allow;非列表主体一律
+ * 拒绝)。edit 不继承父链(只约束本页);view 继承父链(BFS 累计 allow-list,
+ * 任一祖先限制生效 → 子页必须满足)。
+ *
+ * 角色作者本人 + global admin 始终 full(在 permissions.ts 的 canReadPage /
+ * canEditPage 短路,不走 allow-list 校验)。
+ *
+ * No FK(CLAUDE.md 硬约束):cleanup 由 adminPages / pages DELETE
+ * (purge) 在事务内显式 sweep(参见 `pages.ts:DELETE /:id?purge=true`)。
+ *
+ * kind 字段:CHECK 限定 'view' | 'edit'。CHECK 在迁移里写(不靠 drizzle)。
+ */
+export const pageRestrictions = pgTable(
+  'page_restrictions',
+  {
+    /** nanoid(10) —— 同其他表 ID 字母表。 */
+    id: text('id').primaryKey(),
+    /** pages.id。No FK —— adminPages DELETE ?purge=true 在同 tx 内
+     *  DELETE FROM page_restrictions WHERE page_id = ? cascade。 */
+    spaceId: text('space_id').notNull(),
+    pageId: text('page_id').notNull(),
+    /** 'view' = 限制谁能看;'edit' = 限制谁能改。CHECK 在迁移里。 */
+    kind: text('kind', { enum: ['view', 'edit'] }).notNull(),
+    /** 'user' = 单个用户;'group' = 整组。同 space_role_grants.principal_kind
+     *  同构语义。CHECK 在迁移里。 */
+    principalKind: text('principal_kind', { enum: ['user', 'group'] }).notNull(),
+    /** principal_id:
+     *  - principal_kind='user'  → users.id
+     *  - principal_kind='group' → user_groups.id
+     *  No FK。disabled / deleted 主体的行保留。 */
+    principalId: text('principal_id').notNull(),
+    /** 授予人 user id。null = 系统 bootstrap / 迁移。 */
+    grantedBy: text('granted_by'),
+    /** Date.now() 毫秒。 */
+    grantedAt: bigint('granted_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    index('page_restrictions_page_idx').on(t.pageId),
+    index('page_restrictions_principal_idx').on(t.kind, t.principalKind, t.principalId),
+    uniqueIndex('page_restrictions_page_kind_principal_uq').on(
+      t.pageId,
+      t.kind,
+      t.principalKind,
+      t.principalId,
+    ),
+  ],
+)
+export type PageRestrictionRow = typeof pageRestrictions.$inferSelect
+export type NewPageRestrictionRow = typeof pageRestrictions.$inferInsert
+
+/**
+ * Phase C — 权限变更审计日志(append-only)。
+ *
+ * 一行 = 一次「会改变可见性 / 访问性」的事件。包括:
+ *   权限变更 8 个:
+ *     - space_grant_set / space_grant_add / space_grant_remove:空间角色变更
+ *     - page_restriction_set / page_restriction_add / page_restriction_remove:页面限制变更
+ *     - page_share_create / page_share_revoke:公开链接生命周期
+ *   资源生命周期 3 个(2026-07 起合并到同一张表):
+ *     - space_deleted:空间被 admin DELETE(目标:shared space;personal 拒绝)
+ *     - group_deleted:用户组被 admin DELETE(pg-* 系统组不删)
+ *     - user_anonymized:用户被 admin 匿名化(改 name/email/status,保留
+ *       authorship/comments/audit 行,sentinel 化)
+ *
+ * 严格 append-only:无 UPDATE、无 DELETE 入口;只有 INSERT。audit 行
+ * 不参与任何业务判断,只是给 admin 一个「谁在什么时候改了什么」的查询面。
+ *
+ * payload 存 `{ before, after }` 形态的 diff,JSONB 灵活放各类结构:
+ *   - space_grant_set: { before: grants, after: grants }
+ *   - page_restriction_set: { before: {view,edit}, after: {view,edit} }
+ *   - *_add: { after: 单行 }
+ *   - remove 同款反方向
+ *   - space_deleted: { before: { id, name, kind } }
+ *   - group_deleted: { before: { id, name, memberCount } }
+ *   - user_anonymized: { before: { name, email }, after: { name, email, status } }
+ *
+ * target_kind ∈ {space, page, page_share, group, user};CHECK 在 migration
+ * 里限定(0027 + 0029_extend_audit_kinds)。
+ *
+ * No FK:audit 永远不被级联 —— 即使被改的 user/group/space/page 被
+ * 删了,审计行保留(audit 本身就是"那时的快照")。这跟
+ * page_restrictions.grantedBy 同款语义。
+ */
+export const permissionAudit = pgTable(
+  'permission_audit',
+  {
+    id: text('id').primaryKey(),
+    /** 事件类型;CHECK 在 migration 里限定。 */
+    kind: text('kind').notNull(),
+    /** 操作人 user id。无 FK —— 操作人 disable / delete 后 audit 行保留。 */
+    actorId: text('actor_id').notNull(),
+    /** 'space' = 空间角色授予 / 空间删除;'page' = 页面限制;'page_share' = 公开链接(Phase D);
+     *  'group' = 用户组删除;'user' = 用户匿名化。 */
+    targetKind: text('target_kind', { enum: ['space', 'page', 'page_share', 'group', 'user'] }).notNull(),
+    /** target_kind 对应表的 id:spaces.id / pages.id。 */
+    targetId: text('target_id').notNull(),
+    /** Date.now() 毫秒。 */
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    /** `{ before, after }` diff 结构(JSON)。null = 极端情况保留(列兼容)。 */
+    payload: jsonb('payload'),
+  },
+  (t) => [
+    index('permission_audit_target_idx').on(
+      t.targetKind,
+      t.targetId,
+      sql`${t.createdAt} DESC`,
+    ),
+    index('permission_audit_actor_idx').on(t.actorId, sql`${t.createdAt} DESC`),
+    index('permission_audit_created_idx').on(sql`${t.createdAt} DESC`),
+  ],
+)
+export type PermissionAuditRow = typeof permissionAudit.$inferSelect
+export type NewPermissionAuditRow = typeof permissionAudit.$inferInsert
+
+/* ─── Phase D — 公开链接分享 ────────────────────────────────────────────
+ *
+ * 一行 = 一个公开链接(anonymous 读权限)。pageId 是 pages.id;tokenHash
+ * 是 sha256(明文 token) hex。**明文 token 不入库** —— 只在 POST 创建时
+ * 一次性返给调用方,丢失即失效(create 新的 / revoke 旧的)。
+ *
+ * 字段语义:
+ *   - tokenHash: sha256 hex,64 字符,unique(快速精确查表 + 防重)。
+ *   - expiresAt: 可选过期时间,毫秒。null = 永不过期。GET 路由在校验时
+ *     用 `expires_at IS NULL OR expires_at > now`。
+ *   - revokedAt / revokedBy: 撤销时填。revokedAt 非 null = 已撤销,
+ *     GET 路由拒绝。审计行通过 permission_audit(targetKind='page_share')
+ *     留痕。
+ *   - lastAccessedAt: GET /public 命中时 fire-and-forget 更新(异步,
+ *     不阻塞首屏)。
+ *
+ * 设计要点:
+ *   - No FK(CLAUDE.md):page 被 purge 时由 route handler 在事务内显式
+ *     sweep page_public_shares(verify_phase_d §cascade 覆盖)。actor 也
+ *     No FK,删除的 user 在 audit 行里仍可追溯。
+ *   - 唯一索引在 tokenHash 上 — 因为 GET /public/pages/:token 是按
+ *     token 精确查,其他列都不参与查询路径,只保留 pageId 索引方便
+ *     「某 page 哪些 share 在跑」查询。
+ *   - 一页可以同时有多个 share(多 token,各独立过期 / 撤销);UI 在
+ *     ShareDialog 列全。
+ */
+export const pagePublicShares = pgTable(
+  'page_public_shares',
+  {
+    id: text('id').primaryKey(),
+    /** pages.id;无 FK —— purge 时由 route 显式 sweep。 */
+    pageId: text('page_id').notNull(),
+    /** sha256 hex(64 字符)。明文 token 永不入库,只在 POST 创建时返一次。 */
+    tokenHash: text('token_hash').notNull().unique(),
+    /** 创建人 users.id;无 FK —— 删除后 audit 行仍可追溯。 */
+    createdBy: text('created_by').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    /** 可选过期;null = 永不过期。 */
+    expiresAt: bigint('expires_at', { mode: 'number' }),
+    /** 非 null = 已撤销;GET /public 拒绝。 */
+    revokedAt: bigint('revoked_at', { mode: 'number' }),
+    /** 撤销人 users.id;无 FK。 */
+    revokedBy: text('revoked_by'),
+    /** GET /public 命中时异步更新;UI 不展示,纯运营位。 */
+    lastAccessedAt: bigint('last_accessed_at', { mode: 'number' }),
+  },
+  (t) => [
+    index('page_public_shares_page_idx').on(t.pageId),
+    index('page_public_shares_expires_idx').on(t.expiresAt),
+  ],
+)
+export type PagePublicShareRow = typeof pagePublicShares.$inferSelect
+export type NewPagePublicShareRow = typeof pagePublicShares.$inferInsert

@@ -26,7 +26,12 @@ import { and, eq, inArray, isNull, like, sql } from 'drizzle-orm'
 import { AddLabelInputSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { pageLabels, pages } from '../db/schema'
-import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import {
+  canEditPage,
+  pageReadableDirectFilter,
+  principalFromUser,
+} from '../lib/permissions'
+import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { type Variables } from '../auth/middleware'
 
@@ -62,14 +67,20 @@ pageLabelsRouter.post('/:id/labels', async (c) => {
   }
 
   const [page] = await db
-    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .select({
+      spaceId: pages.spaceId,
+      deletedAt: pages.deletedAt,
+      authorId: pages.authorId,
+    })
     .from(pages)
     .where(eq(pages.id, id))
     .limit(1)
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  // Phase A.5: 写 label = 写 page metadata,需要 canEditPage(author bypass
+  // + 空间 editor / admin)。viewer 只读不被允许加/去 label。
+  if (!(await canEditPage(principalFromUser(me), id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -105,14 +116,18 @@ pageLabelsRouter.delete('/:id/labels/:label', async (c) => {
   }
 
   const [page] = await db
-    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .select({
+      spaceId: pages.spaceId,
+      deletedAt: pages.deletedAt,
+      authorId: pages.authorId,
+    })
     .from(pages)
     .where(eq(pages.id, id))
     .limit(1)
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -151,6 +166,12 @@ pageLabelsRouter.get('/search', async (c) => {
     if (accessible === '*' || accessible.length === 0) return c.json([], 200)
   }
 
+  // Phase B: 加 page-level view restriction 过滤(直接 view 限制;父链继承
+  // 留 v0 折衷,见 permissions.ts pageReadableDirectFilter 注释)。
+  const principal = principalFromUser(me)
+  const pageReadFilter =
+    me.role === 'admin' ? sql`TRUE` : pageReadableDirectFilter(principal)
+
   // Drizzle build the JOIN + WHERE. The DISTINCT runs through SQL helper.
   const base = db
     .selectDistinct({ label: pageLabels.label })
@@ -161,6 +182,7 @@ pageLabelsRouter.get('/search', async (c) => {
         isNull(pages.deletedAt),
         like(pageLabels.label, `%${q}%`),
         accessible === '*' ? sql`TRUE` : inArray(pages.spaceId, accessible as string[]),
+        pageReadFilter,
       ),
     )
     .orderBy(pageLabels.label)

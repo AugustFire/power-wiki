@@ -41,6 +41,25 @@ const saving = ref(false)
 const oneTimePassword = ref<string | null>(null)
 const copied = ref(false)
 
+/* ─── Anonymize inline confirm state ───
+ * `useConfirm` is just a Promise<boolean> dialog — we need a typed-name
+ * confirmation for irreversible actions (Confluence-style), so we run
+ * an inline confirmation panel right inside this card instead. Two
+ * pieces of state:
+ *   - anonymizeOpen: panel expanded? (false by default to keep the card tidy)
+ *   - anonymizeConfirm: typed input, must === user.value.name to enable button */
+const anonymizeOpen = ref(false)
+const anonymizeConfirm = ref('')
+const anonymizing = ref(false)
+const anonymizeError = ref<string | null>(null)
+
+const canAnonymize = computed(
+  () =>
+    !!user.value &&
+    anonymizeConfirm.value.trim() === user.value.name &&
+    !anonymizing.value,
+)
+
 async function load() {
   loading.value = true
   loadError.value = null
@@ -156,6 +175,43 @@ async function copyPassword() {
 function dismissOneTime() {
   oneTimePassword.value = null
   copied.value = false
+}
+
+function openAnonymize() {
+  anonymizeOpen.value = true
+  anonymizeConfirm.value = ''
+  anonymizeError.value = null
+}
+function cancelAnonymize() {
+  anonymizeOpen.value = false
+  anonymizeConfirm.value = ''
+  anonymizeError.value = null
+}
+async function confirmAnonymize() {
+  if (!user.value || !canAnonymize.value) return
+  anonymizing.value = true
+  anonymizeError.value = null
+  try {
+    // Returns the anonymized User row (name=已注销用户, status=disabled).
+    const anonymized = await api.admin.users.anonymize(user.value.id)
+    user.value = anonymized
+    syncFormFromUser()
+    anonymizeOpen.value = false
+    anonymizeConfirm.value = ''
+  } catch (e) {
+    if (e instanceof ApiError) {
+      anonymizeError.value =
+        e.code === 'last_admin'
+          ? '不能匿名化最后一个管理员'
+          : e.code === 'self_anonymize'
+          ? '不能匿名化自己的账号'
+          : e.message
+    } else {
+      anonymizeError.value = '匿名化失败,请重试'
+    }
+  } finally {
+    anonymizing.value = false
+  }
 }
 
 function formatDate(ts: number | null | undefined): string {
@@ -397,6 +453,68 @@ const colorPresets = [
           </div>
         </div>
       </section>
+
+      <!-- 危险操作:匿名化(不可逆)。
+           不到最后关头不展开 —— 默认 collapsed,点击「匿名化用户」才展开
+           内联确认面板,要求输入 user.name 才解锁按钮(防误点)。
+           已匿名化的用户(已 disabled + name='已注销用户')整个 section
+           自动隐藏:无可恢复操作。 -->
+      <section v-if="user.status !== 'disabled' || user.name !== '已注销用户'" class="ue-card">
+        <h2 class="ue-card-title">危险操作</h2>
+        <div v-if="!anonymizeOpen" class="ue-action">
+          <div>
+            <div class="ue-action-title">匿名化用户</div>
+            <div class="ue-action-hint">
+              不可逆操作 —— 清除姓名、邮箱、密码、头像,清除所有组成员关系与个人空间授权。
+              该用户创建/编辑的页面与评论保留,署名显示为「已注销用户」。
+            </div>
+          </div>
+          <button type="button" class="btn danger" @click="openAnonymize">
+            <span class="material-symbols-outlined btn-icon">person_off</span>
+            <span>匿名化用户</span>
+          </button>
+        </div>
+
+        <div v-else class="ue-anonymize">
+          <div class="ue-anonymize-warning">
+            <span class="material-symbols-outlined ue-anonymize-icon">warning</span>
+            <div>
+              <div class="ue-anonymize-title">确认匿名化「{{ user.name }}」</div>
+              <div class="ue-anonymize-detail">
+                将清除该用户的姓名、邮箱、密码、头像,清除所有组成员关系、关注、点赞与通知,
+                移除其直接空间授权与页面级限制。已创建的页面与评论<strong>保留</strong>(署名变为「已注销用户」)。
+                该操作<strong>不可撤销</strong>。
+              </div>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-label">输入用户名「{{ user.name }}」以确认</span>
+            <input
+              v-model="anonymizeConfirm"
+              type="text"
+              class="field-input"
+              :disabled="anonymizing"
+              :placeholder="user.name"
+              autocomplete="off"
+            />
+          </label>
+          <p v-if="anonymizeError" class="ue-anonymize-error">{{ anonymizeError }}</p>
+          <div class="ue-anonymize-actions">
+            <button type="button" class="btn ghost" :disabled="anonymizing" @click="cancelAnonymize">
+              取消
+            </button>
+            <button
+              type="button"
+              class="btn danger"
+              :disabled="!canAnonymize"
+              @click="confirmAnonymize"
+            >
+              <span v-if="anonymizing" class="ue-anonymize-spinner" aria-hidden="true"></span>
+              <span>{{ anonymizing ? '匿名化中…' : '确认匿名化' }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -588,4 +706,53 @@ const colorPresets = [
   color: var(--text-2);
   font-family: var(--font-mono, monospace);
 }
+
+/* ─── 危险操作 — 匿名化内联面板 ─── */
+.ue-anonymize {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  border-radius: var(--radius-md, 4px);
+}
+.ue-anonymize-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-1);
+}
+.ue-anonymize-icon {
+  font-size: 22px;
+  color: var(--danger);
+  flex-shrink: 0;
+}
+.ue-anonymize-title { font-weight: 600; }
+.ue-anonymize-detail { color: var(--text-2); margin-top: 2px; }
+.ue-anonymize-detail strong { font-weight: 600; color: var(--danger); }
+.ue-anonymize-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin: 0;
+}
+.ue-anonymize-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.ue-anonymize-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ue-spin 0.6s linear infinite;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+@keyframes ue-spin { to { transform: rotate(360deg); } }
 </style>

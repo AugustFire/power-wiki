@@ -5,7 +5,8 @@
  *   POST   /api/admin/spaces                    create
  *   GET    /api/admin/spaces/:id                single space + accessGroupIds
  *   PATCH  /api/admin/spaces/:id                update name/description/color/icon
- *   DELETE /api/admin/spaces/:id                delete (refuses if pages exist)
+ *   DELETE /api/admin/spaces/:id                delete (refuses if pages exist OR
+ *                                              if kind='personal'; audit row written)
  *   PUT    /api/admin/spaces/:id/access         replace the full set of access groups
  *
  * All routes require admin role. Non-admin users go through /api/spaces
@@ -21,6 +22,13 @@
  * UI as a "1-person auto group" entry would be noise; the binding still
  * works underneath. Frontend tabs (manager/spaces + manager/trash) filter
  * personal vs shared by `kind`, which we expose here.
+ *
+ * DELETE on `kind='personal'` is refused (400 `personal_space_cannot_delete`).
+ * Personal spaces are bound to their owner user — deleting one would leave the
+ * owner with no scratchpad and orphan their `pg-<userId>` group. To retire a
+ * personal space the owner (or an admin) should archive it (future feature);
+ * for now the only path to "remove" a personal space is to anonymize the user,
+ * which sweeps their personal space as part of the cascade.
  */
 import { Hono } from 'hono'
 import { eq, inArray, sql, and, asc } from 'drizzle-orm'
@@ -32,11 +40,13 @@ import {
   UpdateSpaceInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { spaceGroupAccess, spaces, userGroups } from '../db/schema'
+import { spaceGroupAccess, spaceRoleGrants, spaces, userGroups } from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
+import { loadGrantsForSpaces, type SpaceGrants } from '../lib/permissions'
+import { recordPermissionAudit } from '../lib/auditLog'
 import type { Space } from '@power-wiki/shared'
 import type { SpaceRow } from '../db/schema'
 
@@ -63,11 +73,14 @@ function rowToSpace(row: SpaceRow, accessGroupIds: string[] = []): Space {
 
 /** Compose row + access + page-stats into the final DTO.
  *  `ownerNameMap` is optional — only the admin path passes it (personal
- *  spaces only). Shared spaces never get an `ownerName` field. */
+ *  spaces only). Shared spaces never get an `ownerName` field.
+ *  `grantsMap` is optional — Phase A: only the admin list path passes it so
+ *  the manager UI can show the structured role grants inline. */
 function attachStats(
   space: Space,
   stats: SpacePageStats | undefined,
   ownerNameMap?: Map<string, string>,
+  grantsMap?: Map<string, SpaceGrants>,
 ): Space {
   const ownerName = ownerNameMap?.get(space.id)
   return {
@@ -76,6 +89,7 @@ function attachStats(
     childPageCount: stats?.childPageCount ?? 0,
     lastPageUpdatedAt: stats?.lastPageUpdatedAt ?? null,
     ...(ownerName ? { ownerName } : {}),
+    ...(grantsMap ? { accessGrants: grantsMap.get(space.id) ?? { groups: [], users: [] } } : {}),
   }
 }
 
@@ -123,11 +137,16 @@ adminSpacesRouter.get('/', async (c) => {
   // Owner names for personal spaces — one LEFT JOIN, only the personal rows
   // are looked up. Avoids the manager UI firing N `users/:id` per row.
   const ownerNameBySpace = await getSpaceOwnerNames(rows.map((r) => r.id))
+  // Phase A: structured role grants (groups + users + role), batched so we
+  // don't pay an N+1 vs the per-row approach. Admin-only path; non-admin
+  // requests go through /api/spaces instead.
+  const grantsBySpace = await loadGrantsForSpaces(rows.map((r) => r.id))
   const items = rows.map((r) =>
     attachStats(
       rowToSpace(r, accessBySpace.get(r.id) ?? []),
       statsBySpace.get(r.id),
       ownerNameBySpace,
+      grantsBySpace,
     ),
   )
   const result = applyPagination(items, limit, offset)
@@ -165,11 +184,14 @@ adminSpacesRouter.get('/:id', async (c) => {
   const accessGroupIds = await getAccessGroupIds(id)
   const statsBySpace = await getSpacePageStats([id])
   const ownerNameBySpace = await getSpaceOwnerNames([id])
+  // Phase A: 单 space 也带 accessGrants,与 list 路径行为一致。
+  const grantsBySpace = await loadGrantsForSpaces([id])
   return c.json(
     attachStats(
       rowToSpace(row, accessGroupIds),
       statsBySpace.get(id),
       ownerNameBySpace,
+      grantsBySpace,
     ),
   )
 })
@@ -209,13 +231,36 @@ adminSpacesRouter.patch('/:id', async (c) => {
 })
 
 /* ─── DELETE /api/admin/spaces/:id ────────────────────────────────────── */
-// Refuses if the space has any pages. Cascade delete would silently drop
-// the entire subtree, which is the kind of action that should require an
-// extra confirmation in the UI rather than be triggered by accident.
+// Refuses if the space has any pages (409 space_not_empty) or is a personal
+// space (400 personal_space_cannot_delete — see route header). Cascade
+// delete would silently drop the entire subtree, which is the kind of action
+// that should require an extra confirmation in the UI rather than be
+// triggered by accident.
 adminSpacesRouter.delete('/:id', async (c) => {
+  const me = c.get('user')
   const id = c.req.param('id')
-  const existing = (await db.select({ id: spaces.id }).from(spaces).where(eq(spaces.id, id)).limit(1))[0]
+  const existing = (
+    await db
+      .select({ id: spaces.id, name: spaces.name, kind: spaces.kind })
+      .from(spaces)
+      .where(eq(spaces.id, id))
+      .limit(1)
+  )[0]
   if (!existing) return c.json({ error: 'not_found' }, 404)
+
+  // Personal spaces are owner-bound; deleting one orphans the owner's pg-*
+  // group and leaves them with no scratchpad. The only legitimate path to
+  // remove a personal space is via user anonymization (Phase 3), which
+  // sweeps the personal space + group + role grants in one cascade.
+  if (existing.kind === 'personal') {
+    return c.json(
+      {
+        error: 'personal_space_cannot_delete',
+        message: '个人空间不能直接删除。请改用「匿名化该用户」清理。',
+      },
+      400,
+    )
+  }
 
   const pageCount = await countPagesInSpace(id)
   if (pageCount > 0) {
@@ -228,18 +273,35 @@ adminSpacesRouter.delete('/:id', async (c) => {
       409,
     )
   }
-  // No FK CASCADE — sweep the access join table explicitly so we don't
-  // leave rows pointing at a deleted space.
+  // No FK CASCADE — sweep the access join tables explicitly so we don't
+  // leave rows pointing at a deleted space. Phase A adds the
+  // space_role_grants sweep alongside the legacy space_group_access one.
+  // Audit row written in the same transaction so it rolls back together
+  // with the delete (Phase C invariant: tx rollback ⇒ no audit pollution).
   await db.transaction(async (tx) => {
     await tx.delete(spaceGroupAccess).where(eq(spaceGroupAccess.spaceId, id))
+    await tx.delete(spaceRoleGrants).where(eq(spaceRoleGrants.spaceId, id))
     await tx.delete(spaces).where(eq(spaces.id, id))
+    await recordPermissionAudit(tx, {
+      kind: 'space_deleted',
+      actorId: me.id,
+      targetKind: 'space',
+      targetId: id,
+      payload: { before: { id, name: existing.name, kind: existing.kind } },
+    })
   })
   return c.body(null, 204)
 })
 
 /* ─── PUT /api/admin/spaces/:id/access ────────────────────────────────── */
+/**
+ * @deprecated Phase A.5 起停止写入。改用 `PUT /api/spaces/:id/permissions`
+ * (`apps/api/src/routes/spacePermissions.ts`)。此端点保留作为 rollback 安全网,
+ * 不再有前端调用 —— 命中时 `console.warn` 报警,便于追查残留脚本 / 测试桩。
+ */
 // Replaces the full set of access groups in a single transaction.
 adminSpacesRouter.put('/:id/access', async (c) => {
+  console.warn('[adminSpaces] legacy PUT /:id/access hit — migrate caller to /api/spaces/:id/permissions')
   const id = c.req.param('id')
   const body = await c.req.json().catch(() => ({}))
   const parsed = SetSpaceAccessInputSchema.safeParse(body)
@@ -293,10 +355,15 @@ adminSpacesRouter.put('/:id/access', async (c) => {
 })
 
 /* ─── POST /api/admin/spaces/:id/access/:groupId ──────────────────────── */
+/**
+ * @deprecated Phase A.5 起停止写入。改用 `POST /api/spaces/:id/permissions/groups/:groupId`。
+ * 此端点保留作为 rollback 安全网,命中时 `console.warn` 报警。
+ */
 // Grants a single group access to the space. Idempotent — re-adding an
 // already-authorized group is a no-op (returns 200, not 409) so the frontend
 // can fire-and-forget without tracking prior state.
 adminSpacesRouter.post('/:id/access/:groupId', async (c) => {
+  console.warn('[adminSpaces] legacy POST /:id/access/:groupId hit — migrate caller to /api/spaces/:id/permissions/groups/:groupId')
   const id = c.req.param('id')
   const groupId = c.req.param('groupId')
 
@@ -339,9 +406,14 @@ adminSpacesRouter.post('/:id/access/:groupId', async (c) => {
 })
 
 /* ─── DELETE /api/admin/spaces/:id/access/:groupId ───────────────────── */
+/**
+ * @deprecated Phase A.5 起停止写入。改用 `DELETE /api/spaces/:id/permissions/groups/:groupId`。
+ * 此端点保留作为 rollback 安全网,命中时 `console.warn` 报警。
+ */
 // Revokes a single group's access. Idempotent — removing an already-unauthorized
 // group returns 200 with the current set, not 404.
 adminSpacesRouter.delete('/:id/access/:groupId', async (c) => {
+  console.warn('[adminSpaces] legacy DELETE /:id/access/:groupId hit — migrate caller to /api/spaces/:id/permissions/groups/:groupId')
   const id = c.req.param('id')
   const groupId = c.req.param('groupId')
 

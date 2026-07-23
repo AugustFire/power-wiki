@@ -172,9 +172,37 @@ function onReset() {
 async function onDelete() {
   if (!group.value) return
   const g = group.value
+  // Dry-run impact fetch — runs in parallel with the confirm dialog open.
+  // If it fails we still proceed (the dialog will show generic message);
+  // failure here doesn't block deletion since it's purely informational.
+  let impact: Awaited<ReturnType<typeof api.admin.groups.impact>> | null = null
+  try {
+    impact = await api.admin.groups.impact(g.id)
+  } catch {
+    impact = null
+  }
+  const impactLines: string[] = []
+  if (impact) {
+    if (impact.memberCount > 0) {
+      impactLines.push(`• ${impact.memberCount} 个成员关系`)
+    }
+    if (impact.roleGrantCount + impact.legacyGrantCount > 0) {
+      impactLines.push(
+        `• ${impact.roleGrantCount + impact.legacyGrantCount} 个空间授权(此组对该空间的访问)`,
+      )
+    }
+    if (impact.restrictionCount > 0) {
+      impactLines.push(
+        `• ${impact.restrictionCount} 个页面级 view/edit 限制(删除后这些限制被解除,只受空间角色约束)`,
+      )
+    }
+  }
+  const detail = impactLines.length > 0
+    ? `\n\n将一并删除:\n${impactLines.join('\n')}`
+    : ''
   const ok = await askConfirm({
     title: '删除用户组',
-    message: `确定要删除用户组「${g.name}」吗?所有成员关系将一并删除。`,
+    message: `确定要删除用户组「${g.name}」吗?该操作不可撤销。${detail}`,
     confirmText: '删除',
     danger: true,
   })

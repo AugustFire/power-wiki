@@ -24,6 +24,7 @@ import { db } from '../db/client'
 import { pageLabels, pages, users } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import { pageReadableDirectFilter, principalFromUser } from '../lib/permissions'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
@@ -131,6 +132,9 @@ searchRouter.get('/', async (c) => {
         spaceFilter,
         labelFilter,
         accessibleScope,
+        // Phase B: 直接 view 限制过滤(父链继承留 v0,见 permissions.ts
+        // pageReadableDirectFilter 注释)。作者本人 / admin 始终可见。
+        pageReadableDirectFilter(principalFromUser(me)),
       ),
     )
     .groupBy(

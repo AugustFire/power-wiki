@@ -15,8 +15,8 @@
  *   3. finalize:HeadObject 验证真实 size,匹配后才 INSERT 行。
  *
  * 权限模型(与 pages / labels 一致):
- *   - 写(upload-url / finalize / delete):canAccessSpace 读权 + admin 不写个人空间。
- *   - 读(list / raw):canAccessSpace 读权;跨空间 404(不泄漏)。
+ *   - 写(upload-url / finalize / delete):canEditPage + admin 不写个人空间。
+ *   - 读(list / raw):canReadPage;跨空间 404(不泄漏)。
  *
  * DB 是事实来源;S3 delete 是 best-effort(失败仅日志,容忍 orphan 对象)。
  */
@@ -34,7 +34,7 @@ import type { Attachment, AllowedMimeType } from '@power-wiki/shared'
 import { db } from '../db/client'
 import { attachments, pages, users } from '../db/schema'
 import type { AttachmentRow } from '../db/schema'
-import { canAccessSpace } from '../lib/accessibleSpaceIds'
+import { canReadPage, canEditPage, principalFromUser } from '../lib/permissions'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { generateAttachmentId } from '../lib/ids'
 import {
@@ -72,7 +72,7 @@ function rowToAttachment(
   }
 }
 
-type PageMeta = { spaceId: string; deletedAt: number | null }
+type PageMeta = { id: string; spaceId: string; deletedAt: number | null; authorId: string }
 
 /**
  * 读该页的 spaceId / deletedAt。返回 null = 页不存在 / 无 spaceId / 已回收。
@@ -80,12 +80,12 @@ type PageMeta = { spaceId: string; deletedAt: number | null }
  */
 async function loadLivePage(pageId: string): Promise<PageMeta | null> {
   const [row] = await db
-    .select({ spaceId: pages.spaceId, deletedAt: pages.deletedAt })
+    .select({ id: pages.id, spaceId: pages.spaceId, deletedAt: pages.deletedAt, authorId: pages.authorId })
     .from(pages)
     .where(eq(pages.id, pageId))
     .limit(1)
   if (!row || row.spaceId === null || row.deletedAt !== null) return null
-  return { spaceId: row.spaceId, deletedAt: row.deletedAt }
+  return { id: row.id, spaceId: row.spaceId, deletedAt: row.deletedAt, authorId: row.authorId }
 }
 
 /* ─── POST /api/attachments/upload-url ────────────────────────────────
@@ -107,7 +107,7 @@ attachmentsRouter.post('/upload-url', async (c) => {
 
   const page = await loadLivePage(pageId)
   if (!page) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
@@ -151,7 +151,7 @@ attachmentsRouter.post('/finalize', async (c) => {
 
   const page = await loadLivePage(keyPageId)
   if (!page) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
@@ -201,7 +201,7 @@ attachmentsRouter.get('/', async (c) => {
 
   const page = await loadLivePage(pageId)
   if (!page) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), page.id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -260,7 +260,7 @@ attachmentsRouter.get('/:id/raw', async (c) => {
 
   const page = await loadLivePage(row.pageId)
   if (!page) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), page.id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -300,7 +300,7 @@ attachmentsRouter.delete('/:id', async (c) => {
 
   const page = await loadLivePage(row.pageId)
   if (!page) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)

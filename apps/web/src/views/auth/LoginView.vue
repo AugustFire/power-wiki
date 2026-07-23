@@ -69,6 +69,13 @@ async function onSubmit() {
     // Mirror ResetPasswordView.vue:59-62 (same pattern for the post-reset flow).
     if (!dest.startsWith('/manager')) {
       await pagesStore.init()
+    } else {
+      // Cold-boot path in main.ts handles this when the user reloads already-
+      // authed. But on the login handoff the main.ts callback has already
+      // returned early (because at boot the user wasn't authed yet), so
+      // without this call `pagesStore.loaded` stays false and App.vue's
+      // `<RouterView v-else-if="loaded">` gate keeps the manager view blank.
+      pagesStore.markLoaded()
     }
     await router.replace(dest)
     await new Promise((r) => setTimeout(r, 80))

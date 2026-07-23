@@ -64,6 +64,24 @@ const showMySpaceShortcut = computed(
   () => personalSpace.value && active.value && !isActivePersonal.value,
 )
 
+// 与 HomeView.canCreateInSpace 对齐:viewer 在团队空间里看不到创建入口,
+// 否则他们点了会撞后端 404。让 UI 提前表达"这里只读"。
+// 个人空间 owner 始终可写(admin 也可写),不挂这个 gate。
+const canCreateInSpace = computed(() => {
+  const s = active.value
+  if (!s) return false
+  if (authStore.isAdmin) return true
+  if (s.kind === 'personal') return true
+  return s.viewerRole === 'editor' || s.viewerRole === 'admin'
+})
+
+/**
+ * v0.7: 当前 active space 是否可由本用户管理(全局 admin OR 该 space 是
+ * space-admin)。基于 `s.viewerRole` 推断 —— 后端空间 GET 已经注入这个
+ * 字段(viewerRole 来自 `effectiveSpaceRole(me, spaceId)`),前端直接用,
+ * 不另查 `canAdminSpace`。切换 active space 时,spacesStore 会刷 Space,
+ * `s.viewerRole` 自动更新。
+ */
 async function createRoot() {
   uiStore.closeMenu()
   // Stage B.3: same client-side nanoid pattern as EditView. URL jumps
@@ -100,13 +118,6 @@ function goMySpace() {
   // we want when the personal space id changes (e.g. user renamed).
   void router.push('/me')
 }
-
-// `authStore` is referenced only to keep the reactivity alive for `user`
-// (avoids HMR-side-effect warnings if we ever inline-reference it). The
-// topbar already surfaces this via the user menu's "我的空间" item, but the
-// sidebar shortcut is a frequent-use target — easier to reach than the
-// avatar dropdown for users who context-switch often.
-void authStore
 
 /**
  * 打开一个页面时,让侧栏自动展开到它、并滚动定位到对应行。
@@ -252,10 +263,11 @@ watch(
         icon="inbox"
         title="还没有页面"
       >
-        <button class="tree-empty-cta" @click="createRoot">
+        <button v-if="canCreateInSpace" class="tree-empty-cta" @click="createRoot">
           <span class="material-symbols-outlined icon-sm">add</span>
           创建第一个
         </button>
+        <span v-else class="readonly-hint">只读模式 · 无权创建</span>
       </EmptyState>
       <div v-else class="tree">
         <PageTree
@@ -267,12 +279,17 @@ watch(
     </div>
 
     <div class="sidebar-bottom">
-      <button class="create-page-btn" @click="createRoot">
+      <button v-if="canCreateInSpace" class="create-page-btn" @click="createRoot">
         <span class="material-symbols-outlined icon-lg">add</span>
         创建页面
         <kbd>/</kbd>
       </button>
+      <span v-else class="readonly-badge" :title="active?.kind === 'personal' ? '个人空间始终可写' : '此空间你只有只读权限'">
+        <span class="material-symbols-outlined icon-md">visibility</span>
+        只读
+      </span>
       <button
+        v-if="canCreateInSpace"
         class="import-md-btn"
         title="导入 Markdown (.md) 到当前空间根"
         aria-label="导入 Markdown"
@@ -447,6 +464,11 @@ watch(
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* v0.7 移位: 管理空间按钮从 sidebar-bottom 移到 active space header
+ * 右侧 —— 跟空间名称同语义层级。视觉上做成跟 .active-count 同款 chip
+ * (半透白底 + accent 色),作为「数据的兄弟」而不是「孤立的 icon」——
+ * 之前的 28px 裸 icon 跟 13 pill chip 类型不同,放一起割裂。 */
 .create-page-btn kbd {
   margin-left: auto;
   background: var(--bg-subtle);
@@ -456,5 +478,38 @@ watch(
 .create-page-btn:hover kbd {
   background: var(--bg);
   color: var(--text-2);
+}
+
+/* 「只读」badge —— viewer 视图下占位 sidebar-bottom 的 create-page-btn。
+ * 跟 HomeView readonly-badge 同语义不同位置:HeroView 在 subheader,
+ * Sidebar 在 sidebar-bottom 永久可见。视觉上跟 button 等高(border +
+ * height 一致),让 sidebar-bottom 区域高度不变,避免 viewer 状态切换时
+ * 整体布局跳动。 */
+.readonly-badge {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+.readonly-badge .material-symbols-outlined {
+  font-size: 16px;
+  color: var(--text-3);
+}
+
+/* 「无权创建」提示 —— EmptyState 内嵌,跟按钮位同样位置。 */
+.readonly-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 6px 0;
 }
 </style>

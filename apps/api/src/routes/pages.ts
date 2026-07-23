@@ -83,10 +83,21 @@ import {
   userWatchedPages,
   pageEvents,
   userRecentPages,
+  pageRestrictions,
+  pagePublicShares,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import {
+  canReadPage,
+  canEditPage,
+  canEditSpace,
+  getEffectiveSpaceRolesForUser,
+  pageReadableDirectFilter,
+  principalFromUser,
+  type Principal,
+} from '../lib/permissions'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { deleteObject } from '../lib/s3'
 import { copyPageAttachments, rewriteAttachmentRefs } from '../lib/copyPageAttachments'
@@ -104,6 +115,27 @@ export const pagesRouter = new Hono<{ Variables: Variables }>()
 
 // `pages` + LEFT JOIN users + LEFT JOIN page_labels — 抽到共享 lib,
 // users.ts /me/watched 也复用。详见 lib/selectPagesWithAuthor.ts。
+
+/**
+ * 给一批 PageNode 注入当前用户的 viewer role。空间角色来自
+ * `getEffectiveSpaceRolesForUser`,每个 unique spaceId 算一次。
+ *
+ * 设计:rowToPageNode 是纯函数,不知道 Principal;attach 在它之后做,
+ * 不污染 mapper。空数组短路,0 个 space 短路。
+ */
+async function attachViewerRoles(
+  rows: Parameters<typeof rowToPageNode>[0][],
+  me: { id: string; role: 'admin' | 'user' },
+  principal: Principal,
+) {
+  if (rows.length === 0) return []
+  const nodes = rows.map(rowToPageNode)
+  const spaceIds = [
+    ...new Set(nodes.map((n) => n.spaceId).filter((s): s is string => s !== null)),
+  ]
+  const roles = await getEffectiveSpaceRolesForUser(principal, spaceIds)
+  return nodes.map((n) => ({ ...n, viewerRole: roles.get(n.spaceId) ?? null }))
+}
 
 /* ─── GET /api/pages ─────────────────────────────────────────────────────
  *  Optional ?space=<id> scopes the list to a single space. The space must be
@@ -152,24 +184,41 @@ pagesRouter.get('/', async (c) => {
       return c.json({ items: [], limit: 0, offset: 0, hasMore: false })
     }
 
+    // Phase B: page-level view restriction 过滤(直接 view 限制,不含父链
+    // 继承 —— 见 lib/permissions.ts pageReadableDirectFilter 注释)。
+    const principal = principalFromUser(me)
+    const pageReadFilter = pageReadableDirectFilter(principal)
+
     if (querySpace) {
       // Single-space query — must be in the visible set.
       if (!visible.includes(querySpace)) {
         return c.json({ error: 'not_found' }, 404)
       }
-      const where = buildSpaceFilter(eq(pages.spaceId, querySpace))
+      const where = buildSpaceFilter(
+        and(eq(pages.spaceId, querySpace), pageReadFilter),
+      )
       let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
       if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
       const rows = await q
-      const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+      const result = applyPagination(
+        await attachViewerRoles(rows, me, principalFromUser(me)),
+        limit,
+        offset,
+      )
       return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
     }
 
-    const where = buildSpaceFilter(inArray(pages.spaceId, visible))
+    const where = buildSpaceFilter(
+      and(inArray(pages.spaceId, visible), pageReadFilter),
+    )
     let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
     if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
     const rows = await q
-    const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+    const result = applyPagination(
+      await attachViewerRoles(rows, me, principalFromUser(me)),
+      limit,
+      offset,
+    )
     return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
   }
 
@@ -178,7 +227,11 @@ pagesRouter.get('/', async (c) => {
   let q = selectPagesWithAuthor(where, { viewerUserId: me.id }).$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
-  const result = applyPagination(rows.map(rowToPageNode), limit, offset)
+  const result = applyPagination(
+    await attachViewerRoles(rows, me, principalFromUser(me)),
+    limit,
+    offset,
+  )
   return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
 })
 
@@ -351,17 +404,19 @@ pagesRouter.get('/:id', async (c) => {
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
   if (!row) return c.json({ error: 'not_found' }, 404)
   if (row.spaceId === null) return c.json({ error: 'not_found' }, 404)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', row.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), row.id, row.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
-  return c.json(rowToPageNode(row))
+  const [node] = await attachViewerRoles([row], me, principalFromUser(me))
+  return c.json(node)
 })
 
 /* ─── POST /api/pages ─────────────────────────────────────────────────
  *  spaceId is required by the schema. We additionally verify the user has
- *  access to the target space — for non-admin users this means the page
- *  will actually be visible to them after creation. (Same check is used
- *  for read and write in 4c; finer-grained perms come later if needed.)
+ *  Phase A.5: write gate is `canEditSpace` (not canReadSpace) so a viewer
+ *  cannot create pages. A viewer who somehow had a previously-allowed
+ *  page (e.g. created before being demoted) still edits via the author
+ *  bypass in `canEditPage` — but new pages require editor+ on the space.
  */
 pagesRouter.post('/', async (c) => {
   const me = c.get('user')
@@ -372,7 +427,7 @@ pagesRouter.post('/', async (c) => {
   }
   const input = parsed.data
 
-  if (!(await canAccessSpace(me.id, me.role === 'admin', input.spaceId))) {
+  if (!(await canEditSpace(principalFromUser(me), input.spaceId))) {
     // Hide whether the space exists at all.
     return c.json({ error: 'not_found' }, 404)
   }
@@ -451,7 +506,7 @@ pagesRouter.patch('/:id', async (c) => {
   if (!existing || existing.spaceId === null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', existing.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), existing.id, existing.spaceId, existing.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -513,7 +568,8 @@ pagesRouter.patch('/:id', async (c) => {
   const [row] = await selectPagesWithAuthor(eq(pages.id, id), { viewerUserId: me.id })
   if (!row) return c.json({ error: 'not_found' }, 404)
 
-  return c.json(PageNodeSchema.parse(rowToPageNode(row)))
+  const [node] = await attachViewerRoles([row], me, principalFromUser(me))
+  return c.json(PageNodeSchema.parse(node))
 })
 
 /* ─── POST /api/pages/:id/snapshots ──────────────────────────────────
@@ -542,7 +598,7 @@ pagesRouter.post('/:id/snapshots', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
@@ -683,7 +739,7 @@ pagesRouter.post('/:id/like', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -757,7 +813,7 @@ pagesRouter.post('/:id/watch', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -811,7 +867,7 @@ pagesRouter.delete('/:id/watch', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -851,7 +907,7 @@ pagesRouter.get('/:id/watchers', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -914,7 +970,7 @@ pagesRouter.patch('/:id/move', async (c) => {
   if (!existing || existing.spaceId === null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', existing.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), existing.id, existing.spaceId, existing.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -959,7 +1015,9 @@ pagesRouter.patch('/:id/move', async (c) => {
       // forgiving for the frontend.
       targetSpaceId = existing.spaceId
     } else {
-      if (!(await canAccessSpace(me.id, me.role === 'admin', input.newSpaceId))) {
+      // Phase A.5: 跨空间移动 = 在目标空间新建一份,需要 canEditSpace 阻止
+      // viewer 偷发。原来的 canAccessSpace (== canRead) 已被收紧。
+      if (!(await canEditSpace(principalFromUser(me), input.newSpaceId))) {
         return c.json({ error: 'not_found' }, 404)
       }
       // Admin can't write into a personal space (admin would be moving INTO it).
@@ -1139,8 +1197,9 @@ pagesRouter.post('/:id/publish', async (c) => {
   if (!source || source.spaceId === null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  // 必须可访问(读得到,才能复制)
-  if (!(await canAccessSpace(me.id, me.role === 'admin', source.spaceId))) {
+  // Phase A.5: 发布 = 源页写一份副本到目标空间,要求源页 canEditPage。
+  // 之前用 canReadPage(viewer 也能发布)已被修复。
+  if (!(await canEditPage(principalFromUser(me), source.id, source.spaceId, source.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -1169,8 +1228,8 @@ pagesRouter.post('/:id/publish', async (c) => {
     )
   }
 
-  // 目标空间必须存在且可写
-  if (!(await canAccessSpace(me.id, me.role === 'admin', targetSpaceId))) {
+  // 目标空间必须存在且可写 — canEditSpace 阻止 viewer 偷发到目标空间。
+  if (!(await canEditSpace(principalFromUser(me), targetSpaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
   const [targetSpace] = await db
@@ -1353,8 +1412,9 @@ pagesRouter.post('/:id/duplicate', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
-  // Must be able to read the source — pre-flight for the visible-space set.
-  if (!(await canAccessSpace(me.id, me.role === 'admin', source.spaceId))) {
+  // Phase A.5: duplicate 写入源空间 = 在源空间新建 page,需要 canEditPage
+  // (含 author bypass / admin bypass)。viewer 复制只读 page 应被拒。
+  if (!(await canEditPage(principalFromUser(me), source.id, source.spaceId, source.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -1509,9 +1569,11 @@ pagesRouter.post('import', async (c) => {
   }
   const input = parsed.data
 
-  // 1. spaceId 访问权(独立空间或个人空间)+ admin 写保护
-  const accessible = await canAccessSpace(me.id, me.role === 'admin', input.spaceId)
-  if (!accessible) return c.json({ error: 'space_not_found' }, 404)
+  // 1. 写权限:canEditSpace 阻止 viewer 导入页面(admin 写个人空间仍由下面
+  //    assertAdminNotWritingPersonalSpace 挡)。404-not-403 维持原有政策。
+  if (!(await canEditSpace(principalFromUser(me), input.spaceId))) {
+    return c.json({ error: 'space_not_found' }, 404)
+  }
 
   const guard = await assertAdminNotWritingPersonalSpace(c, me, input.spaceId)
   if (guard) return guard
@@ -1720,6 +1782,7 @@ pagesRouter.delete('/:id', async (c) => {
   // page_deleted notification snapshot.
   const existing = (await db
     .select({
+      id: pages.id,
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
       title: pages.title,
@@ -1731,7 +1794,7 @@ pagesRouter.delete('/:id', async (c) => {
   if (!existing || existing.spaceId === null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', existing.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), existing.id, existing.spaceId, existing.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -1777,6 +1840,16 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(pageLikes)
         .where(inArray(pageLikes.pageId, subtreeIds))
+      // Phase B: page-level restrictions 随页面 hard-delete 一并清(no FK)。
+      await tx
+        .delete(pageRestrictions)
+        .where(inArray(pageRestrictions.pageId, subtreeIds))
+      // Phase D: page_public_shares 同款语义。share 行随 page purge 一起
+      // 清掉,匿名 token 永久失效。permission_audit.targetId 仍指向原 pageId
+      // —— audit 行保留(append-only),即便 page 没了 audit 也是历史快照。
+      await tx
+        .delete(pagePublicShares)
+        .where(inArray(pagePublicShares.pageId, subtreeIds))
       // 服务端最近浏览:page hard-delete 时显式清理 user_recent_pages
       // (软删保留,recent 历史在 restore 后仍可见;详见 0021 migration 注释)
       await tx

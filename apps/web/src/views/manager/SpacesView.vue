@@ -4,7 +4,7 @@
  *
  *   - List spaces as cards with color/icon, page count, access-group count.
  *   - Inline create form (name, description, color, optional icon).
- *   - Click card → /manager/spaces/:id (SpaceEditView) for member-of-groups +
+ *   - Click card → /spaces/:id (SpaceEditView) for member-of-groups +
  *     rename/delete.
  *   - Delete is gated by the server: refuses if the space still has pages.
  *
@@ -220,7 +220,7 @@ async function onDelete(s: Space) {
 }
 
 function openSpace(s: Space) {
-  void router.push(`/manager/spaces/${s.id}`)
+  void router.push({ name: 'manager-space-edit', params: { id: s.id } })
 }
 
 function formatDate(ts: number): string {
@@ -407,6 +407,10 @@ const ownerNameById = computed<Record<string, string>>(() =>
           <div class="sc-stat">
             <span class="scs-value">{{ s.accessGroupIds?.length ?? 0 }}</span>
             <span class="scs-label">授权组</span>
+          </div>
+          <div class="sc-stat">
+            <span class="scs-value">{{ s.accessGrants?.users.length ?? 0 }}</span>
+            <span class="scs-label">授权用户</span>
           </div>
           <div class="sc-stat">
             <span class="scs-value">{{ s.lastPageUpdatedAt ? relativeTime(s.lastPageUpdatedAt) : '—' }}</span>

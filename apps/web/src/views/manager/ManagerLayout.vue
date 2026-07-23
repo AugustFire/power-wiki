@@ -26,6 +26,7 @@ const section = computed(() => {
   if (name.startsWith('manager-group-edit')) return '用户组'
   if (name.startsWith('manager-spaces')) return '空间'
   if (name.startsWith('manager-trash')) return '回收站'
+  if (name.startsWith('manager-audit')) return '审计日志'
   return '管理后台'
 })
 </script>
@@ -57,6 +58,10 @@ const section = computed(() => {
         <RouterLink to="/manager/trash" class="mn-link" active-class="active">
           <span class="material-symbols-outlined mn-icon">restore_from_trash</span>
           <span>回收站</span>
+        </RouterLink>
+        <RouterLink to="/manager/audit" class="mn-link" active-class="active">
+          <span class="material-symbols-outlined mn-icon">history</span>
+          <span>审计日志</span>
         </RouterLink>
       </nav>
 

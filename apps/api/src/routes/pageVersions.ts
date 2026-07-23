@@ -11,10 +11,10 @@
  * successful content PATCH inserts a snapshot row inside the same tx.
  *
  * Permissions:
- *   - GET requires `canAccessSpace(me, admin, page.spaceId)`. 404 (not 403)
+ *   - GET requires `canReadPage(me, pageId, spaceId)`. 404 (not 403)
  *     when inaccessible, to avoid leaking page id existence.
- *   - POST restore requires `canAccessSpace` (write = read in this codebase)
- *     PLUS `assertAdminNotWritingPersonalSpace` — restore is a write.
+ *   - POST restore requires `canEditPage` (write path, respects page-level
+ *     edit restrictions) PLUS `assertAdminNotWritingPersonalSpace`.
  *
  * Retention: keep latest 30 per page. Both the PATCH tx and the restore tx
  * trim rows after the INSERT.
@@ -28,7 +28,7 @@ import { db } from '../db/client'
 import { pageVersions, pages, users } from '../db/schema'
 import { generatePageId } from '../lib/ids'
 import { rowToPageNode } from '../lib/rowToPageNode'
-import { canAccessSpace } from '../lib/accessibleSpaceIds'
+import { canReadPage, canEditPage, principalFromUser } from '../lib/permissions'
 import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
@@ -91,7 +91,7 @@ pageVersionsRouter.get('/:id/versions', async (c) => {
   if (!page || page.spaceId === null || page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', page.spaceId))) {
+  if (!(await canReadPage(principalFromUser(me), id, page.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 
@@ -148,7 +148,7 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
   if (existing.deletedAt !== null) {
     return c.json({ error: 'page_trashed' }, 409)
   }
-  if (!(await canAccessSpace(me.id, me.role === 'admin', existing.spaceId))) {
+  if (!(await canEditPage(principalFromUser(me), existing.id, existing.spaceId, existing.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
 

@@ -538,6 +538,10 @@
 .status-pill.warning { background: var(--warning-soft); color: var(--warning); }
 .status-pill.danger { background: var(--danger-soft); color: var(--danger); }
 .status-pill.purple { background: var(--purple-soft); color: var(--purple); }
+/* Phase B — 页面级限制 chip:view(继承)用 accent 蓝,edit(不继承)用 warning
+   橙。一眼区分两种限制类型,跟 not-published / 已发布 chip 同样柔色块。 */
+.status-pill.restriction { background: var(--accent-soft); color: var(--accent); }
+.status-pill.restriction.warn { background: var(--warning-soft); color: var(--warning); }
 
 /* =========================
    Prose (read view)

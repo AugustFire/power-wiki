@@ -54,6 +54,17 @@ const isPersonalSpace = computed(
   () => activeSpace.value?.kind === 'personal',
 )
 
+/** 空间根「新建页面」按钮 gate:server 在 Space.viewerRole 注入 effective
+ *  role(见 spaces.ts getEffectiveSpaceRolesForUser)。editor+ 可见;
+ *  viewer 隐藏按钮 + 改成只读 hint。个人空间是 owner 自己的草稿区,
+ *  永远可写,不走这个 gate(由 isPersonalSpace 走 MeDashboardView 路径)。 */
+const canCreateInSpace = computed(() => {
+  const s = activeSpace.value
+  if (!s) return false
+  if (authStore.isAdmin) return true
+  return s.viewerRole === 'editor' || s.viewerRole === 'admin'
+})
+
 const inSpace = computed(() =>
   pagesStore.pages.filter((p) => p.spaceId === activeSpaceId.value),
 )
@@ -165,10 +176,14 @@ function excerpt(html: string): string {
           <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
         </div>
         <div class="page-actions">
-          <button class="btn primary" @click="createRoot">
+          <button v-if="canCreateInSpace" class="btn primary" @click="createRoot">
             <span class="material-symbols-outlined icon-lg">add</span>
             新建页面
           </button>
+          <span v-else class="readonly-badge" title="你在此空间只有只读权限,无法创建新页面">
+            <span class="material-symbols-outlined icon-md">visibility</span>
+            只读
+          </span>
         </div>
       </div>
 
@@ -195,8 +210,9 @@ function excerpt(html: string): string {
               </svg>
             </div>
             <h2>{{ activeSpace ? `${activeSpace.name} 还是空的` : '知识库还是空的' }}</h2>
-            <p>创建第一个页面,开始记录团队的思考、决策和成果。</p>
-            <button class="btn primary create-first" @click="createRoot">
+            <p v-if="canCreateInSpace">创建第一个页面,开始记录团队的思考、决策和成果。</p>
+            <p v-else>该空间目前还没有任何内容,你只有只读权限。</p>
+            <button v-if="canCreateInSpace" class="btn primary create-first" @click="createRoot">
               <span class="material-symbols-outlined icon-lg">add</span>
               创建第一个页面
             </button>
@@ -383,6 +399,27 @@ function excerpt(html: string): string {
   margin: 0 auto 20px;
   display: flex;
   justify-content: center;
+}
+
+/* 只读 badge —— viewer 进 team space 时,「新建页面」按钮位换成这枚 chip,
+ * 让用户立刻明白为什么没有写按钮(而不是怀疑自己没权限点)。跟随 .se-card
+ * 的设计语汇:bg-subtle 底 + text-2 字 + 圆角 pill,跟 .status-pill 同款
+ * 但语义不同(权限状态 vs 页面状态)。 */
+.readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--bg-subtle);
+  color: var(--text-2);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.readonly-badge .material-symbols-outlined {
+  font-size: 16px;
+  color: var(--text-3);
 }
 .empty .create-first {
   margin-top: 8px;

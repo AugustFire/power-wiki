@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
+import { useAuthStore } from '@/stores/auth'
+import { api, ApiError, invalidatePath } from '@/lib/api'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
@@ -11,12 +13,15 @@ import LabelPills from '@/components/page/LabelPills.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import PageRestrictionsDialog from '@/components/page/PageRestrictionsDialog.vue'
+import ShareDialog from '@/components/page/ShareDialog.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
+import type { PageNode } from '@power-wiki/shared'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
@@ -25,10 +30,29 @@ type AnyEditor = any
 
 const props = defineProps<{ id?: string; parentId?: string | null }>()
 const pagesStore = usePagesStore()
+const authStore = useAuthStore()
 const router = useRouter()
 const uiStore = useUiStore()
 const { confirm } = useConfirm()
 const { set: setActivePageId } = useActivePageId()
+
+/**
+ * 当前用户能否编辑 `props.id` 对应的页面。对齐 ReadView.canEdit 与后端
+ * canEditPage 的语义:admin / 空间角色不是 viewer / 作者本人 都能编辑,
+ * 普通 viewer 只能读。
+ *
+ * - 新建页(page 还没解析出来)→ 返回 true 不挡,后续由 createPage 自己
+ *   处理(创建权限跟空间角色绑定,不挂在 pageId 上)。
+ * - `page.viewerRole` 是后端注入的 effective role,跟前端 `useAuthStore.user`
+ *   一起算;author bypass 用 user.id 比对 page.authorId。
+ */
+function canEditPageNode(p: PageNode): boolean {
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  if (p.viewerRole && p.viewerRole !== 'viewer') return true
+  return me.id === p.authorId
+}
 
 const localId = ref<string | null>(props.id ?? null)
 const localTitle = ref<string>('')
@@ -107,6 +131,27 @@ const parentPage = computed(() => {
   return pagesStore.getPage(pid) ?? null
 })
 
+/* Phase B 页面级限制 dialog —— EditView 始终有权能编辑,就一定有 canManage
+ * 三选一(作者 / space-admin / global admin),所以这里不用启发式 gate,
+ * 按钮直接按 isExisting 显示(新建页没 server id 之前 dialog 也存不下限制,
+ * 仍要把按钮藏掉,避免点了得到空状态)。save 成功回调 patch 到 pagesStore,
+ * 跟 ReadView 同源。 */
+const restrictionsOpen = ref(false)
+/** Phase D: 公开分享 dialog 开关。EditView 里是 owner / admin 才有意义
+ *  (新建未存的页没有 pageId,后端路由会 404)。isExisting 已经把这种情况
+ *  挡掉。 */
+const shareOpen = ref(false)
+function onRestrictionsSaved(flags: {
+  hasViewRestriction: boolean
+  hasEditRestriction: boolean
+}) {
+  if (!localId.value) return
+  pagesStore.patchPage(localId.value, {
+    hasViewRestriction: flags.hasViewRestriction,
+    hasEditRestriction: flags.hasEditRestriction,
+  })
+}
+
 /** 面包屑链路(根 → 当前页)+ 折叠渲染。读 pageId(localId 或 parentId,
  *  新建页时 parentId 给定但 page 自身还没在 store 里)。
  *
@@ -182,36 +227,45 @@ const bylineCreatedAt = computed(() => {
   return d.toLocaleDateString('zh-CN')
 })
 
+function hydrateExistingPage(p: PageNode): void {
+  localId.value = p.id
+  localTitle.value = p.title
+  localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+  localHTML.value = p.contentHTML ?? EMPTY_HTML
+  lastSavedTitle.value = p.title
+  lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
+  lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
+  isDirty.value = false
+  hasUnsnapshottedEdits.value = false
+  setActivePageId(p.id)
+  requestAnimationFrame(() => titleInputRef.value?.focus())
+}
+
 onMounted(async () => {
   // hydration 抑制:local refs 被首次灌值前置真,消费掉 watcher 的第一次
   // (hydration)触发,避免空打开凭空 PATCH 出 noise UPDATE。
   justHydrated = true
   if (props.id) {
-    const p = pagesStore.getPage(props.id)
-    if (p) {
-      localId.value = p.id
-      localTitle.value = p.title
-      localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
-      localHTML.value = p.contentHTML ?? EMPTY_HTML
-      // Stage 8: prime dedup baseline from the loaded page so the very
-      // first autosave (if it fires before any edit) is recognized as a
-      // no-op and skipped.
-      lastSavedTitle.value = p.title
-      lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
-      lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
-      isDirty.value = false
-      // 进入编辑页不需要立刻打 checkpoint —— hasUnsnapshottedEdits 必须 false,
-      // 否则 idle timer fire 时会打一个「啥都没改」的 version。
-      hasUnsnapshottedEdits.value = false
-      // Stage 6: make this page id available to the Mention extension's
-      // Suggestion plugin so @-mentions resolve against THIS page's space,
-      // not the last-edited page. We re-set it whenever localId changes too
-      // (see watch below) so PATCH-then-replace-title flows stay correct.
-      setActivePageId(p.id)
-      // 进入编辑页直接聚焦标题,用户不用先点一下
-      // 等下一帧让 Tiptap 完成挂载,避免抢焦点导致 editor blur
-      requestAnimationFrame(() => titleInputRef.value?.focus())
+    try {
+      const path = `/pages/${encodeURIComponent(props.id)}`
+      invalidatePath('GET', path)
+      const fetched = await api.pages.get(props.id)
+      const idx = pagesStore.pages.findIndex((row) => row.id === fetched.id)
+      if (idx >= 0) pagesStore.pages[idx] = fetched
+      else pagesStore.pages.push(fetched)
+
+      if (!canEditPageNode(fetched)) {
+        await router.replace(`/p/${fetched.id}?readonly=1`)
+        return
+      }
+
+      hydrateExistingPage(fetched)
       return
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) {
+        await router.replace(`/p/${props.id}`)
+        return
+      }
     }
   }
   // Stage B.3: 新建页面用客户端 nanoid 立即跳,不等后端 round-trip。
@@ -578,6 +632,30 @@ onBeforeUnmount(() => {
           <span class="material-symbols-outlined icon-sm">cloud_done</span>
           已同步
         </div>
+        <!-- Phase B 限制 dialog 入口 —— EditView 总有 edit 权限,按钮无条
+             件显示(isExisting = 有 server id 才有意义,新建未存盘阶段不显示
+             避免点了拿到空限制)。跟 ReadView 用同一个 PageRestrictionsDialog
+             实例,Modal 自身 Teleport body 不冲突。 -->
+        <button
+          v-if="isExisting"
+          class="btn"
+          type="button"
+          title="配置查看 / 编辑限制"
+          @click="restrictionsOpen = true"
+        >
+          <span class="material-symbols-outlined icon-md">lock</span>
+          限制
+        </button>
+        <button
+          v-if="isExisting"
+          class="btn"
+          type="button"
+          title="创建公开分享链接"
+          @click="shareOpen = true"
+        >
+          <span class="material-symbols-outlined icon-md">share</span>
+          分享
+        </button>
         <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
       </div>
     </div>
@@ -661,6 +739,25 @@ onBeforeUnmount(() => {
         :alt="lightbox.alt"
         :filename="lightbox.filename"
         @close="closeLightbox"
+      />
+
+      <!-- Phase B 页面级限制 dialog;新建页(isExisting=false)时 localId
+           还没拿到,不挂载避免 dialog 拿空 id。saved 事件回写 store 标志,
+           跟 ReadView 同一来源。 -->
+      <PageRestrictionsDialog
+        v-if="isExisting"
+        v-model:open="restrictionsOpen"
+        :page-id="localId!"
+        :page-title="localTitle"
+        @saved="onRestrictionsSaved"
+      />
+      <!-- Phase D 公开分享 dialog:同 PageRestrictionsDialog,只在已
+           存在的页上挂(同 isExisting 条件)。 -->
+      <ShareDialog
+        v-if="isExisting"
+        v-model:open="shareOpen"
+        :page-id="localId!"
+        :page-title="localTitle"
       />
     </div>
 

@@ -32,12 +32,17 @@ import { attachmentsRouter } from './routes/attachments'
 import { searchRouter } from './routes/search'
 import { authRouter } from './routes/auth'
 import { spacesRouter } from './routes/spaces'
+import { spacePermissionsRouter } from './routes/spacePermissions'
+import { pageRestrictionsRouter } from './routes/pageRestrictions'
+import { pageSharesRouter } from './routes/pageShares'
+import { publicSharesRouter } from './routes/publicShares'
 import { commentsRouter } from './routes/comments'
 import { notificationsRouter } from './routes/notifications'
 import { adminUsersRouter } from './routes/adminUsers'
 import { adminGroupsRouter } from './routes/adminGroups'
 import { adminSpacesRouter } from './routes/adminSpaces'
 import { adminSettingsRouter } from './routes/adminSettings'
+import { adminAuditRouter } from './routes/adminAudit'
 import { usersRouter } from './routes/users'
 import { avatarRawRouter } from './routes/avatarRaw'
 import { avatarPresetsRouter } from './routes/avatarPresets'
@@ -73,6 +78,10 @@ app.route('/api/user-avatars', avatarRawRouter)
 // 同 avatarRaw 一样,头像元数据对外公开,放在 requireAuth 之前。
 app.route('/api', avatarPresetsRouter)
 
+// Phase D: 公开分享 GET —— 匿名访问。必须放在 requireAuth 之前,
+// 否则被全局 gate 兜走变 401。mount 顺序敏感,见 plan §D.4 #13。
+app.route('/api', publicSharesRouter)
+
 // Everything else requires a valid session.
 app.use('/api/*', requireAuth)
 
@@ -81,11 +90,23 @@ app.route('/api/pages', pagesRouter)
 // grouped with the pages domain (versions + labels are page-scoped).
 app.route('/api/pages', pageVersionsRouter)
 app.route('/api/pages', pageLabelsRouter)
+// Phase B: 页面级 view/edit 限制(挂在 /api/pages 同前缀,跟 pagesRouter
+// 共享 /api/pages/:id/restrictions 这类路径)。router 内部 requireAuth +
+// canManageRestrictions(作者 / space-admin / global admin 三选一)细判,
+// 跟 pagesRouter 职责分开。
+app.route('/api/pages', pageRestrictionsRouter)
+// Phase D: 公开链接管理(POST/GET/DELETE /api/pages/:id/share[/...]).
+// 挂在 /api/pages 同前缀,跟 pageRestrictions 对称;需 auth + edit-access。
+app.route('/api/pages', pageSharesRouter)
 // /api/labels is mounted from the same router instance — Hono supports
 // mounting the same router at multiple prefixes.
 app.route('/api/labels', pageLabelsRouter)
 app.route('/api/attachments', attachmentsRouter)
 app.route('/api/spaces', spacesRouter)
+// Phase A:空间角色管理(挂在 /api/spaces 同前缀,跟 spacesRouter 共用
+// /api/spaces/:id/permissions 这类路径)。router 内部用 requireAuth
+// + canAdminSpace 二级判定,跟 spacesRouter(读 visibility 用)职责分开。
+app.route('/api/spaces', spacePermissionsRouter)
 app.route('/api/comments', commentsRouter)
 app.route('/api/notifications', notificationsRouter)
 app.route('/api/admin/users', adminUsersRouter)
@@ -93,6 +114,8 @@ app.route('/api/admin/groups', adminGroupsRouter)
 app.route('/api/admin/spaces', adminSpacesRouter)
 // P1-8: admin-only settings (trash retention, etc).
 app.route('/api/admin/settings', adminSettingsRouter)
+// Phase C: admin-only 权限变更审计日志。
+app.route('/api/admin', adminAuditRouter)
 // P1-6: self-service user routes (current user profile read/write).
 // Mounted at /api/users, AFTER the global requireAuth gate.
 app.route('/api/users', usersRouter)

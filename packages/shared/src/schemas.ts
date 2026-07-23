@@ -126,6 +126,30 @@ export const PageNodeSchema = z.object({
    * 字段让作者区分已发布 vs 草稿(给个「未发布」chip),Sidebar 默认不
    * 显示该字段(列表里只剩已发布的 row,没必要重复)。 */
   firstPublishedAt: z.number().int().positive().nullable().optional(),
+  /**
+   * Phase B 页面级 view 限制标记 —— 服务端 EXISTS 子查询
+   * `(SELECT 1 FROM page_restrictions WHERE page_id=? AND kind='view')`。
+   * 用来让 Sidebar / 列表 UI 渲染「🔒 限制中」chip,无需拉完整 allow-list。
+   * 注意:这不是「我能读吗」的判断,只是「此页是否配置了限制」的元信息
+   * —— 真正的可读性走 permissions.ts canReadPage(由后端路由在 404/200
+   * 之间直接表达)。Optional:fallback 路径 / 老 cache 没填时为 undefined,
+   * UI fallback 到 false。 */
+  hasViewRestriction: z.boolean().optional(),
+  /** Phase B 页面级 edit 限制标记 —— 与 hasViewRestriction 同构,
+   * 用来在 ReadView / EditView 头部显示「🔒 受编辑限制」chip。 */
+  hasEditRestriction: z.boolean().optional(),
+  /**
+   * 当前用户在该 page 所属空间的 effective role(viewer/editor/admin),
+   * 由服务端 `getEffectiveSpaceRolesForUser` 注入。null = 无访问权
+   * (在 list 路径上不会出现,只在 fallback 路径或老 cache 可能为 null)。
+   *
+   * UI 用它 gate 编辑/+ 创建/复制/移动/删除按钮(避免 viewer 点了
+   * 之后才被后端 404)。ReadView 的编辑按钮 + PageTree 的写操作 +
+   * HomeView 空间根的 + 新建 全部走 `page.viewerRole` 判读。
+   * 作者本人(author bypass)的 canEdit 仍由 UI 端用 authorId === me.id
+   * 短路补充。
+   */
+  viewerRole: z.enum(['viewer', 'editor', 'admin']).nullable().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */
@@ -171,7 +195,7 @@ export const UserSchema = z.object({
 export const UserGroupSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(64),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).nullable().optional(),
   createdAt: z.number().int().positive(),
   /** list 路径聚合返,代表 user_group_members 行数。
    *  `:id` 路径同时还返 memberIds[];list 因为不返 ids,所以才有这个 count 字段。 */
@@ -179,11 +203,39 @@ export const UserGroupSchema = z.object({
   memberIds: z.array(z.string()).optional(),
 })
 
+/* ---------- Phase A: Space role grants (Confluence 风格空间角色) ----------
+ *  注意位置:SpaceGrantsSchema 必须在 SpaceSchema 之前定义,因为后者
+ *  把 `accessGrants: SpaceGrantsSchema.optional()` 挂在自己的字段上
+ *  (TS 顶层 const 不 hoist,会撞 TDZ)。SetSpacePermissionsInputSchema
+ *  跟它的子 schema 跟到这里一并定义。*/
+
+export const SpaceRoleSchema = z.enum(['viewer', 'editor', 'admin'])
+export const PrincipalKindSchema = z.enum(['user', 'group', 'anonymous'])
+
+export const SpaceGroupGrantSchema = z.object({
+  groupId: z.string().min(1).max(64),
+  role: SpaceRoleSchema,
+  grantedBy: z.string().nullable(),
+  grantedAt: z.number().int().nonnegative(),
+})
+
+export const SpaceUserGrantSchema = z.object({
+  userId: z.string().min(1).max(64),
+  role: SpaceRoleSchema,
+  grantedBy: z.string().nullable(),
+  grantedAt: z.number().int().nonnegative(),
+})
+
+export const SpaceGrantsSchema = z.object({
+  groups: z.array(SpaceGroupGrantSchema),
+  users: z.array(SpaceUserGrantSchema),
+})
+
 /** Space schema */
 export const SpaceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(64),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).nullable().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/, '颜色格式必须是 #RGB 或 #RRGGBB'),
   icon: z.string().max(40).optional(),
   kind: z.enum(['personal', 'shared']).optional(),
@@ -192,6 +244,10 @@ export const SpaceSchema = z.object({
   updatedAt: z.number().int().positive(),
   accessVia: z.enum(['member']).optional(),
   accessGroupIds: z.array(z.string()).optional(),
+  /** Phase A — 完整结构化 grants(groups + users,每条带 role/grantedBy/grantedAt)。
+   *  仅 admin 路径返回;非 admin 永远 undefined(管理元信息不外泄)。
+   *  跟 `accessGroupIds`(legacy,只列 groupId)并存,后者继续保留向后兼容。 */
+  accessGrants: SpaceGrantsSchema.optional(),
   /** 该空间下的非删除页数,由 GET /api/spaces 与 /api/admin/spaces 一并返回,
    *  避免前端为了渲染卡片再发一次 pages.list。 */
   pageCount: z.number().int().nonnegative().optional(),
@@ -202,6 +258,12 @@ export const SpaceSchema = z.object({
   /** 仅 admin 路径 + kind='personal' 时返:所有者的显示名。
    *  避免前端为每个 personal space 再发一次 users/:id。 */
   ownerName: z.string().min(1).optional(),
+  /**
+   * 当前用户在该 space 的 effective role(viewer/editor/admin),由
+   * `getEffectiveSpaceRolesForUser` 注入。null = 无访问权(实际不会出
+   * 现在 list 路径)。UI 用它 gate 空间根的 + 新建页面按钮。
+   */
+  viewerRole: z.enum(['viewer', 'editor', 'admin']).nullable().optional(),
 })
 
 /* ---------- Auth API 输入 schema ---------- */
@@ -349,6 +411,119 @@ export const UpdateSpaceInputSchema = z.object({
 export const SetSpaceAccessInputSchema = z.object({
   groupIds: z.array(z.string()),
 })
+
+/* ---------- Phase A: Space role grants input schemas (DTO 已在 SpaceSchema 之前定义) ----------
+ *  这里只放 input / response schema(GET / PUT / POST 的 body),不重复
+ *  定义 SpaceGrantsSchema / SpaceRoleSchema 等(已经提前到 SpaceSchema
+ *  之前,避免 SpaceSchema.accessGrants 引用时撞 TDZ)。*/
+
+/** PUT /api/spaces/:id/permissions 整组替换 body。groups/users 都可选,至少
+ *  一个非空数组(否则「不需要授权」状态等同于保留旧数据,语义模糊 —— 后端
+ *  refine 拒绝空 body,前端走「全删」也要显式传空数组 + 显式给另一侧)。 */
+export const SetSpacePermissionsInputSchema = z
+  .object({
+    groups: z
+      .array(
+        z.object({
+          groupId: z.string().min(1).max(64),
+          role: SpaceRoleSchema,
+        }),
+      )
+      .optional(),
+    users: z
+      .array(
+        z.object({
+          userId: z.string().min(1).max(64),
+          role: SpaceRoleSchema,
+        }),
+      )
+      .optional(),
+  })
+  .refine(
+    (d) =>
+      (d.groups !== undefined && d.groups.length > 0) ||
+      (d.users !== undefined && d.users.length > 0),
+    { message: '至少需要授权一个用户或组' },
+  )
+
+/** POST /api/spaces/:id/permissions/groups/:groupId 与 .../users/:userId 的 body。
+ *  单行 UPSERT,角色必须合法;admin 角色 + principal_kind=group 在后端
+ *  assertNotAdminToGroup 拒绝(400 admin_role_to_group)。 */
+export const UpsertGroupGrantInputSchema = z.object({
+  role: SpaceRoleSchema,
+})
+export const UpsertUserGrantInputSchema = z.object({
+  role: SpaceRoleSchema,
+})
+
+/* ---------- Phase B: page-level restrictions (Confluence 风格) ----------
+ *  页面级 view / edit 限制。整组替换走 PUT /api/pages/:id/restrictions,
+ *  单行 UPSERT 走 POST .../restrictions/{view|edit}/{users|groups}/:id。
+ *  GET 端点返完整结构(含 grantedBy/grantedAt 元信息),便于 UI 展示
+ *  「谁在什么时候加的限制」。 */
+
+export const PageRestrictionKindSchema = z.enum(['view', 'edit'])
+
+/** 单条 allow-list 项。principalKind 区分 user(单个用户) / group(整组)。
+ *  注意:这里 principal 字段对外只暴露主 id + kind,grantedBy / grantedAt
+ *  是「元信息」(谁在什么时候授予的),便于 UI 展示但不属于契约核心。 */
+export const PageRestrictionSchema = z.object({
+  principalKind: z.enum(['user', 'group']),
+  principalId: z.string().min(1).max(64),
+  grantedBy: z.string().nullable(),
+  grantedAt: z.number().int().nonnegative(),
+})
+
+/** 单 page 的完整限制结构。view / edit 各自的用户 / 组列表。
+ *  空数组 = 该 kind 没限制(回退到 space 角色判定)。与
+ *  `hasViewRestriction` / `hasEditRestriction`(PageNode 上的 boolean
+ *  标记)语义对齐:那个是"是否有任何限制"的元信息,这个是 allow-list 全量。 */
+export const PageRestrictionsSchema = z.object({
+  view: z.array(PageRestrictionSchema),
+  edit: z.array(PageRestrictionSchema),
+})
+
+/** PUT /api/pages/:id/restrictions 整组替换 body。view / edit 都可选。
+ *  两者都空(或省略)= 清空该页所有限制(full-replace 语义,后端 DELETE
+ *  全部后不 INSERT)。这是 dialog「移除全部限制」保存的自然路径,所以
+ *  不做「至少一个非空」的 refine —— 清空是合法操作。 */
+export const SetPageRestrictionsInputSchema = z.object({
+  view: z.array(PageRestrictionSchema).optional(),
+  edit: z.array(PageRestrictionSchema).optional(),
+})
+
+/** POST /api/pages/:id/restrictions/{view|edit}/{users|groups}/:id 的 body。
+ *  路径已经指定了 kind + principalKind + principalId,body 只携带可选的
+ *  grantedBy(留后端从 c.var.user.id 填,前端不需要主动传)。这里保留
+ *  schema 形态以便未来扩展(例如附加过期时间、备注等)。 */
+export const UpsertPageRestrictionInputSchema = z
+  .object({})
+  .optional()
+
+/** GET /api/pages/:id/restrictions/candidates 的响应。给限制 dialog 的
+ *  people/group picker 用 —— 因为管理限制的人可能只是页面作者(非全局
+ *  admin),无法调 admin.users.list / admin.groups.list,所以限制路由自带
+ *  一个受 canManageRestrictions 保护的候选查询。返回全部活跃用户 + 非个人
+ *  组(pg-* 排除),前端做本地过滤。 */
+export const RestrictionCandidateUserSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(64),
+  email: z.string().email(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/),
+  avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  avatarRef: z.string().min(1).max(64).nullable().optional(),
+})
+export const RestrictionCandidateGroupSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(64),
+  description: z.string().nullable().optional(),
+})
+export const RestrictionCandidatesSchema = z.object({
+  users: z.array(RestrictionCandidateUserSchema),
+  groups: z.array(RestrictionCandidateGroupSchema),
+})
+
+/* ---------- Comments / Notifications (Stage 6) ---------- */
 
 /* ---------- Comments / Notifications (Stage 6) ---------- */
 
@@ -685,6 +860,26 @@ export type CreateSpaceInput = z.infer<typeof CreateSpaceInputSchema>
 export type UpdateSpaceInput = z.infer<typeof UpdateSpaceInputSchema>
 export type SetSpaceAccessInput = z.infer<typeof SetSpaceAccessInputSchema>
 
+// Phase A — space role grants
+export type SpaceRole = z.infer<typeof SpaceRoleSchema>
+export type PrincipalKind = z.infer<typeof PrincipalKindSchema>
+export type SpaceGroupGrant = z.infer<typeof SpaceGroupGrantSchema>
+export type SpaceUserGrant = z.infer<typeof SpaceUserGrantSchema>
+export type SpaceGrants = z.infer<typeof SpaceGrantsSchema>
+export type SetSpacePermissionsInput = z.infer<typeof SetSpacePermissionsInputSchema>
+export type UpsertGroupGrantInput = z.infer<typeof UpsertGroupGrantInputSchema>
+export type UpsertUserGrantInput = z.infer<typeof UpsertUserGrantInputSchema>
+
+// Phase B — page-level restrictions
+export type PageRestrictionKind = z.infer<typeof PageRestrictionKindSchema>
+export type PageRestriction = z.infer<typeof PageRestrictionSchema>
+export type PageRestrictions = z.infer<typeof PageRestrictionsSchema>
+export type SetPageRestrictionsInput = z.infer<typeof SetPageRestrictionsInputSchema>
+export type UpsertPageRestrictionInput = z.infer<typeof UpsertPageRestrictionInputSchema>
+export type RestrictionCandidateUser = z.infer<typeof RestrictionCandidateUserSchema>
+export type RestrictionCandidateGroup = z.infer<typeof RestrictionCandidateGroupSchema>
+export type RestrictionCandidates = z.infer<typeof RestrictionCandidatesSchema>
+
 /* ---------- Dashboard ---------- */
 export const DashboardPayloadSchema = z.object({
   mentions: z.array(NotificationSchema),
@@ -898,3 +1093,126 @@ export const UpdateAdminSettingInputSchema = z.object({
   value: z.number().int().min(0).max(36500),
 })
 export type UpdateAdminSettingInput = z.infer<typeof UpdateAdminSettingInputSchema>
+
+/* ─── Phase C 审计日志 ──────────────────────────────────────────────── */
+
+/** 11 个事件类型白名单 —— 与 DB CHECK 约束 + auditLog.ts 的 AuditKind 同步。 */
+export const AuditKindSchema = z.enum([
+  'space_grant_set',
+  'space_grant_add',
+  'space_grant_remove',
+  'page_restriction_set',
+  'page_restriction_add',
+  'page_restriction_remove',
+  'page_share_create',
+  'page_share_revoke',
+  'space_deleted',
+  'group_deleted',
+  'user_anonymized',
+])
+export type AuditKind = z.infer<typeof AuditKindSchema>
+
+/** target_kind 五个值,覆盖权限目标、公开链接和资源生命周期事件。 */
+export const AuditTargetKindSchema = z.enum(['space', 'page', 'page_share', 'group', 'user'])
+export type AuditTargetKind = z.infer<typeof AuditTargetKindSchema>
+
+/** GET /api/admin/audit 查询参数。所有字段可选;不传 = 不过滤。 */
+export const AuditListQuerySchema = z.object({
+  kind: AuditKindSchema.optional(),
+  actorId: z.string().min(1).max(64).optional(),
+  targetKind: AuditTargetKindSchema.optional(),
+  targetId: z.string().min(1).max(64).optional(),
+  /** 时间段左闭右开,毫秒;Date.now() 形态。 */
+  from: z.coerce.number().int().nonnegative().optional(),
+  to: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+})
+export type AuditListQuery = z.infer<typeof AuditListQuerySchema>
+
+/** 一行 audit 记录;payload 是 JSONB 自由形态(约定 {before, after}),这里
+ *  留 unknown —— 前端按 kind 分支展示。actor 的展示字段由后端 LEFT JOIN users
+ *  平铺(denormalize),不再二次拉取。 */
+export const AuditEntrySchema = z.object({
+  id: z.string(),
+  kind: AuditKindSchema,
+  actorId: z.string(),
+  actorName: z.string().nullable(),
+  actorEmail: z.string().nullable(),
+  actorColor: z.string().nullable(),
+  actorAvatarKind: z.enum(['preset', 'custom']).nullable(),
+  actorAvatarRef: z.string().nullable(),
+  targetKind: AuditTargetKindSchema,
+  targetId: z.string(),
+  createdAt: z.number().int().nonnegative(),
+  payload: z.unknown().nullable(),
+})
+export type AuditEntry = z.infer<typeof AuditEntrySchema>
+
+export const AuditListResponseSchema = z.object({
+  total: z.number().int().nonnegative(),
+  entries: z.array(AuditEntrySchema),
+})
+export type AuditListResponse = z.infer<typeof AuditListResponseSchema>
+
+/* ─── Phase D 公开链接分享 ──────────────────────────────────────────── */
+
+/** POST /api/pages/:id/share body。expiresInDays 可选:undefined = 永不过期,
+ *  0 = 立即过期(7 天后仍可读,只是当前 post 之后 7 天到期)。null 显式表示
+ *  「永不过期」,UI 用 explicit 区分「不过期」checkbox 状态。 */
+export const CreateShareInputSchema = z.object({
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+})
+export type CreateShareInput = z.infer<typeof CreateShareInputSchema>
+
+/** 单条 share 元信息(不含 tokenHash)。ShareDialog 列表 / 撤销按钮用。 */
+export const ShareRowSchema = z.object({
+  id: z.string(),
+  pageId: z.string(),
+  createdBy: z.string(),
+  createdByName: z.string().nullable(),
+  createdAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().nonnegative().nullable(),
+  revokedAt: z.number().int().nonnegative().nullable(),
+  revokedBy: z.string().nullable(),
+  revokedByName: z.string().nullable(),
+  lastAccessedAt: z.number().int().nonnegative().nullable(),
+})
+export type ShareRow = z.infer<typeof ShareRowSchema>
+
+/** GET /api/pages/:id/shares 响应。 */
+export const ShareListResponseSchema = z.object({
+  shares: z.array(ShareRowSchema),
+})
+export type ShareListResponse = z.infer<typeof ShareListResponseSchema>
+
+/** POST /api/pages/:id/share 响应。`token` 是**明文,只此一次**——丢失即
+ *  失效(再 create 新的 / revoke 旧的)。前端展示完要立刻复制,DB 里只有
+ *  sha256 hash,无法重出。 */
+export const CreateShareResponseSchema = z.object({
+  id: z.string(),
+  token: z.string(),
+  url: z.string(),
+  expiresAt: z.number().int().nonnegative().nullable(),
+  createdAt: z.number().int().nonnegative(),
+})
+export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
+
+/** GET /api/public/pages/:token 响应(public DTO)。无 authorEmail 等敏感
+ *  字段,保留 name/color/avatar 派生需要的字段。 */
+export const PublicPageSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  contentJSON: z.unknown(),
+  contentHTML: z.string(),
+  spaceId: z.string(),
+  spaceName: z.string(),
+  spaceColor: z.string().nullable(),
+  authorId: z.string(),
+  authorName: z.string().nullable(),
+  authorColor: z.string().nullable(),
+  authorAvatarKind: z.enum(['preset', 'custom']).nullable(),
+  authorAvatarRef: z.string().nullable(),
+  updatedAt: z.number().int().nonnegative(),
+})
+export type PublicPage = z.infer<typeof PublicPageSchema>

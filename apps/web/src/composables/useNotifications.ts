@@ -24,6 +24,7 @@
  * returned functions are what components consume.
  */
 import { watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 
@@ -90,16 +91,17 @@ export function useNotifications(): {
   if (!bootWatcherInstalled) {
     bootWatcherInstalled = true
     const auth = useAuthStore()
+    const route = useRoute()
     watch(
-      () => auth.isAuthed,
-      (v) => {
-        if (v) {
-          // Login: start polling + lazy first-load.
+      [() => auth.isAuthed, () => route.meta.public === true],
+      ([isAuthed, isPublic]) => {
+        if (!isAuthed) {
+          invalidate()
+        } else if (isPublic) {
+          stopPolling()
+        } else {
           startPolling()
           void ensureLoaded()
-        } else {
-          // Logout: stop + drop state.
-          invalidate()
         }
       },
       { immediate: true },
@@ -108,7 +110,11 @@ export function useNotifications(): {
     // notifications promptly after backgrounding.
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
+        if (
+          document.visibilityState === 'visible' &&
+          auth.isAuthed &&
+          route.meta.public !== true
+        ) {
           void tickPoll()
         }
       })

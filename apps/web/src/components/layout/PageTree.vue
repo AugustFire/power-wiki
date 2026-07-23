@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
+import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePageTreeDrag, type DropHint } from '@/composables/usePageTreeDrag'
 import PublishToSpaceMenu from './PublishToSpaceMenu.vue'
@@ -19,6 +20,7 @@ const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const { confirm } = useConfirm()
 
 const depth = computed(() => props.depth ?? 0)
@@ -149,6 +151,12 @@ function openImportModal(): void {
 
 function onDragStart(e: DragEvent) {
   if (isRenaming.value) {
+    e.preventDefault()
+    return
+  }
+  // 拖拽 = 移动 = 写操作;无编辑权(viewer 不是作者本人)直接拒拖,
+  // 避免拖到一半被后端 404。
+  if (!canEditPage.value) {
     e.preventDefault()
     return
   }
@@ -529,6 +537,39 @@ function promoteToRoot() {
 const hasLiveChildren = computed(() => props.node.liveDescendantCount > 0)
 
 /**
+ * Permission gate for ⋯ 菜单 + 拖拽。page-level viewerRole 来自
+ * `pagesStore.getPage(node.id)?.viewerRole`(server 注入,见
+ * pages.ts attachViewerRoles)。
+ *
+ *  - canEditSpace  : 空间级操作(创建同级/子页/提升根级/导入/跨 space
+ *                    移动) — editor+ 或 admin 才行。viewer 隐藏。
+ *  - canEditPage   : page 级操作(重命名/复制/删除) — editor+ 在该
+ *                    space 可对任何页操作;viewer 只能对自己的页用
+ *                    (author bypass,跟后端 canEditPage 对齐)。
+ *  - canDrag       : 拖拽 = 移动 = 写,等同 canEditPage(移动只能在本
+ *                    space 内 drag,跨 space 走 movePageToSpace 走另外
+ *                    路径;这里简化为 page 级 canEdit)。
+ */
+const canEditSpace = computed(() => {
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  const page = pagesStore.getPage(props.node.id)
+  if (!page) return false
+  return page.viewerRole === 'editor' || page.viewerRole === 'admin'
+})
+const canEditPage = computed(() => {
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  if (canEditSpace.value) return true
+  const page = pagesStore.getPage(props.node.id)
+  if (!page) return false
+  // viewer + 作者本人 = author bypass
+  return me.id === page.authorId
+})
+
+/**
  * Cross-space "发布到" UI: clicking "发布到..." in the ⋯ menu opens a
  * popover listing the user's accessible team spaces. The popover is
  * mounted conditionally as a sibling of the menu backdrop, anchored at
@@ -630,32 +671,33 @@ watch(isRenaming, (val) => {
     <template v-if="isMenuOpen">
       <div class="menu-backdrop" @click="uiStore.closeMenu()"></div>
       <div class="menu" :style="menuStyle" @click.stop>
-        <button class="menu-item" @click="addSibling">
+        <button v-if="canEditSpace" class="menu-item" @click="addSibling">
           <span class="material-symbols-outlined icon-md">add</span>
           <span>添加同级页面</span>
         </button>
-        <button class="menu-item" @click="addChild">
+        <button v-if="canEditSpace" class="menu-item" @click="addChild">
           <span class="material-symbols-outlined icon-md">subdirectory_arrow_right</span>
           <span>在此页下添加子页面</span>
         </button>
-        <button class="menu-item" v-if="node.parentId !== null" @click="promoteToRoot">
+        <button v-if="canEditSpace && node.parentId !== null" class="menu-item" @click="promoteToRoot">
           <span class="material-symbols-outlined icon-md">format_indent_decrease</span>
           <span>提升为根级</span>
         </button>
-        <div class="menu-sep"></div>
-        <button class="menu-item" @click="startRename">
+        <div v-if="canEditSpace || canEditPage" class="menu-sep"></div>
+        <button v-if="canEditPage" class="menu-item" @click="startRename">
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
-        <button class="menu-item" @click="openImportModal">
+        <button v-if="canEditSpace" class="menu-item" @click="openImportModal">
           <span class="material-symbols-outlined icon-md">upload_file</span>
           <span>导入 Markdown 到子级</span>
         </button>
-        <button class="menu-item" @click="duplicatePage(false)">
+        <button v-if="canEditPage" class="menu-item" @click="duplicatePage(false)">
           <span class="material-symbols-outlined icon-md">content_copy</span>
           <span>复制页面</span>
         </button>
         <button
+          v-if="canEditPage"
           class="menu-item"
           :disabled="!hasLiveChildren"
           :title="hasLiveChildren ? '复制此页面及其所有子页面' : '此页面没有子页可复制'"
@@ -680,8 +722,9 @@ watch(isRenaming, (val) => {
           <span class="material-symbols-outlined icon-md">{{ copyFlash === null ? 'link' : 'check' }}</span>
           <span>{{ copyFlash ?? '复制链接' }}</span>
         </button>
-        <div class="menu-sep"></div>
+        <div v-if="canEditPage" class="menu-sep"></div>
         <button
+          v-if="canEditPage"
           class="menu-item danger"
           :disabled="hasLiveChildren"
           :title="hasLiveChildren ? '请先删除子页面' : '删除此页面(可在回收站恢复)'"

@@ -4,24 +4,31 @@
 
 完整契约以 `@power-wiki/shared/src/schemas.ts` 的 zod schema 为准,所有路由用 `*.parse()` 在响应边界二次校验(防 schema 漂移)。
 
-`apps/api/src/index.ts` 挂载的 14 个 route mount(15 个 `app.route` 调用 —— `pageLabelsRouter` 同时挂到 `/api/pages` 和 `/api/labels`):
+`apps/api/src/index.ts` 挂载的 21 个 route mount(`app.route` 23 次调用 —— `pageLabelsRouter` 同时挂到 `/api/pages` 和 `/api/labels`,`avatarPresetsRouter` + `publicSharesRouter` 挂到 `/api`):
 
 | 路径前缀 | 路由文件 | 备注 |
 |---|---|---|
 | `/api/auth` | `routes/auth.ts` | 公开,sign-in / sign-out / session / reset-password |
+| `/api/user-avatars` | `routes/avatarRaw.ts` | M11 公开头像 raw proxy(同 username 一样对外公开,放在 requireAuth **之前**) |
+| `/api` | `routes/avatarPresets.ts` | M11 v2 公开预设清单(扫 `apps/web/public/avatars/` 同步给客户端) |
+| `/api` | `routes/publicShares.ts` | Phase D 公开分享 GET `/public/pages/:token`(匿名只读,在 requireAuth **之前**) |
 | `/api/pages` | `routes/pages.ts` | 页面 CRUD + tree + trash + publish + duplicate + move + snapshots + page_event 查询 |
 | `/api/pages` | `routes/pageVersions.ts` | 子路由,版本历史 + restore |
 | `/api/pages` + `/api/labels` | `routes/pageLabels.ts` | 子路由,挂两前缀;labels CRUD + 搜索 |
+| `/api/pages` | `routes/pageRestrictions.ts` | Phase B 页面级 view/edit 限制(单行 UPSERT + 整组 PUT) |
+| `/api/pages` | `routes/pageShares.ts` | Phase D 公开分享管理(auth + edit-access 三端点) |
 | `/api/attachments` | `routes/attachments.ts` | MinIO 附件 upload-url / finalize / list / raw / delete |
 | `/api/spaces` | `routes/spaces.ts` | 用户可见 space 列表 + 单个详情 |
+| `/api/spaces` | `routes/spacePermissions.ts` | Phase A 空间角色管理(per-user / per-group grant,viewer/editor/admin) |
 | `/api/comments` | `routes/comments.ts` | 评论 CRUD + mention-candidates(分页 list) |
 | `/api/notifications` | `routes/notifications.ts` | 通知 list / unread-count / mark-read / clear-all |
-| `/api/users` | `routes/users.ts` | 自服务 user profile(me 读写 + watched 列表 + recent 列表/清空 + me dashboard 聚合) |
+| `/api/users` | `routes/users.ts` | 自服务 user profile(me 读写 + watched 列表 + recent 列表/清空 + me dashboard 聚合 + 头像上传 presign / finalize) |
 | `/api/search` | `routes/search.ts` | 零中间件全文搜索 |
-| `/api/admin/users` | `routes/adminUsers.ts` | admin 后台用户管理 |
-| `/api/admin/groups` | `routes/adminGroups.ts` | admin 后台用户组管理 |
-| `/api/admin/spaces` | `routes/adminSpaces.ts` | admin 后台空间管理 |
+| `/api/admin/users` | `routes/adminUsers.ts` | admin 后台用户管理(CRUD + disable / enable / reset-password / **anonymize** + **impact**) |
+| `/api/admin/groups` | `routes/adminGroups.ts` | admin 后台用户组管理(CRUD + members + **impact** + DELETE 拒绝 pg-*) |
+| `/api/admin/spaces` | `routes/adminSpaces.ts` | admin 后台空间管理(legacy `/access` 保留) |
 | `/api/admin/settings` | `routes/adminSettings.ts` | admin 后台全局设置(按 key 读 / 写) |
+| `/api/admin` | `routes/adminAudit.ts` | Phase C 权限变更审计日志(GET /audit?kind=&targetKind=&actorId=&from=&to=) |
 
 ## Auth(`/api/auth/*`,公开)
 
@@ -57,16 +64,62 @@
 | DELETE | `/:id/labels/:label` | 普通 | → 204 |
 | GET    | `/labels/search` | 普通 | `?q=&limit=`(max 50,default 20)→ `string[]`,挂 `/api/labels/search` 同一路由 |
 
+### Page Restrictions(Phase B,挂在 `/api/pages` 同前缀)
+
+Confluence 风格 view / edit 限制。`requireAuth` + `canManageRestrictions`(作者 / space-admin / global admin / space-editor 四选一)。view 限制 + 公开分享互斥,创建 share 时校验 view 限制存在性 → 400 `share_forbidden`。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET    | `/:id/restrictions` | 返 `{view, edit}` 完整结构(含 grantedBy/grantedAt 元信息);读限制需要 `canReadPage` |
+| GET    | `/:id/restrictions/candidates` | 给限制 dialog 的 people / group picker;返回全部 active users + 非 personal groups(pg-* 排除);`canManageRestrictions` 守 |
+| PUT    | `/:id/restrictions` | 整组替换,body `{view?: [], edit?: []}`(两者空 = 清空);事务内拍 before / after snapshot |
+| POST   | `/:id/restrictions/:kind/users/:userId` | body `{}`(可选 grantedBy),单行 UPSERT(`ON CONFLICT DO UPDATE` 幂等) |
+| DELETE | `/:id/restrictions/:kind/users/:userId` | 单行删;原行存在才写 audit `_remove` |
+| POST   | `/:id/restrictions/:kind/groups/:groupId` | body `{}`,单行 UPSERT |
+| DELETE | `/:id/restrictions/:kind/groups/:groupId` | 单行删 |
+
+### Page Shares(Phase D,挂在 `/api/pages` 同前缀)
+
+公开链接管理。`requireAuth` + `canEditPage OR canAdminSpace`(即 canManageRestrictions 同源)。明文 token **只此一次**出现在 `POST /share` 响应,DB 只存 `sha256(token)`。
+
+| Method | Path | 说明 |
+|---|---|---|
+| POST   | `/:id/share` | body `{expiresInDays?: 7\|30\|90\|null}`(null = 永不过期)→ 201 `{id, token, url, expiresAt, createdAt}`;**校验:** shared space(否则 400 `share_forbidden`)+ 无 view 限制(否则 400 `share_forbidden`)+ `deleted_at IS NULL` |
+| GET    | `/:id/shares` | → `{shares: ShareRow[]}`(DESC by createdAt;revoked / active 都返) |
+| DELETE | `/:id/share/:shareId` | → 204;若已 revoked → 400 `share_already_revoked`;**不**做 cascade(page purge 才扫 shares) |
+
+### Public Shares(Phase D,挂在 `/api` 同前缀,**无需 auth**)
+
+`publicSharesRouter` 挂在 `app.use('/api/*', requireAuth)` **之前**,匿名访问。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/public/pages/:token` | `sha256(token)` 命中 + `revoked_at IS NULL` + (`expires_at IS NULL OR > now`) + page `deleted_at IS NULL` + `spaces.kind='shared'`;任一失败 → 404;命中后 fire-and-forget 更新 `last_accessed_at`;`Cache-Control: public, max-age=60` |
+
 **`PATCH /:id` 永不打 `page_versions`** — version 只在 `POST /:id/snapshots` 边界打;EditView 30s idle + `flushPendingSave` 末尾各调一次。Retention 30 行复用 `apps/api/src/routes/pageVersions.ts` 的 `RETENTION`。
 
 ## Spaces(`/api/spaces`)
 
-普通用户;`/api/spaces/:id` 不可见返 404。**DTO 富化**:返回的 `SpaceNode` 含 `pageCount` / `childPageCount` / `lastPageUpdatedAt`,admin 路径额外带 `accessGroupIds`,personal space 路径额外带 `ownerName`(所有这些字段都在后端 `LEFT JOIN + GROUP BY` 算好,前端不需要 N+1)。
+普通用户;`/api/spaces/:id` 不可见返 404。**DTO 富化**:返回的 `SpaceNode` 含 `pageCount` / `childPageCount` / `lastPageUpdatedAt`,admin 路径额外带 `accessGroupIds` + `accessGrants`(Phase A 结构化 grants,group/user 每条带 role/grantedBy/grantedAt),personal space 路径额外带 `ownerName`(所有这些字段都在后端 `LEFT JOIN + GROUP BY` 算好,前端不需要 N+1)。
 
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/` | 当前用户可见 space 列表 |
 | GET | `/:id` | 单个,不可见返 404 |
+
+### Space Permissions(Phase A,挂在 `/api/spaces` 同前缀)
+
+`requireAuth` + 路由内 `me.isAdmin OR canAdminSpace` 二级判定。`role='admin'` 不能授给组(只能授具体 user,后端返 400 `admin_role_to_group`)。legacy `/api/admin/spaces/:id/access` 系列保留作 rollback。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET    | `/:id/permissions` | 返 `{groups, users}` 完整结构化 grants(admin 路径额外带 `grantedBy` / `grantedAt` 元信息) |
+| GET    | `/:id/permissions/candidates` | space-admin 用 —— 拿 `groups` + `users` 候选列表(非 admin 也能用,避免调 admin 路径) |
+| PUT    | `/:id/permissions` | 整组替换,body `{groups?: [{groupId, role}], users?: [{userId, role}]}`;refine 至少一个非空 |
+| POST   | `/:id/permissions/groups/:groupId` | body `{role}` 单行 UPSERT,idempotent;**role='admin' → 400** |
+| POST   | `/:id/permissions/users/:userId` | 同上(可授 admin);移除最后一个 user-admin → 409 `cannot_remove_last_admin` |
+| DELETE | `/:id/permissions/groups/:groupId` | 单行删,legacy `space_group_access` 行同事务迁移到 `space_role_grants role='editor'` |
+| DELETE | `/:id/permissions/users/:userId` | 同上 |
 
 ## Attachments(`/api/attachments`)
 
@@ -140,9 +193,10 @@
 | GET    | `/:id` | 单个 |
 | POST   | `/` | body `{email,name,role}` → 201 `{user, initialPassword}`(明文密码**仅此一次**返,前端 display 后清) |
 | PATCH  | `/:id` | 改基础字段(email / name / role / status) |
-| POST   | `/:id/disable` | 禁用 + 清 sessions(`killSessionsForUser`) |
+| POST   | `/:id/disable` | 禁用 + 清 sessions(`killSessionsForUser`);最后一个 admin → 409 `last_admin` |
 | POST   | `/:id/enable` | 启用 |
 | POST   | `/:id/reset-password` | 重置初始密码 + 清 sessions → 200 `{user, initialPassword}` |
+| POST   | `/:id/anonymize` | 改 name=「已注销用户」+ email=`{id}@anonymized.invalid` + status='disabled' + 清 avatar + sweep sessions / notifications / recent / watched / likes / group_memberships / space_grants(principal_kind='user');**不动** pages / comments(保留痕迹);audit `user_anonymized`;自删 → 409 `self_anonymize`;已 disabled user 二次调用 idempotent |
 
 ### Groups
 
@@ -152,7 +206,8 @@
 | POST   | `/` | 建组 |
 | GET    | `/:id` | 单个 |
 | PATCH  | `/:id` | 改名等 |
-| DELETE | `/:id` | 硬删(事务里先扫 `userGroupMembers` + `spaceGroupAccess`) |
+| DELETE | `/:id` | **拒绝** `pg-*`(个人组保护,→ 404 `not_found`);非 pg-* → 事务里 sweep `user_group_members` + `space_role_grants`(`principal_kind='group'`) |
+| GET    | `/:id/impact` | 删前影响评估 → `{memberCount, legacyGrantCount, roleGrantCount, restrictionCount}` 四项计数 |
 | POST   | `/:id/members` | body `{userId}` 加成员 |
 | DELETE | `/:id/members/:userId` | 移成员 |
 
@@ -162,12 +217,12 @@
 |---|---|---|
 | GET    | `/` | 全量列表(含 personal),DTO 同样有 `pageCount` / `childPageCount` / `lastPageUpdatedAt` |
 | POST   | `/` | body `{name,kind:'personal'\|'shared'}` → 201;`kind='personal'` 自动建 `pg-<userId>` 组并 grant 给该 user |
-| GET    | `/:id` | 单个;admin 路径额外带 `accessGroupIds`(完整 `pg-*` / 业务组列表) |
+| GET    | `/:id` | 单个;admin 路径额外带 `accessGroupIds` + `accessGrants`(完整 pg-* / 业务组列表 + 结构化 grants) |
 | PATCH  | `/:id` | 改名 / 改 owner 等 |
-| DELETE | `/:id` | 硬删(事务里先扫 `pages` + `spaceGroupAccess` + `comments` / `notifications` / `attachments` recursive) |
-| PUT    | `/:id/access` | 整组替换 access(事务) |
-| POST   | `/:id/access/:groupId` | 加一组 access |
-| DELETE | `/:id/access/:groupId` | 删一组 access |
+| DELETE | `/:id` | **拒绝** `personal`(→ 400 `personal_space_cannot_delete`);非空(有未删页)→ 409 `space_not_empty`;空 shared space → 事务里 sweep `pages` + `space_role_grants` + `comments` / `notifications` / `attachments` recursive |
+| PUT    | `/:id/access` | **legacy** 整组替换 access(保留作 rollback;Phase A 起写入时同事务迁到 `space_role_grants`) |
+| POST   | `/:id/access/:groupId` | legacy 加一组 access |
+| DELETE | `/:id/access/:groupId` | legacy 删一组 access |
 
 ### Settings
 
@@ -176,6 +231,16 @@
 | GET    | `/` | 全量 `admin_settings` 键值对(`key → value`) |
 | GET    | `/:key` | 单个 key → `{key, value, updatedAt, updatedBy}` |
 | PATCH  | `/:key` | body `{value}` → 200;写值 + 记录 `updatedBy=me.id, updatedAt=now` |
+
+### Audit(Phase C,挂在 `/api/admin` 同前缀)
+
+`requireAdmin` 兜底。append-only 后端,GET 是唯一入口,无 POST / PATCH / DELETE 暴露给 HTTP 层;**唯一写入路径**是 `recordPermissionAudit(tx, ...)`,在 mutation 路由的 `db.transaction()` 内调。
+
+11 个 `kind` 事件:Phase A 的 4 个(`space_grant_set` / `_add` / `_remove` + legacy 兼容)+ Phase B 的 3 个(`page_restriction_set` / `_add` / `_remove`)+ Phase D 的 2 个(`page_share_create` / `_revoke`)+ 资源生命周期的 3 个(`space_deleted` / `group_deleted` / `user_anonymized`,0029 迁移扩展 CHECK)。5 个 `target_kind`:`space` / `page` / `page_share` / `group` / `user`。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/audit?kind=&actorId=&targetKind=&targetId=&from=&to=&limit=&offset=` | 按 `created_at DESC` 排序的分页列表;actor LEFT JOIN `users` 平铺展示(name / email / color / avatar);payload JSONB 自由形态 `{before, after}`,前端按 kind 分支展示 |
 
 ## 错误响应规范
 
@@ -207,6 +272,17 @@
 | `size_mismatch` | 400 | attachments finalize 阶段 HeadObject size 与请求不符 |
 | `upload_not_found` | 404 | finalize 时 S3 上找不到对应 storageKey |
 | `storage_unavailable` | 503 | MinIO 不可达 / presign 失败 |
+| `admin_role_to_group` | 400 | POST `.../permissions/groups/:gid` body `role='admin'` |
+| `cannot_remove_last_admin` | 409 | DELETE 把最后一个 user-grant space-admin 干掉了 |
+| `page_restricted` | 403 | 不在 edit allow-list 但试图编辑 |
+| `view_restricted` | 403 | 不在 view allow-list 但试图 GET |
+| `share_forbidden` | 400 | POST share 时是 personal space 或有 view 限制 |
+| `share_already_revoked` | 400 | DELETE share 时已是 revoked 态 |
+| `share_invalid` / `share_revoked` / `share_expired` | 404 | GET public 失败原因(token 不存在 / 已撤销 / 已过期) |
+| `personal_space_cannot_delete` | 400 | DELETE `/admin/spaces/:id` 时 `kind='personal'` |
+| `space_not_empty` | 409 | DELETE `/admin/spaces/:id` 时有未删页 |
+| `last_admin` | 409 | disable / anonymize 最后一个 admin |
+| `self_anonymize` | 409 | 自己 anonymize 自己 |
 | `internal` | 500 | 未处理异常(全局 `app.onError` 兜底) |
 
 每个具体 code 在前端 `apps/web/src/lib/api.ts` 的 `ApiError` 类里有映射,banner 文案在 stores 端组装。

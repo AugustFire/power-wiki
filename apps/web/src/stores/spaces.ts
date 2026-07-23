@@ -12,7 +12,7 @@
  * the user can't actually access would just render an empty tree.
  */
 import { computed, ref, watch } from 'vue'
-import type { CreateSpaceInput, SetSpaceAccessInput, Space, UpdateSpaceInput } from '@power-wiki/shared'
+import type { CreateSpaceInput, Space, UpdateSpaceInput } from '@power-wiki/shared'
 import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 import { api } from '@/lib/api'
 import { readJSON, writeJSON } from '@/lib/storage'
@@ -164,12 +164,6 @@ export function useSpacesStore() {
     }
   }
 
-  async function setSpaceAccess(id: string, input: SetSpaceAccessInput): Promise<Space> {
-    const updated = await api.admin.spaces.setAccess(id, input)
-    upsert(updated)
-    return updated
-  }
-
   return {
     // state
     spaces: visible,
@@ -189,6 +183,5 @@ export function useSpacesStore() {
     createSpace,
     updateSpace,
     deleteSpace,
-    setSpaceAccess,
   }
 }

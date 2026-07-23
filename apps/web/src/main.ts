@@ -39,8 +39,12 @@ setUnauthorizedHandler(async () => {
   auth.mustResetPassword = false
   auth.personalSpaceId = null
   auth.resetSessionState()
-  const redirect = router.currentRoute.value.fullPath
-  await router.push({ name: 'login', query: { redirect } })
+  const currentRoute = router.currentRoute.value
+  if (currentRoute.meta.public) return
+  await router.push({
+    name: 'login',
+    query: { redirect: currentRoute.fullPath },
+  })
 })
 
 /**

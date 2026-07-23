@@ -59,6 +59,17 @@ async function onSubmit() {
     if (!dest.startsWith('/manager')) {
       await spacesStore.init()
       await pagesStore.init()
+    } else {
+      // Cold-boot path in main.ts handles the spaces+pages init when the user
+      // reloads already-authed. But on the post-reset handoff that callback
+      // has already returned early (user wasn't authed at boot, only after
+      // resetPassword succeeds). Without this call, /manager/* dests land
+      // on a blank page because `pagesStore.loaded` stays false and App.vue's
+      // `<RouterView v-else-if="loaded">` gate keeps the manager view hidden.
+      // spacesStore isn't needed in /manager/* (TopBar SpaceSwitcher handles
+      // its own init via `useSpacesStore().init()` lazily, and any later
+      // navigation to / will re-trigger that anyway).
+      pagesStore.markLoaded()
     }
     void router.replace(dest)
   } catch (e) {

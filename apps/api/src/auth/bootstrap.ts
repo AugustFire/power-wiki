@@ -20,6 +20,11 @@
  *  5. Personal space backfill. For every user without a `kind='personal'`
  *     space, create one (1-person group + space + access row + welcome page).
  *     Idempotent — `ensurePersonalSpace` is a no-op when one already exists.
+ *
+ *  6. Phase D — anonymous sentinel user('anon', status='disabled')。幂等
+ *     INSERT ON CONFLICT DO NOTHING。公开分享链接的匿名主体走 user-kind
+ *     路径时复用这一行。理论上 migration 0025 已经写过,这里再 idempotent
+ *     写一次保护「老库升级」场景(虽然本项目还没到那个阶段)。
  */
 import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -28,6 +33,7 @@ import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace } from '../lib/ensurePersonalSpace'
 import { hashPassword } from './password'
 import { purgeExpiredSessions } from './session'
+import { ANONYMOUS_USER_ID } from './anonymousSession'
 
 export interface BootstrapResult {
   adminCreated: boolean
@@ -145,6 +151,27 @@ export async function runBootstrap(): Promise<BootstrapResult> {
       `[api] bootstrap: ${personalSpacesProvisioned} personal space(s) provisioned`,
     )
   }
+
+  // ─── 6. Anonymous sentinel (Phase D) ─────────────────────────────────
+  // 幂等 INSERT。理论上 migration 0025 已经写过,这里兜底防止 bootstrap
+  // 在 migration 之前跑(实际上 API 启动先 migrate 再 bootstrap,但保险)。
+  await db
+    .insert(users)
+    .values({
+      id: ANONYMOUS_USER_ID,
+      email: 'anonymous@power-wiki.local',
+      name: '匿名访问',
+      passwordHash: '',
+      role: 'user',
+      status: 'disabled',
+      color: '#7A869A',
+      createdAt: 1783500000000,
+      updatedAt: 1783500000000,
+      lastLoginAt: null,
+      avatarKind: null,
+      avatarRef: null,
+    })
+    .onConflictDoNothing()
 
   return {
     adminCreated,

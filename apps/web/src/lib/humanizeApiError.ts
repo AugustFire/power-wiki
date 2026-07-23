@@ -59,12 +59,31 @@ const CODE_MESSAGES: Record<string, string> = {
   space_required: '请先选择一个空间',
   space_not_found: '空间不存在',
   space_not_empty: '空间下还有页面,无法删除',
+  personal_space_cannot_delete: '个人空间不能直接删除,请改用「匿名化该用户」清理',
+
+  // Phase A — 空间角色管理
+  invalid_role: '无效的角色类型',
+  admin_role_to_group: '不能把管理权限授予用户组',
+  cannot_remove_last_admin: '个人空间必须至少保留一个用户级管理员',
+  permission_denied: '没有权限执行此操作',
+
+  // Phase B — 页面级限制
+  page_restricted: '该页面已设置编辑限制,您没有编辑权限',
+  view_restricted: '该页面已设置查看限制,您没有访问权限',
+
+  // Phase D — 公开链接分享
+  share_forbidden: '该页面不可分享(仅共享空间、无查看限制的页面可以分享)',
+  share_expired: '该分享链接已过期',
+  share_revoked: '该分享链接已被撤销',
+  share_invalid: '该分享链接无效',
+  share_already_revoked: '该分享链接已撤销,无需重复操作',
 
   // 用户管理
   email_taken: '该邮箱已被占用',
   last_admin: '不能停用或删除最后一个管理员',
   self_disable: '不能停用自己的账号',
   self_reset: '不能重置自己的密码,请用「修改密码」',
+  self_anonymize: '不能匿名化自己的账号',
 
   // 附件上传
   size_mismatch: '上传文件大小与声明不一致,请重试',

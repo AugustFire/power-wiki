@@ -4,7 +4,7 @@ import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
@@ -13,6 +13,8 @@ import LabelPills from '@/components/page/LabelPills.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import WhoLikedList from '@/components/page/WhoLikedList.vue'
 import PageWatchButton from '@/components/page/PageWatchButton.vue'
+import PageRestrictionsDialog from '@/components/page/PageRestrictionsDialog.vue'
+import ShareDialog from '@/components/page/ShareDialog.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
 import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
@@ -36,7 +38,49 @@ const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
+const route = useRoute()
 const { recordVisit } = useRecentPages()
+
+/**
+ * Viewer 兜底 banner —— EditView 检测到当前用户在 page 上没有 edit 权限时
+ * router.replace 到本视图 URL 并挂 `?readonly=1`。ReadView 在挂载 / 路由
+ * 切换时消费这个 flag:
+ *   - 命中 → 显示"只读模式"通知条(顶部、视觉上比 toast 重、比全局错误
+ *     banner 轻,语义清晰)
+ *   - 立刻 router.replace 抹掉 query,避免刷新页面再次触发(用户主动从
+ *     别处分享 URL 直达不该再弹一次)
+ *
+ * 注意:这里用的是 ref 而非 computed,因为它有"已 dismiss"语义 —— 用户
+ * 点 × 后即便路由 query 没变,也不再显示。
+ */
+const readonlyNoticeOpen = ref(false)
+function dismissReadonlyNotice() {
+  readonlyNoticeOpen.value = false
+}
+
+watch(
+  () => route.query['readonly'] === '1',
+  (flag) => {
+    if (flag) {
+      readonlyNoticeOpen.value = true
+      // 抹掉 query,刷新 / 直链再访问不会重复触发
+      const { readonly: _drop, ...rest } = route.query
+      void _drop
+      router.replace({ query: rest }).catch(() => {
+        /* 同路由 query 替换偶发 NavigationFailure,静默吞 */
+      })
+    }
+  },
+  { immediate: true },
+)
+
+/** 切到其他页时关闭 —— readonly 状态是 per-page,不是 session-wide。 */
+watch(
+  () => props.id,
+  (pageId, prevPageId) => {
+    if (pageId !== prevPageId) readonlyNoticeOpen.value = false
+  },
+)
 
 /* ─── P3 内部链接 hover 卡片预览 ─────────────────────────────
  *
@@ -381,6 +425,72 @@ watch(
 // 走的是不同 path)。状态与打开逻辑共用 useAttachmentLightbox,绑定策略见下。
 const { lightbox, closeLightbox, openFromImg } = useAttachmentLightbox()
 
+/* ─── 页面级限制 dialog(Phase B)───────────────────────
+ * 按钮可见性用启发式 gate:
+ *   - 全局 admin → 可见
+ *   - 页面作者 → 可见(能编辑就有资格管自己的限制)
+ *   - 非作者 space-admin → v0 不在客户端 gate 内,需由后端 404 兜底。
+ *     这是已知 v0 缺口(space role 信息当前没下沉到 PageNode);下次页面
+ *     schema 改时把 `viewerRole` 加上就能 cover 这个 case。
+ *
+ * saved 事件传回的 flags 直接 patch 到 page.hasViewRestriction /
+ * hasEditRestriction 上,避免读侧重拉整页。 */
+const restrictionsOpen = ref(false)
+/** 启发式 gate:跟 canEdit 对称 —— isAdmin || 非 viewer(=editor / admin) ||
+ *  作者本人。后端 `canManageRestrictions` 同样三选一:isAdmin / 作者本人 /
+ *  canEditPage(空间 editor / space-admin 都覆盖)。 */
+const canManageRestrictions = computed(() => {
+  const p = page.value
+  if (!p) return false
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  if (p.viewerRole && p.viewerRole !== 'viewer') return true
+  if (me.id === p.authorId) return true
+  return false
+})
+/** Phase D: 公开分享的 canManage gate —— 与 canManageRestrictions 对称
+ *  (page 作者 / admin / 空间 admin / 空间 editor)。`viewerRole` 由后端
+ *  PageNodeSchema 注入,跟 share 路由的 canEditPage gate 等价;space-
+ *  admin 没有 `viewerRole='admin'` 的中间档(直接 isAdmin),但跟 canEdit
+ *  共用同一段判断。 */
+const canShare = computed(() => {
+  const p = page.value
+  if (!p) return false
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  if (p.viewerRole && p.viewerRole !== 'viewer') return true
+  if (me.id === p.authorId) return true
+  return false
+})
+
+/** 顶部「编辑」按钮 gate:server 端 PageNode.viewerRole 注入 effective role,
+ *  非 viewer(=editor/admin)直接显示;viewer 时仅作者本人保留(author bypass,
+ *  对齐 canEditPage)。空间级 canEditSpace 隐含包含在 viewerRole='editor' 里,
+ *  这里不再二次查 space grant。 */
+const canEdit = computed(() => {
+  const p = page.value
+  if (!p) return false
+  const me = authStore.user
+  if (!me) return false
+  if (authStore.isAdmin) return true
+  if (p.viewerRole && p.viewerRole !== 'viewer') return true
+  if (me.id === p.authorId) return true
+  return false
+})
+const shareOpen = ref(false)
+function onRestrictionsSaved(flags: {
+  hasViewRestriction: boolean
+  hasEditRestriction: boolean
+}) {
+  if (!page.value) return
+  pagesStore.patchPage(page.value.id, {
+    hasViewRestriction: flags.hasViewRestriction,
+    hasEditRestriction: flags.hasEditRestriction,
+  })
+}
+
 function onAttachmentImgClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   if (!target) return
@@ -465,11 +575,62 @@ watch(
              page-actions 行,跟「页面历史 / 编辑」同款 `.btn`,表达「订阅此页
              通知」。个人空间无 watch 语义,直接不渲染。 -->
         <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
-        <button class="btn primary" @click="goEdit">
+        <!-- Phase B 页面级限制 dialog 入口 —— 仅对页面有管理权的用户可见
+             (admin / 作者本人,见 canManageRestrictions)。Dialog 本身会
+             在后端拒绝时抛 404,所以即便这里的 gate 漏掉(未来 space-admin
+             不带 author 也想管),用户点开会得到友好的 404 提示。 -->
+        <button
+          v-if="page && canManageRestrictions"
+          class="btn"
+          type="button"
+          :title="`配置 ${page.title} 的查看 / 编辑限制`"
+          @click="restrictionsOpen = true"
+        >
+          <span class="material-symbols-outlined icon-md">lock</span>
+          限制
+        </button>
+        <button
+          v-if="page && canShare"
+          class="btn"
+          type="button"
+          :title="`创建 ${page.title} 的公开分享链接`"
+          @click="shareOpen = true"
+        >
+          <span class="material-symbols-outlined icon-md">share</span>
+          分享
+        </button>
+        <button v-if="canEdit" class="btn primary" @click="goEdit">
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
         </button>
       </div>
+    </div>
+
+    <!-- Viewer 兜底 banner —— EditView 检测到无权限时,redirect 到当前
+         read URL 并挂 ?readonly=1。这里消费 query、显示提示、然后用
+         router.replace 抹掉 query,避免用户刷新后再次看到 banner(语义
+         是"这次跳转触发的通知",不是持久状态)。信息层级跟全局错误
+         banner 区分:这是预期 redirect 触发的提示,不是错误。 -->
+    <div
+      v-if="readonlyNoticeOpen"
+      class="readonly-notice"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined readonly-notice-icon" aria-hidden="true">
+        visibility
+      </span>
+      <span class="readonly-notice-text">
+        你没有此页面的编辑权限,已切换到只读模式。
+      </span>
+      <button
+        type="button"
+        class="readonly-notice-close"
+        aria-label="关闭提示"
+        @click="dismissReadonlyNotice"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
     </div>
 
     <!-- 专题 12:TOC 折叠手柄 —— 只在 tocCollapsed 时显示。
@@ -526,6 +687,26 @@ watch(
               <span v-if="showAuthorSuffix" class="status-pill purple">
                 <span class="material-symbols-outlined icon-sm">account_circle</span>
                 {{ authorDisplay }} 创建
+              </span>
+              <!-- Phase B 限制 chip —— view 限制(继承)用锁定 icon,edit 限制
+                   (不继承)用 edit icon。chip 只展示「有此限制」的元信息,不
+                   点开;真正配置走 dialog。Strict-default 顺序让色值对应语义
+                   清晰(view=accent 蓝,edit=警告橙)。 -->
+              <span
+                v-if="page.hasViewRestriction"
+                class="status-pill restriction"
+                title="此页设置了查看限制(会沿父链向下继承)"
+              >
+                <span class="material-symbols-outlined icon-sm">lock</span>
+                限制查看
+              </span>
+              <span
+                v-if="page.hasEditRestriction"
+                class="status-pill restriction warn"
+                title="此页设置了编辑限制(只作用于本页)"
+              >
+                <span class="material-symbols-outlined icon-sm">edit</span>
+                限制编辑
               </span>
             </div>
 
@@ -632,6 +813,26 @@ watch(
         :anchor="hoveredLink.anchor"
       />
 
+      <!-- Phase B 页面级限制 dialog —— 自身 Teleport 到 body,跟编辑/恢复等
+           modal 同级。`saved` 事件回调把 flags patch 到本地 page,chip 立即
+           反映避免下次 mount 才看到。 -->
+      <PageRestrictionsDialog
+        v-if="page"
+        v-model:open="restrictionsOpen"
+        :page-id="page.id"
+        :page-title="page.title"
+        @saved="onRestrictionsSaved"
+      />
+      <!-- Phase D 公开分享弹窗(canShare 同 canManageRestrictions 启发式:
+           admin / 作者本人;空间 admin / editor 由后端 share 路由兜底,UI
+           粗粒度 gate 不重复拉 role)。 -->
+      <ShareDialog
+        v-if="page"
+        v-model:open="shareOpen"
+        :page-id="page.id"
+        :page-title="page.title"
+      />
+
       <TocPanel
         v-if="page"
         :content-ref="contentEl"
@@ -731,8 +932,10 @@ watch(
  跟原 VersionPanelToggle 视觉一致。Vue Router 会自动加
  `.router-link-active` / `.router-link-exact-active`,不过当前路由下
  不会走到这里,这两个状态都用不到。 */
-.version-link {
+.version-link,
+.version-link:hover {
   gap: 4px;
+  text-decoration: none;
 }
 .version-link .material-symbols-outlined {
   font-size: 16px;
@@ -744,6 +947,56 @@ watch(
   flex-direction: column;
   gap: 16px;
   padding-top: 8px;
+}
+
+/* Viewer 兜底 banner —— EditView redirect 时挂的提示。色调走中性信息
+   色(--bg-subtle + --accent-soft 图标),不挂全局错误 banner 那种
+   --danger-* 红,语义是"被引导到正确视图",不是"出错"。放在
+   .subheader 之下、TOC 折叠手柄之上,这样视图顶部区域不会因为这个
+   banner 突然变窄(它是 inline block,自然撑开 subheader 下面那行)。 */
+.readonly-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 24px 0;
+  padding: 10px 14px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-2);
+}
+.readonly-notice-icon {
+  color: var(--accent);
+  font-size: 18px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+.readonly-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+.readonly-notice-close {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-3);
+  opacity: 0.6;
+  display: inline-flex;
+  align-items: center;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.readonly-notice-close:hover {
+  opacity: 1;
+}
+.readonly-notice-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  opacity: 1;
+}
+.readonly-notice-close .material-symbols-outlined {
+  font-size: 18px;
 }
 .read-skeleton-byline {
   display: flex;

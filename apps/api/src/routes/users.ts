@@ -55,6 +55,7 @@ import { rowToUser } from '../lib/rowMappers'
 import { rowToNotification } from '../lib/commentRowMappers'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
+import { canReadPage, pageReadableDirectFilter, principalFromUser } from '../lib/permissions'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { presignUpload, headObject, deleteObject } from '../lib/s3'
@@ -549,6 +550,9 @@ usersRouter.put('/me/recent/:pageId', async (c) => {
   if (page.deletedAt !== null) {
     return c.json({ error: 'not_found' }, 404)
   }
+  if (!(await canReadPage(principalFromUser(me), pageId, page.spaceId))) {
+    return c.json({ error: 'not_found' }, 404)
+  }
 
   const title = rawTitle || page.title || ''
   // 截断 title 到 PageTitleSchema 长度,避免超长输入污染 recent 表
@@ -718,6 +722,9 @@ usersRouter.get('/me/dashboard', async (c) => {
       if (visibleSpaceIds.length === 0) return []
       filters.push(inArray(pages.spaceId, visibleSpaceIds))
     }
+    // Phase B: 直接 view 限制过滤(父链继承留 v0,见 permissions.ts
+    // pageReadableDirectFilter 注释)。作者本人始终可见。
+    filters.push(pageReadableDirectFilter(principalFromUser(me)))
     const where = filters.length === 1 ? filters[0] : and(...filters)!
     const rows = await selectPagesWithAuthor(where, { viewerUserId: me.id })
     const byId = new Map(rows.map((r) => [r.id, r]))

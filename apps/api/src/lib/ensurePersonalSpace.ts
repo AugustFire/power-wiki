@@ -31,6 +31,7 @@ import { db } from '../db/client'
 import {
   pages,
   spaceGroupAccess,
+  spaceRoleGrants,
   spaces,
   userGroupMembers,
   userGroups,
@@ -192,6 +193,22 @@ export async function ensurePersonalSpace(
     await tx.insert(spaceGroupAccess).values({
       spaceId,
       groupId,
+      grantedAt: now,
+    })
+
+    // 4b. Phase A: also insert a space_role_grants row so the new
+    //     permissions model recognizes this binding. The group gets
+    //     role='admin' — owner of the personal space is the only admin
+    //     on it. Global admin writes to personal space content are still
+    //     blocked by `assertAdminNotWritingPersonalSpace` (separate
+    //     layer, untouched here).
+    await tx.insert(spaceRoleGrants).values({
+      id: generatePageId(),
+      spaceId,
+      principalKind: 'group',
+      principalId: groupId,
+      role: 'admin',
+      grantedBy: null,
       grantedAt: now,
     })
 

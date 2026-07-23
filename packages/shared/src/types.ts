@@ -119,6 +119,23 @@ export interface PageNode {
    * Dashboard「我创建的」section 用这个字段给作者的草稿页加「未发布」chip。
    */
   firstPublishedAt?: number | null
+  /**
+   * Phase B 页面级 view 限制标记 —— 服务端 EXISTS 子查询
+   * `(SELECT 1 FROM page_restrictions WHERE page_id=? AND kind='view')`。
+   * 与 PageNodeSchema 同构。注意:这不是「我能读吗」的判断,只是「此页
+   * 是否配置了限制」的元信息。Optional:fallback 路径 / 老 cache 没填时
+   * 为 undefined,UI fallback 到 false。 */
+  hasViewRestriction?: boolean
+  /** Phase B 页面级 edit 限制标记 —— 与 hasViewRestriction 同构。 */
+  hasEditRestriction?: boolean
+  /**
+   * 当前用户在该 page 所属空间的 effective role(viewer/editor/admin),
+   * 由服务端 `getEffectiveSpaceRolesForUser` 注入。null = 无访问权
+   * (在 list 路径上不会出现,只在 fallback 路径或老 cache 可能为 null)。
+   * UI 用这个字段 gate 「编辑」/「创建子页」/「新建」等写操作按钮,
+   * 把后端 404 提前到按钮不可见阶段;不依赖再次访问 server。
+   * Optional:老 cache / seed 数据可能缺失,fallback null 等同于无权限。 */
+  viewerRole?: 'viewer' | 'editor' | 'admin' | null
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */
@@ -168,7 +185,9 @@ export interface User {
 export interface UserGroup {
   id: string
   name: string
-  description?: string
+  /** 可选描述;DB 列可空,所以是 nullable。candidates 端点直接返 DB 行,
+   *  没经过 rowToGroup 的 null → undefined 转换,所以这里要允许 null。 */
+  description?: string | null
   createdAt: number
   /** list 路径聚合返,代表 user_group_members 行数。
    *  `:id` 路径同时还返 memberIds[];list 因为不返 ids,所以才有这个 count 字段。 */
@@ -181,7 +200,9 @@ export interface UserGroup {
 export interface Space {
   id: string
   name: string
-  description?: string
+  /** 可选描述;DB 列可空,rowToSpace 转 null → undefined,但 candidates 等
+   *  直返 DB 行的端点可能保留 null,所以这里允许 nullable。 */
+  description?: string | null
   /** Atlas 设计 token 兼容的色值,#RRGGBB */
   color: string
   /** material-symbols-outlined 名称,如 'folder', 'description' */
@@ -205,6 +226,8 @@ export interface Space {
   accessVia?: 'member'
   /** 当前用户所属可访问该 space 的组 id 列表 */
   accessGroupIds?: string[]
+  /** 仅 admin 空间 list/get 路径返回的完整直接授权,用于权限管理与统计。 */
+  accessGrants?: import('./schemas').SpaceGrants
   /** 该空间下非删除页面的总数。Space list/get 时由服务端一次聚合查询给出,
    *  减少前端 N+1 请求。原来由前端 Promise.all(spaces.map(...)) 拉全量 page
    *  列表算出来,现在改成 DTO 字段。 */
@@ -217,6 +240,13 @@ export interface Space {
   /** 仅 admin 路径 + kind='personal' 时返:所有者的显示名。
    *  避免前端为每个 personal space 再发一次 users/:id。 */
   ownerName?: string
+  /**
+   * 当前用户在该 space 的 effective role(viewer/editor/admin),由服务端
+   * `getEffectiveSpaceRolesForUser` 注入。null = 无访问权(API 不会返回
+   * 这种情况下的 space)。UI 用这个字段 gate 「新建页面」按钮 + 展示
+   * 「只读」badge,把后端 404 提前到按钮不可见阶段。
+   * admin 路径下永远为 'admin'(见 apps/api/src/routes/spaces.ts)。 */
+  viewerRole?: 'viewer' | 'editor' | 'admin' | null
 }
 
 /**
@@ -270,4 +300,22 @@ export type {
   AvatarUploadUrlResponse,
   AvatarFinalizeInput,
   AvatarFinalizeResponse,
+  // Phase A — space role grants (Confluence 风格空间角色)
+  SpaceRole,
+  PrincipalKind,
+  SpaceGroupGrant,
+  SpaceUserGrant,
+  SpaceGrants,
+  SetSpacePermissionsInput,
+  UpsertGroupGrantInput,
+  UpsertUserGrantInput,
+  // Phase B — page-level restrictions (Confluence 风格页面级 view/edit 限制)
+  PageRestrictionKind,
+  PageRestriction,
+  PageRestrictions,
+  SetPageRestrictionsInput,
+  UpsertPageRestrictionInput,
+  RestrictionCandidateUser,
+  RestrictionCandidateGroup,
+  RestrictionCandidates,
 } from './schemas'

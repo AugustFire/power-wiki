@@ -58,11 +58,12 @@ const { status: authStatus } = storeToRefs(authStore)
  *   4. authed → full shell with topbar + sidebar + RouterView.
  */
 const isAuthed = computed(() => authStore.isAuthed)
+const isPublicPageRoute = computed(() => route.name === 'public-page')
 const authInitialising = computed(
   () => authStatus.value === 'idle' || authStatus.value === 'loading',
 )
 const showBoot = computed(
-  () => authInitialising.value || authStore.transitioning,
+  () => !isPublicPageRoute.value && (authInitialising.value || authStore.transitioning),
 )
 /**
  * ResetPasswordView is a full-bleed split layout (brand panel + form), not
@@ -141,8 +142,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onGlobalKey))
     <div class="ab-spinner" aria-hidden="true"></div>
   </div>
 
-  <!-- 2. unauthed OR on /reset-password: LoginView / ResetPasswordView render full-bleed -->
-  <RouterView v-else-if="!isAuthed || isResetPasswordRoute" />
+  <!-- 2. public share / unauthed / reset-password routes render full-bleed -->
+  <RouterView v-else-if="isPublicPageRoute || !isAuthed || isResetPasswordRoute" />
 
   <!-- 4. authed: full app shell -->
   <div v-else class="app-shell">

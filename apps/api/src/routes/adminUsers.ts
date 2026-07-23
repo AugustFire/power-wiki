@@ -8,11 +8,18 @@
  *   POST   /api/admin/users/:id/enable         set status='active' (only from 'disabled')
  *   POST   /api/admin/users/:id/reset-password generate new initial password + flip to
  *                                              status='must_reset_password'; returns it ONCE
+ *   POST   /api/admin/users/:id/anonymize      irreversible "soft delete": clears name /
+ *                                              email / password / avatar, kills sessions,
+ *                                              sweeps all membership tables, audit row
+ *                                              written. pages / comments / versions /
+ *                                              attachments / audit rows PRESERVED for
+ *                                              attribution (LEFT JOIN shows anonymized
+ *                                              display name).
  *
  * All routes require admin role (requireAdmin middleware).
  *
  * Error model:
- *   400 invalid_input     zod validation failed
+ *   400 invalid_input     zod validation failed / target is self / target is last admin
  *   403 forbidden         non-admin (handled by middleware)
  *   404 not_found         target user doesn't exist
  *   409 conflict          email taken (create) / last admin (disable) / already in target state
@@ -31,13 +38,37 @@ import {
   UserSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { spaces, userGroups, users } from '../db/schema'
+import {
+  notifications,
+  pageLikes,
+  pageRestrictions,
+  sessions,
+  spaceRoleGrants,
+  spaces,
+  userGroupMembers,
+  userGroups,
+  userRecentPages,
+  userWatchedPages,
+  users,
+} from '../db/schema'
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generateInitialPassword, hashPassword } from '../auth/password'
 import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
+import { recordPermissionAudit } from '../lib/auditLog'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
+
+/** Anonymized display name — shown in JOIN fallbacks everywhere authorship
+ *  displays. Keep stable: UI strings / snapshots / tests reference this. */
+const ANONYMIZED_NAME = '已注销用户'
+/** Sentinel email value. Schema requires NOT NULL UNIQUE — we use the user's
+ *  own id in the local part so two anonymized users never collide. The TLD
+ *  is `.invalid` per RFC 2606 to mark it as a non-deliverable address. */
+const anonymizedEmail = (userId: string): string => `${userId}@anonymized.invalid`
+/** Gray placeholder color (Atlassian N500-ish) — anonymous users lose all
+ *  identity cues, so avatar color should be neutral. */
+const ANONYMIZED_COLOR = '#7A869A'
 
 export const adminUsersRouter = new Hono<{ Variables: Variables }>()
 
@@ -304,6 +335,160 @@ adminUsersRouter.post('/:id/reset-password', async (c) => {
   await db.delete(sessions).where(eq(sessions.userId, id))
 
   return c.json({ initialPassword })
+})
+
+/* ─── POST /api/admin/users/:id/anonymize ──────────────────────────────────
+ *
+ * "Soft delete" the user: cover the row's identity (name/email/password/avatar)
+ * to ANONYMIZED_* sentinels and sweep all membership / interaction tables in
+ * one transaction. Sessions are killed so any active login is terminated.
+ *
+ * What gets CLEARED on the user row:
+ *   - name      → ANONYMIZED_NAME
+ *   - email     → <id>@anonymized.invalid (UNIQUE-safe + RFC 2606 .invalid)
+ *   - password  → rewritten to a fresh random hash (cannot sign in even if
+ *                 status is later flipped to active by mistake)
+ *   - avatar    → avatarKind=null, avatarRef=null (UserAvatar falls back to
+ *                 initials+color placeholder)
+ *   - color     → ANONYMIZED_COLOR gray
+ *   - status    → 'disabled'
+ *
+ * What gets SWEPT (per-user references that lose meaning without the user):
+ *   - sessions                       active sign-ins killed
+ *   - user_group_members             drop membership in every group
+ *   - user_recent_pages              drop "我最近浏览" history
+ *   - user_watched_pages             drop all 👁 watches
+ *   - page_likes                     drop all 👍 likes (other users' like
+ *                                    counts on those pages decrement by 1
+ *                                    via the same DELETE)
+ *   - notifications WHERE recipient  drop pending @mentions / activity
+ *                                    notifications for this user
+ *   - space_role_grants WHERE kind='user' AND id=?
+ *                                    drop direct user grants
+ *   - page_restrictions WHERE kind='user' AND id=?
+ *                                    drop direct user restrictions on pages
+ *                                    (pages with view/edit restrictions are
+ *                                    thus relaxed for this principal only)
+ *
+ * What is INTENTIONALLY PRESERVED (for attribution / audit):
+ *   - pages.author_id / updated_by / deleted_by — page history stays intact;
+ *     the anonymized display name renders via LEFT JOIN fallback
+ *   - comments.author_id              — comment authorship stable
+ *   - page_versions.created_by        — version history stable
+ *   - attachments.uploaded_by         — attachment uploader stable
+ *   - activity_events / page_events.actor_id
+ *   - permission_audit.actor_id / granted_by
+ *   - notifications.actor_id (the sender side; only recipient is swept)
+ *   - The user row itself (so all the above FK-less references keep working)
+ *
+ * Self / last-admin guards mirror the disable handler so admins can't lock
+ * themselves out. Anonymize is irreversible — no /enable equivalent exists
+ * (the password hash is gone, email is a `.invalid` domain). The audit row
+ * records the before/after name+email for compliance.
+ */
+adminUsersRouter.post('/:id/anonymize', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+
+  // Refuse to anonymize yourself — irreversible + would lock you out.
+  if (id === me.id) {
+    return c.json(
+      { error: 'self_anonymize', message: '不能匿名化自己的账号' },
+      409,
+    )
+  }
+
+  const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
+  if (!existing) return c.json({ error: 'not_found' }, 404)
+
+  // Refuse to anonymize the last active admin — even though anonymize sets
+  // status='disabled', same invariant as disable: we always need a way in.
+  if (existing.role === 'admin') {
+    const otherActiveAdmins = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.role, 'admin'), ne(users.id, id)))
+    if (otherActiveAdmins.length === 0) {
+      return c.json(
+        { error: 'last_admin', message: '不能匿名化最后一个管理员' },
+        409,
+      )
+    }
+  }
+
+  // Idempotent: if already anonymized (name === ANONYMIZED_NAME), return
+  // current state without rewriting. Lets UI retry safely.
+  if (existing.name === ANONYMIZED_NAME) {
+    return c.json(UserSchema.parse(rowToUser(existing)))
+  }
+
+  const now = Date.now()
+  // Fresh password hash so even if status were flipped later the original
+  // password wouldn't work. generateInitialPassword is also fine — we just
+  // need *some* hash that won't match what was there.
+  const newHash = await hashPassword(generateInitialPassword())
+  const before = { name: existing.name, email: existing.email }
+
+  await db.transaction(async (tx) => {
+    // 1) Cover the user row. Updated_at is bumped so list ordering / cache
+    //    invalidation pick up the change.
+    await tx
+      .update(users)
+      .set({
+        name: ANONYMIZED_NAME,
+        email: anonymizedEmail(id),
+        passwordHash: newHash,
+        avatarKind: null,
+        avatarRef: null,
+        color: ANONYMIZED_COLOR,
+        status: 'disabled',
+        updatedAt: now,
+      })
+      .where(eq(users.id, id))
+
+    // 2) Kill sessions — existing tokens for this user must stop working.
+    await tx.delete(sessions).where(eq(sessions.userId, id))
+
+    // 3) Sweep per-user interaction / membership tables.
+    await tx.delete(userGroupMembers).where(eq(userGroupMembers.userId, id))
+    await tx.delete(userRecentPages).where(eq(userRecentPages.userId, id))
+    await tx.delete(userWatchedPages).where(eq(userWatchedPages.userId, id))
+    await tx.delete(pageLikes).where(eq(pageLikes.userId, id))
+    // notifications.userId is the *recipient* (private inbox). Sweep so
+    // the anonymized user has no pending @mentions / watch activity;
+    // notifications.actorId (sender side) is preserved for attribution.
+    await tx.delete(notifications).where(eq(notifications.userId, id))
+
+    // 4) Sweep user-as-principal entries in the permissions model.
+    //    Pages / comments / versions / audit / attachments keep the user
+    //    id as a text reference but no longer grant any access.
+    await tx
+      .delete(spaceRoleGrants)
+      .where(
+        and(eq(spaceRoleGrants.principalKind, 'user'), eq(spaceRoleGrants.principalId, id)),
+      )
+    await tx
+      .delete(pageRestrictions)
+      .where(
+        and(eq(pageRestrictions.principalKind, 'user'), eq(pageRestrictions.principalId, id)),
+      )
+
+    // 5) Audit row — irreversible event, before/after both useful for
+    //    compliance. In same tx so business rollback ⇒ audit rollback.
+    await recordPermissionAudit(tx, {
+      kind: 'user_anonymized',
+      actorId: me.id,
+      targetKind: 'user',
+      targetId: id,
+      payload: {
+        before,
+        after: { name: ANONYMIZED_NAME, email: anonymizedEmail(id), status: 'disabled' },
+      },
+    })
+  })
+
+  const updated = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]!
+  return c.json(UserSchema.parse(rowToUser(updated)))
 })
 
 /* ─── helpers ─────────────────────────────────────────────────────────── */
