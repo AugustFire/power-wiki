@@ -238,8 +238,19 @@ watch(
         :title="`回到 ${active.name} 首页`"
         @click="goHome"
       >
-        <SpaceAvatar :space="active" :size="20" />
+        <!-- v0.7+: viewer-role → 空间名旁挂一个 14px lock 图标;
+             不在头像上叠角标(20px 头像 + 9px glyph 会糊),
+             跟 Confluence 「hide-not-disable」对齐 —— 无创建按钮 + 小锁即表达只读 -->
+        <SpaceAvatar
+          :space="active"
+          :size="20"
+        />
         <span class="active-name">{{ active.name }}</span>
+        <span
+          v-if="!canCreateInSpace"
+          class="material-symbols-outlined active-lock"
+          title="你在此空间只有只读权限"
+        >lock</span>
         <span class="active-count">{{ activePageCount }}</span>
       </button>
     </div>
@@ -263,11 +274,12 @@ watch(
         icon="inbox"
         title="还没有页面"
       >
+        <!-- v0.7+: viewer-role 不再显式说「只读」;Confluence 风格是
+             撞墙反馈而非持续标签 —— 无 CTA 即表达 -->
         <button v-if="canCreateInSpace" class="tree-empty-cta" @click="createRoot">
           <span class="material-symbols-outlined icon-sm">add</span>
           创建第一个
         </button>
-        <span v-else class="readonly-hint">只读模式 · 无权创建</span>
       </EmptyState>
       <div v-else class="tree">
         <PageTree
@@ -279,15 +291,14 @@ watch(
     </div>
 
     <div class="sidebar-bottom">
+      <!-- v0.7+: 去掉 v-else 分支的 36px readonly pill —— Confluence 风格
+           「hide-not-disable」:无 Create 按钮就是 read-only 的信号,
+           hint 由 quick-nav chip 里空间名旁的 14px 小锁承担 -->
       <button v-if="canCreateInSpace" class="create-page-btn" @click="createRoot">
         <span class="material-symbols-outlined icon-lg">add</span>
         创建页面
         <kbd>/</kbd>
       </button>
-      <span v-else class="readonly-badge" :title="active?.kind === 'personal' ? '个人空间始终可写' : '此空间你只有只读权限'">
-        <span class="material-symbols-outlined icon-md">visibility</span>
-        只读
-      </span>
       <button
         v-if="canCreateInSpace"
         class="import-md-btn"
@@ -362,6 +373,14 @@ watch(
   padding: 1px 6px;
   border-radius: 8px;
   font-weight: 600;
+}
+/* viewer-role 只读锁:名字与页数之间的 14px muted 小锁。放在这里而不是叠在
+   20px 头像上 —— 头像太小,角标 glyph 会糊。lock 轮廓在小尺寸下比 visibility
+   眼睛清晰,一眼能认出「只读」。 */
+.active-lock {
+  font-size: 14px !important;
+  color: var(--text-3);
+  flex-shrink: 0;
 }
 
 /* "我的空间" anchor: a quiet bottom-of-section shortcut back to the user's
@@ -441,6 +460,11 @@ watch(
   font-weight: 500;
   flex: 1 1 auto;
 }
+/* viewer-role 用户无 Create 按钮时,sidebar-bottom 整段不渲染内容;
+   不挂 min-height 占位 —— 空间名旁的 14px 小锁是只读信号。
+   import-md-btn 等仍可以保留,在 viewer-role 空间导入 markdown 仍合理
+   (创建页面权限和导入 markdown 权限是分离的,导入对应后端 admin/space-
+   admin 能力)。 */
 .sidebar-bottom {
   display: flex;
   align-items: stretch;
@@ -480,36 +504,13 @@ watch(
   color: var(--text-2);
 }
 
-/* 「只读」badge —— viewer 视图下占位 sidebar-bottom 的 create-page-btn。
- * 跟 HomeView readonly-badge 同语义不同位置:HeroView 在 subheader,
- * Sidebar 在 sidebar-bottom 永久可见。视觉上跟 button 等高(border +
- * height 一致),让 sidebar-bottom 区域高度不变,避免 viewer 状态切换时
- * 整体布局跳动。 */
-.readonly-badge {
-  flex: 1 1 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 36px;
-  padding: 0 12px;
-  background: var(--bg-subtle);
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: default;
-}
-.readonly-badge .material-symbols-outlined {
-  font-size: 16px;
-  color: var(--text-3);
-}
-
-/* 「无权创建」提示 —— EmptyState 内嵌,跟按钮位同样位置。 */
-.readonly-hint {
-  font-size: 12px;
-  color: var(--text-3);
-  padding: 6px 0;
-}
+/* v0.7+ 删除:
+ *   .readonly-badge (viewer-role 时占据 sidebar-bottom 36px slot)
+ *   .readonly-hint  (EmptyState 内 viewer 提示)
+ * 二者的语义移到 quick-nav chip 里空间名旁的 .active-lock(14px lock)。
+ * (曾短暂试过叠在 SpaceAvatar 头像右下角,但 20px 头像 + 9px glyph 糊成一团,
+ *  改成名字旁行内小锁。)
+ * 跟 Confluence 「hide-not-disable」对齐:无创建按钮就是 read-only 的信号,
+ * 不必再挂显式 「只读」 pill。
+ */
 </style>

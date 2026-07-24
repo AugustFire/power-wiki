@@ -174,16 +174,20 @@ function excerpt(html: string): string {
       <div class="subheader">
         <div class="breadcrumb">
           <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
+          <!-- viewer-role 只读:空间名旁挂 14px 小锁,跟侧栏 chip 同款。
+               「新建页面」按钮直接不渲染(Confluence hide-not-disable),
+               不再用顶栏那枚显式「只读」pill。 -->
+          <span
+            v-if="!canCreateInSpace"
+            class="material-symbols-outlined crumb-lock"
+            title="你在此空间只有只读权限,无法创建新页面"
+          >lock</span>
         </div>
         <div class="page-actions">
           <button v-if="canCreateInSpace" class="btn primary" @click="createRoot">
             <span class="material-symbols-outlined icon-lg">add</span>
             新建页面
           </button>
-          <span v-else class="readonly-badge" title="你在此空间只有只读权限,无法创建新页面">
-            <span class="material-symbols-outlined icon-md">visibility</span>
-            只读
-          </span>
         </div>
       </div>
 
@@ -401,25 +405,13 @@ function excerpt(html: string): string {
   justify-content: center;
 }
 
-/* 只读 badge —— viewer 进 team space 时,「新建页面」按钮位换成这枚 chip,
- * 让用户立刻明白为什么没有写按钮(而不是怀疑自己没权限点)。跟随 .se-card
- * 的设计语汇:bg-subtle 底 + text-2 字 + 圆角 pill,跟 .status-pill 同款
- * 但语义不同(权限状态 vs 页面状态)。 */
-.readonly-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  background: var(--bg-subtle);
-  color: var(--text-2);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-}
-.readonly-badge .material-symbols-outlined {
-  font-size: 16px;
+/* viewer-role 只读锁:空间名旁的 14px muted 小锁,跟侧栏 .active-lock 同款。
+ * 取代旧的顶栏「只读」pill —— 那枚 pill 太抢眼且跟侧栏方案不一致。无「新建
+ * 页面」按钮 + 名字旁小锁就是 read-only 的信号(Confluence hide-not-disable)。 */
+.crumb-lock {
+  font-size: 14px !important;
   color: var(--text-3);
+  flex-shrink: 0;
 }
 .empty .create-first {
   margin-top: 8px;

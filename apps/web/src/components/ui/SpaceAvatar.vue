@@ -8,6 +8,9 @@
  *   - 内容 = material-symbols-outlined icon;无 icon 时取 space.name 前两字符大写
  *   - 个人空间永远用 'cottage' 图标(产品定调,忽略 space.icon)
  *   - 形状:圆角方块(border-radius 3px),跟 Atlassian Atlas 一致
+ *
+ * 只读标记不在这里画 —— 20px 头像上叠角标 glyph 会糊成一团。只读 hint 由消费
+ * 方在自己的行内表达(典型:Sidebar 在空间名旁挂一个 14px 的 lock 图标)。
  */
 import { computed } from 'vue'
 import type { Space } from '@power-wiki/shared'
@@ -58,7 +61,10 @@ const style = computed(() => {
 </script>
 
 <template>
-  <span class="sa-wrap" :class="{ 'sa-with-name': showName }">
+  <span
+    class="sa-wrap"
+    :class="{ 'sa-with-name': showName }"
+  >
     <span
       class="sa-box"
       :style="style"
