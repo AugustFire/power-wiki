@@ -96,35 +96,29 @@ function onGlobalKey(e: KeyboardEvent) {
   if (e.isComposing) return
   if (!isAuthed.value) return
 
-  // `?` 唤起快捷键速查表 —— 故意**绕过 isTypingTarget 守卫**,跟 GitHub /
-  // Slack 一致:即便用户在 Tiptap 编辑器里聚焦也应该能用。`isComposing`
-  // 已经挡住 IME 进行中的问号输入,所以不会跟中文拼音冲突。
-  if (e.key === '?') {
+  // Ctrl/Cmd + / 或 Ctrl/Cmd + ? 唤起快捷键速查表 —— mod-only,不依赖
+  // isTypingTarget,所以即便在 Tiptap 编辑器内也能用(像 Cmd+S 拦截那样)。
+  // 在 US 键盘上 Ctrl+? = Ctrl+Shift+/,浏览器归一化成 e.key === '?',所以
+  // 两个分支合并到一个判断。不带 mod 的 `?` / `/` 不在这里触发,避免吃掉字符。
+  const modEarly = e.metaKey || e.ctrlKey
+  if (modEarly && (e.key === '/' || e.key === '?')) {
     e.preventDefault()
     if (uiStore.cheatSheetOpen) uiStore.closeCheatSheet()
     else uiStore.openCheatSheet()
     return
   }
 
+  // 之后所有快捷键都受 isTypingTarget 守卫保护,避免吃掉输入字符。
   if (isTypingTarget(e.target)) return
 
   const mod = e.metaKey || e.ctrlKey
-  // ⌘/ (Ctrl+/) 唤起快捷键速查表。放在 ⌘K 之前判断,因为二者都带 mod。
-  // 注意:由于 isTypingTarget 守卫,这条在 Tiptap 编辑器里**不生效**(原 bug,
-  // 由上面的 `?` 触发器兜底)。
-  if (mod && e.key === '/') {
-    e.preventDefault()
-    if (uiStore.cheatSheetOpen) uiStore.closeCheatSheet()
-    else uiStore.openCheatSheet()
-    return
-  }
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     uiStore.openTopSearch()
     return
   }
-  // Vim-style: bare "/" opens search. Shift+/ ("?") 已经被上面的分支吞掉,
-  // 所以这里 e.shiftKey 必须为 false,跟 `?` 触发器不重叠。
+  // Vim-style: bare "/" opens search。Shift+/ 在 US 键盘上产出 `?`,会被
+  // 当作字符(编辑器内正常输入;非输入区 no-op),不会到这里。
   if (e.key === '/' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
     uiStore.openTopSearch()

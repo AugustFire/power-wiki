@@ -33,3 +33,27 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
   if (day < 30) return `${day} 天前`
   return new Date(ts).toLocaleDateString('zh-CN')
 }
+
+/**
+ * Future-relative variant of `formatRelativeTime` — for timestamps that lie
+ * ahead of `now` (e.g. share expiration `expiresAt`). Mirrors the same
+ * ladder but emits "N {秒/分钟/小时/天}后" so the read direction matches the
+ * event ("7 天后过期" 而不是 "刚刚",后者来自 `formatRelativeTime` 把 future
+ * diff clamp 到 0 后的退化显示 —— ShareDialog 过期列就栽在这)。
+ *
+ * Past timestamps (ts ≤ now) likewise clamp to "刚刚" — for expired events
+ * the status pill (`已过期` / `已撤销`) 已经给出明确状态,这里再冗余地显示
+ * "刚刚" 也无意义;call site 如果需要分 past / future 应先判 `ts > now`。
+ */
+export function formatRelativeTimeFuture(ts: number, now: number = Date.now()): string {
+  const diff = Math.max(0, ts - now)
+  const sec = Math.round(diff / 1000)
+  if (sec < 60) return '刚刚'
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min} 分钟后`
+  const hr = Math.round(min / 60)
+  if (hr < 24) return `${hr} 小时后`
+  const day = Math.round(hr / 24)
+  if (day < 30) return `${day} 天后`
+  return new Date(ts).toLocaleDateString('zh-CN')
+}

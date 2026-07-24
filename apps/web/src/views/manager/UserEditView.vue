@@ -192,7 +192,7 @@ async function confirmAnonymize() {
   anonymizing.value = true
   anonymizeError.value = null
   try {
-    // Returns the anonymized User row (name=已注销用户, status=disabled).
+    // Returns the anonymized User row (name=已注销用户, status=anonymized).
     const anonymized = await api.admin.users.anonymize(user.value.id)
     user.value = anonymized
     syncFormFromUser()
@@ -202,12 +202,12 @@ async function confirmAnonymize() {
     if (e instanceof ApiError) {
       anonymizeError.value =
         e.code === 'last_admin'
-          ? '不能匿名化最后一个管理员'
+          ? '不能注销最后一个管理员'
           : e.code === 'self_anonymize'
-          ? '不能匿名化自己的账号'
+          ? '不能注销自己的账号'
           : e.message
     } else {
-      anonymizeError.value = '匿名化失败,请重试'
+      anonymizeError.value = '注销失败,请重试'
     }
   } finally {
     anonymizing.value = false
@@ -224,6 +224,7 @@ function statusLabel(s: User['status']): string {
     case 'active': return '正常'
     case 'must_reset_password': return '需重置密码'
     case 'disabled': return '已禁用'
+    case 'anonymized': return '已注销'
   }
 }
 
@@ -232,6 +233,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
     case 'active': return 'good'
     case 'must_reset_password': return 'warn'
     case 'disabled': return 'bad'
+    case 'anonymized': return 'bad'
   }
 }
 
@@ -418,7 +420,9 @@ const colorPresets = [
             </button>
           </div>
 
-          <div class="ue-action">
+          <!-- 禁用/启用 — anonymized 是终态,identity 已 scrub,启用无意义
+               (后端 enable 端点也会拒掉,见 adminUsers.ts)。整 row 隐藏。 -->
+          <div v-if="user.status !== 'anonymized'" class="ue-action">
             <div>
               <div class="ue-action-title">
                 {{ user.status === 'disabled' ? '启用账号' : '禁用账号' }}
@@ -454,16 +458,16 @@ const colorPresets = [
         </div>
       </section>
 
-      <!-- 危险操作:匿名化(不可逆)。
-           不到最后关头不展开 —— 默认 collapsed,点击「匿名化用户」才展开
+      <!-- 危险操作:注销(不可逆)。
+           不到最后关头不展开 —— 默认 collapsed,点击「注销用户」才展开
            内联确认面板,要求输入 user.name 才解锁按钮(防误点)。
-           已匿名化的用户(已 disabled + name='已注销用户')整个 section
-           自动隐藏:无可恢复操作。 -->
-      <section v-if="user.status !== 'disabled' || user.name !== '已注销用户'" class="ue-card">
+           已注销的用户整个 section 自动隐藏:无可恢复操作(M16 起
+           改读 status 列,以前靠 name='已注销用户' sentinel 判断)。 -->
+      <section v-if="user.status !== 'anonymized'" class="ue-card">
         <h2 class="ue-card-title">危险操作</h2>
         <div v-if="!anonymizeOpen" class="ue-action">
           <div>
-            <div class="ue-action-title">匿名化用户</div>
+            <div class="ue-action-title">注销用户</div>
             <div class="ue-action-hint">
               不可逆操作 —— 清除姓名、邮箱、密码、头像,清除所有组成员关系与个人空间授权。
               该用户创建/编辑的页面与评论保留,署名显示为「已注销用户」。
@@ -471,7 +475,7 @@ const colorPresets = [
           </div>
           <button type="button" class="btn danger" @click="openAnonymize">
             <span class="material-symbols-outlined btn-icon">person_off</span>
-            <span>匿名化用户</span>
+            <span>注销用户</span>
           </button>
         </div>
 
@@ -479,7 +483,7 @@ const colorPresets = [
           <div class="ue-anonymize-warning">
             <span class="material-symbols-outlined ue-anonymize-icon">warning</span>
             <div>
-              <div class="ue-anonymize-title">确认匿名化「{{ user.name }}」</div>
+              <div class="ue-anonymize-title">确认注销「{{ user.name }}」</div>
               <div class="ue-anonymize-detail">
                 将清除该用户的姓名、邮箱、密码、头像,清除所有组成员关系、关注、点赞与通知,
                 移除其直接空间授权与页面级限制。已创建的页面与评论<strong>保留</strong>(署名变为「已注销用户」)。
@@ -510,7 +514,7 @@ const colorPresets = [
               @click="confirmAnonymize"
             >
               <span v-if="anonymizing" class="ue-anonymize-spinner" aria-hidden="true"></span>
-              <span>{{ anonymizing ? '匿名化中…' : '确认匿名化' }}</span>
+              <span>{{ anonymizing ? '注销中…' : '确认注销' }}</span>
             </button>
           </div>
         </div>
@@ -707,7 +711,7 @@ const colorPresets = [
   font-family: var(--font-mono, monospace);
 }
 
-/* ─── 危险操作 — 匿名化内联面板 ─── */
+/* ─── 危险操作 — 注销用户(内联面板) ─── */
 .ue-anonymize {
   display: flex;
   flex-direction: column;

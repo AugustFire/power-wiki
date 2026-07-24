@@ -72,6 +72,13 @@ export function usePaginatedList<T>(
       items.value.push(...result.items)
       offset.value += result.items.length
       hasMore.value = result.hasMore
+      // Defense:server reports hasMore=true 但返了 0 items —— 这种矛盾
+      // 应该不会出现(N+1 LIMIT 逻辑保证 rows.length > limit ↔ 有更多),
+      // 但万一出现兜一下,免得 button 永远在转圈。Items 数增长 0 +
+      // hasMore=false 即「这次真的没东西」,后续 guard 直接挡住重试。
+      if (result.items.length === 0 && result.hasMore) {
+        hasMore.value = false
+      }
     } catch (e) {
       error.value = e
     } finally {

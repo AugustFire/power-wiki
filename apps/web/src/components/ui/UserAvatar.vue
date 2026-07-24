@@ -16,10 +16,10 @@ const props = withDefaults(
     /** tooltip */
     title?: string
     /** Background colour. Defaults to the brand accent. */
-    color?: string
+    color?: string | null
     /** M11 头像形态:由调用方传的 user 对象派生,不传则走 initials+color */
-    avatarKind?: User['avatarKind']
-    avatarRef?: User['avatarRef']
+    avatarKind?: User['avatarKind'] | null
+    avatarRef?: User['avatarRef'] | null
     /** custom 模式拼 /api/user-avatars/{userId}/raw 用,preset 不需要 */
     userId?: string | null
   }>(),

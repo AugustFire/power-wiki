@@ -1,8 +1,9 @@
 /**
  * Spaces routes (Stage 4c — access-scoped; Phase A — add accessGrants).
  *
- *   GET /api/spaces         list spaces visible to the current user
- *   GET /api/spaces/:id     single space (must be visible to current user)
+ *   GET   /api/spaces         list spaces visible to the current user
+ *   GET   /api/spaces/:id     single space (must be visible to current user)
+ *   PATCH /api/spaces/:id     update shared-space metadata (space-admin)
  *
  * Visibility:
  *   - admin sees every space, with full `accessGroupIds` + `accessGrants`。
@@ -18,7 +19,7 @@
 
 import { Hono } from 'hono'
 import { asc, eq, inArray } from 'drizzle-orm'
-import { PaginatedListSchema, SpaceSchema } from '@power-wiki/shared/schemas'
+import { PaginatedListSchema, SpaceSchema, UpdateSpaceInputSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { spaceGroupAccess, spaces } from '../db/schema'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
@@ -26,7 +27,8 @@ import { rowToSpace } from '../lib/rowMappers'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
 import { loadGrantsForSpace, loadGrantsForSpaces } from '../lib/permissions'
-import { getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
+import { canAdminSpace, getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
+import { updateSpaceMetadata } from '../lib/spaceMetadata'
 import type { Variables } from '../auth/middleware'
 
 export const spacesRouter = new Hono<{ Variables: Variables }>()
@@ -181,6 +183,42 @@ spacesRouter.get('/:id', async (c) => {
       ...rowToSpace(row, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(id)),
       viewerRole: roleMap.get(id) ?? null,
+    }),
+  )
+})
+
+/* ─── PATCH /api/spaces/:id ──────────────────────────────────────────── */
+spacesRouter.patch('/:id', async (c) => {
+  const me = principalFromUser(c.get('user'))
+  const id = c.req.param('id')
+  const [existing] = await db.select().from(spaces).where(eq(spaces.id, id)).limit(1)
+
+  if (
+    !existing ||
+    existing.kind !== 'shared' ||
+    (!me.isAdmin && !(await canAdminSpace(me, id)))
+  ) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  const body = await c.req.json().catch(() => ({}))
+  const parsed = UpdateSpaceInputSchema.safeParse(body)
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    return c.json({ error: 'invalid_input', message: '至少需要更新一个字段' }, 400)
+  }
+
+  const updated = await updateSpaceMetadata(id, parsed.data)
+  if (!updated) return c.json({ error: 'not_found' }, 404)
+
+  const statsBySpace = await getSpacePageStats([id])
+  return c.json(
+    SpaceSchema.parse({
+      ...rowToSpace(updated, { includeOwner: false }),
+      ...statsToDto(statsBySpace.get(id)),
+      viewerRole: 'admin',
     }),
   )
 })

@@ -56,7 +56,21 @@ export const users = pgTable('users', {
    *  常量时间校验,不要在这里做字符串比较或 decode。 */
   passwordHash: text('password_hash').notNull(),
   role: text('role', { enum: ['admin', 'user'] }).notNull().default('user'),
-  status: text('status', { enum: ['active', 'disabled', 'must_reset_password'] })
+  /**
+   * 账号状态 4 态(M16):
+   *   - 'active'              正常,可登录可操作
+   *   - 'disabled'            admin 临时禁用;enable 端点可恢复
+   *   - 'must_reset_password' 新建/重置密码后待首次重设
+   *   - 'anonymized'          admin 匿名化(不可逆),name/email/password/
+   *                           avatar 全清,sweep 见 adminUsers.ts anonymize
+   *                           handler。enable 端点拒绝(409 invalid_state)。
+   * CHECK users_status_check 限定 4 态(迁移 0030 加)。
+   * 早期代码靠 name='已注销用户' 作为 anonymized 的 sentinel string;
+   * M16 起 status 字段即是事实来源,sentinel 仅作渲染兜底。
+   */
+  status: text('status', {
+    enum: ['active', 'disabled', 'must_reset_password', 'anonymized'],
+  })
     .notNull()
     .default('must_reset_password'),
   color: text('color').notNull().default('#0052CC'),

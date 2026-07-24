@@ -164,11 +164,13 @@ export interface User {
   name: string
   /** 'admin' | 'user' — admin 可进 /manager 后台 */
   role: 'admin' | 'user'
-  /** 'active' | 'disabled' | 'must_reset_password'
+  /** 'active' | 'disabled' | 'must_reset_password' | 'anonymized'(M16)
    *  - active: 正常使用
-   *  - disabled: admin 禁用,无法登录
-   *  - must_reset_password: 首次登录必须改密码 */
-  status: 'active' | 'disabled' | 'must_reset_password'
+   *  - disabled: admin 临时禁用,enable 可恢复
+   *  - must_reset_password: 首次登录必须改密码
+   *  - anonymized: admin 永久匿名化(不可逆),identity 已 scrub;
+   *    与 shared/schemas.ts UserSchema.status 同步 */
+  status: 'active' | 'disabled' | 'must_reset_password' | 'anonymized'
   /** 头像 / 标识色,Atlas 设计 token 兼容的色值 */
   color: string
   /** M11 头像形态:null = initials+color;preset = 静态预制;custom = MinIO 用户头像
@@ -194,6 +196,52 @@ export interface UserGroup {
   memberCount?: number
   /** 关联的 user.id 列表(完整 group 信息时返回) */
   memberIds?: string[]
+}
+
+/* ---------- M17: 人员管理 server-side filter ----------
+ * 与 packages/shared/src/schemas.ts 的 AdminUsersListQuerySchema /
+ * AdminUsersListResponseSchema 一一对应。*/
+
+/** `GET /api/admin/users` 的 query 参数 */
+export interface AdminUsersListQuery {
+  limit?: number
+  offset?: number
+  q?: string
+  status?: 'active' | 'disabled' | 'must_reset_password' | 'anonymized'
+  role?: 'admin' | 'user'
+}
+
+/** topLoggedIn / PeopleContextPanel 用的精简 user DTO */
+export interface UserSummary {
+  id: string
+  name: string | null
+  color: string | null
+  avatarKind?: 'preset' | 'custom' | null
+  avatarRef?: string | null
+  lastLoginAt: number | null
+}
+
+/** 人员管理页右栏统计块 —— system-wide,不受 filter 影响。 */
+export interface UserSystemStats {
+  totalCount: number
+  adminCount: number
+  activeCount: number
+  mustResetCount: number
+  disabledCount: number
+  anonymizedCount: number
+  recentlyActiveCount: number
+  neverLoggedInCount: number
+  topLoggedIn: UserSummary[]
+}
+
+/** `GET /api/admin/users` 的响应包装。`total` 跟 filter 走,`systemStats` 不跟。 */
+export interface AdminUsersListResponse {
+  items: User[]
+  limit: number
+  offset: number
+  hasMore: boolean
+  total: number
+  systemStats: UserSystemStats
 }
 
 /** 空间 — 顶层组织单元,页面归属一个 space,space 通过用户组授权访问 */

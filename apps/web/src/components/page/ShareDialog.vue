@@ -14,12 +14,12 @@
  * editor)。后端 404 时 dialog 显示「页面不可分享」,与现有 canReadPage
  * 404-not-403 政策一致。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Modal from '@/components/ui/Modal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
-import { formatRelativeTime } from '@/lib/relativeTime'
+import { formatRelativeTime, formatRelativeTimeFuture } from '@/lib/relativeTime'
 import { useToast } from '@/composables/useToast'
 import type { CreateShareResponse, ShareRow } from '@power-wiki/shared'
 
@@ -74,6 +74,9 @@ async function load() {
 }
 
 onMounted(load)
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer)
+})
 watch(
   () => props.open,
   (isOpen) => {
@@ -82,6 +85,9 @@ watch(
       justCreatedCopied.value = false
       createError.value = null
       void load()
+    } else if (copyTimer) {
+      clearTimeout(copyTimer)
+      copyTimer = null
     }
   },
 )
@@ -168,11 +174,16 @@ async function copyUrl() {
     }
   }
   if (copied) {
+    // 跟 UsersView 重置密码的 otp-banner 同节奏:点 复制 → 立刻给「已复制」
+    // 反馈 → 短暂保留(1.2s 够看清一次)→ 自动收起整个「分享链接已创建」
+    // banner。链接已经进剪贴板,banner 留着是冗余 —— 跟「明文 token 仅
+    // 此一次展示」的警告语义一致:用完即丢。
     justCreatedCopied.value = true
     if (copyTimer) clearTimeout(copyTimer)
     copyTimer = setTimeout(() => {
+      justCreated.value = null
       justCreatedCopied.value = false
-    }, 3000)
+    }, 1200)
   } else {
     toast.error('复制失败,请手动选中链接复制')
   }
@@ -187,6 +198,15 @@ function statusKind(s: ShareRow): 'active' | 'expired' | 'revoked' {
   if (s.revokedAt !== null) return 'revoked'
   if (s.expiresAt !== null && s.expiresAt <= Date.now()) return 'expired'
   return 'active'
+}
+/** 过期列:future → 「N 天后过期」;已过期 → 绝对日期(muted,跟 pill 状态互补);
+ *  永不(已撤销 / 已过期但又想看时间轴)→ 落到 status pill 之外的安静显示。 */
+function expiresLabel(s: ShareRow): string {
+  if (s.expiresAt === null) return ''
+  if (s.expiresAt <= Date.now()) {
+    return new Date(s.expiresAt).toLocaleDateString('zh-CN')
+  }
+  return formatRelativeTimeFuture(s.expiresAt) + '后过期'
 }
 </script>
 
@@ -292,7 +312,7 @@ function statusKind(s: ShareRow): 'active' | 'expired' | 'revoked' {
               </td>
               <td>
                 <span v-if="s.expiresAt" :title="new Date(s.expiresAt).toLocaleString()">
-                  {{ formatRelativeTime(s.expiresAt) }}
+                  {{ expiresLabel(s) }}
                 </span>
                 <span v-else class="muted">永不过期</span>
               </td>

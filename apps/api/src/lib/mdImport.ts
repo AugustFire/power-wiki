@@ -208,7 +208,10 @@ function inlineTokensToParagraph(tokens: Token[]): TiptapJSON {
         content.push({
           type: 'text',
           text: tok.content,
-          marks: activeMarks.map((m) => ({ type: m.type.name, attrs: m.attrs })),
+          marks: activeMarks.map((m) => ({
+            type: MARK_NAME_MAP[m.type.name] ?? m.type.name,
+            attrs: m.attrs,
+          })),
         })
         break
       }
@@ -407,6 +410,22 @@ const NODE_NAME_MAP: Record<string, string> = {
 }
 
 /**
+ * Mark 名映射(prosemirror-markdown / markdown-it → Tiptap StarterKit)。
+ *
+ * prosemirror-markdown 的默认 schema 用 ProseMirror 标准名 `strong` / `em`,
+ * markdown-it 的 GFM 删除线是 `strikethrough`。Tiptap StarterKit 对应的 mark
+ * 分别叫 `bold` / `italic` / `strike`(HTML 渲染才是 <strong>/<em>/<s>)。
+ * 不映射会让 contentJson 里带上 Tiptap schema 不认识的 mark type,
+ * EditView `setContent` 直接抛 "no mark type strong"(ReadView 走 HTML 不受影响)。
+ * `code` / `link` 两端同名,无需映射。
+ */
+const MARK_NAME_MAP: Record<string, string> = {
+  strong: 'bold',
+  em: 'italic',
+  strikethrough: 'strike',
+}
+
+/**
  * 把 ProseMirror node 树的 toJSON() 输出里 type 字段从 snake_case 映射到
  * camelCase。递归遍历 content 数组,不改变 marks / attrs / text。
  */
@@ -422,6 +441,17 @@ function mapTypeDeep(node: unknown): unknown {
   const out: Record<string, unknown> = { ...obj }
   if (typeof out['type'] === 'string' && NODE_NAME_MAP[out['type']]) {
     out['type'] = NODE_NAME_MAP[out['type']]
+  }
+  // Text 节点上的 marks 数组:把 strong/em/strikethrough 重命名成 Tiptap 名。
+  if (Array.isArray(out['marks'])) {
+    out['marks'] = (out['marks'] as unknown[]).map((mk) => {
+      if (!mk || typeof mk !== 'object') return mk
+      const m = { ...(mk as Record<string, unknown>) }
+      if (typeof m['type'] === 'string' && MARK_NAME_MAP[m['type']]) {
+        m['type'] = MARK_NAME_MAP[m['type']]
+      }
+      return m
+    })
   }
   if ('content' in out) {
     out['content'] = mapTypeDeep(out['content'])

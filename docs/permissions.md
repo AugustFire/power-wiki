@@ -51,7 +51,7 @@ power-wiki 的权限是什么、谁能做什么、为什么这样设计。
 | 身份 | 怎么来的 | 一句话概括 |
 |---|---|---|
 | **全局 admin** | `users.role = 'admin'`(系统级) | 超级管理员,**任何** shared space 都有全权;唯一能管平台层资源(改空间名、删空间、看审计) |
-| **space-admin** | 该 space 上被显式 / 隐式授予 `role='admin'` | 空间管理员,**本空间**的事全权(管成员、改权限),但不能改空间元信息也不能删空间 |
+| **space-admin** | 该 space 上被显式 / 隐式授予 `role='admin'` | 空间管理员,**本空间**的事全权(管成员、改权限、改空间名/描述/颜色),但**不能**删空间、看不到审计、管不了用户组 |
 | **space-editor** | 该 space 上有 `role='editor'` | 空间编辑者,读写内容 + 分享 + 设限制,**不能**管成员 |
 | **space-viewer** | 该 space 上有 `role='viewer'` | 空间浏览者,只读,但能点赞、关注、发评论 |
 | **页作者** | `pages.authorId = me.id`(与空间角色正交) | 自己写的页面,view / edit 限制都不挡;share / 编辑都行 |
@@ -87,7 +87,7 @@ power-wiki 的权限是什么、谁能做什么、为什么这样设计。
 | 撤销 / 列出 share | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | **空间管理**(成员角色 + 元信息) | | | | | | |
 | 管空间成员(viewer / editor / admin 授权) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 改空间基本信息(名 / 描述 / 颜色 / 图标) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 改空间基本信息(名 / 描述 / 颜色 / 图标) | ✅ | ✅⁶ | ❌ | ❌ | ❌ | ❌ |
 | 删除空间 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 创建 / 删除 / 重命名用户组 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | 创建新空间 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -102,6 +102,7 @@ power-wiki 的权限是什么、谁能做什么、为什么这样设计。
 ³ 页作者对自己写的页面有完整权限(读、写、share、限制、版本),跟他在哪个 space、有没有角色无关。
 ⁴ `assertAdminNotWritingPersonalSpace` 拦 global admin 在 personal space 上的写(403 `personal_space_readonly`)。personal space 只 owner 能写。
 ⁵ 删他人评论需要 `canEditPage`;这跟空间 admin 角色(space-admin)无关,纯粹是「你能不能编辑这个页面」。
+⁶ space-admin 改空间基本信息**仅限 shared space**(personal space 走 `assertAdminNotWritingPersonalSpace` 写保护,owner-only)。改动通过 `PATCH /api/spaces/:id`,`kind !== 'shared'` 直接 404。
 
 ---
 
@@ -127,7 +128,7 @@ Anonymous            命中 share token 的未登录访客
 
 - **范围**:整个系统任意 shared space,personal space 受 `assertAdminNotWritingPersonalSpace` 写保护(只读)。
 - **来由**:user 行上的 `role` 字段(`admin` / `user`)。**这条不能被任何空间授权动作覆盖** —— 全局身份靠 user row,不是 space_role_grants。
-- **能做什么别人做不了的**:删空间 / 改空间元信息 / 看审计 / 管用户组 / 新建 space。
+- **能做什么别人做不了的**:删空间 / 看审计 / 管用户组 / 新建 space / 改 personal space 元信息(personal space 写保护只挡 admin,空间级 metadata 写保护 user 级才挡)。
 
 ### space-admin / space-editor / space-viewer
 
@@ -165,9 +166,9 @@ Anonymous            命中 share token 的未登录访客
 
 ### 1. **`space-admin` ≠ `全局 admin`**
 
-space-admin 是 *空间级* 管理员,只对本空间管成员和权限,**改不了**空间本身的元信息(名 / 描述 / 颜色),**删不掉**空间,**看不了**审计日志。这三件事只有全局 admin 能做。
+space-admin 是 *空间级* 管理员,对本空间管成员、改权限、**改**空间元信息(名 / 描述 / 颜色 / 图标,**仅限 shared space**)。**删不掉**空间,**看不了**审计日志,**管不了**用户组 / 新建 space。这三件事只有全局 admin 能做。
 
-**踩坑模式**:「我是这个空间的 owner,改个空间名怎么不行?」—— 改空间名走 `adminSpaces.ts` 的 `requireAdmin` 门,space-admin 不通过。得找全局 admin。
+**踩坑模式**:「我是这个空间的 owner,改个空间名怎么不行?」—— 改空间名走 `PATCH /api/spaces/:id`,`requireSpaceAdmin`-style 门(全局 admin OR `canAdminSpace`)。space-admin 通过这条路径即可改名。删除 / 审计 / 用户组 / 新建 space 走 `requireAdmin`,space-admin 不通过,得找全局 admin。
 
 ### 2. **`role='admin'` 不能授给组**
 
@@ -344,7 +345,7 @@ view 限制 *必须* 让管理员能编辑 —— 但 `canEditPage` 已经蕴含
 | 「⋯」→「添加评论」 | `ReadView.vue` | `canReadPage` | `canReadPage` |
 | UserMenu 「管理后台」入口 | `UserMenu.vue:202` | `authStore.isAdmin` | `requireAdmin`(`adminXxxRouter`) |
 | `/spaces/:id`(SpaceEditView) | `SpaceEditView.vue` | 全局 admin OR space-admin(顶层 `meta.requiresAuth`,组件内部分 section gate) | `isAdmin OR canAdminSpace` |
-| `SpaceEditView` 基本信息(name / desc / color) | `SpaceEditView.vue` | 全局 admin only(组件内 v-if) | `requireAdmin`(`adminSpacesRouter`) |
+| `SpaceEditView` 基本信息(name / desc / color / icon) | `SpaceEditView.vue` | 全局 admin OR space-admin(组件内 v-if,`canEditMetadata`) | `PATCH /api/spaces/:id`(`isAdmin OR canAdminSpace`,`kind === 'shared'`) |
 | `SpaceEditView` 访问控制(用户组 + 个人 两栏) | `SpaceEditView.vue` | 全局 admin OR space-admin | `isAdmin OR canAdminSpace` |
 | `SpaceEditView` 危险操作「删除空间」 | `SpaceEditView.vue` | 全局 admin only(组件内 v-if) | `requireAdmin` |
 | Sidebar 「管理空间」icon 按钮 | `Sidebar.vue` | `canAdminActiveSpace`(全局 admin OR `s.viewerRole === 'admin'`) | `isAdmin OR canAdminSpace` |
@@ -355,8 +356,15 @@ view 限制 *必须* 让管理员能编辑 —— 但 `canEditPage` 已经蕴含
 
 > ✅ **v0.7 落地**:`/spaces/:id` 顶层路由(`meta.requiresAuth` only,无 `requiresAdmin`)。组件按身份切 section 显示:
 >
-> - 全局 admin:看全功能 — 基本信息表单(name / desc / 颜色)+ 访问控制 + 危险操作(删除空间)
-> - space-admin:看访问控制 + 一行顶部 info banner 说明"空间基本信息 / 删除由全局 admin 处理"
+> - 全局 admin:看全功能 — 基本信息表单(name / desc / 颜色 / 图标)+ 访问控制 + 危险操作(删除空间)
+> - space-admin:看基本信息表单(name / desc / 颜色 / 图标,**仅 shared space**)+ 访问控制;**危险操作始终隐藏**(删除走 `/api/admin/spaces/:id`,`requireAdmin` 兜底)
+>
+> 保存路径也分流:
+>
+> - admin:`PATCH /api/admin/spaces/:id`(旧入口,契约不变)
+> - space-admin:`PATCH /api/spaces/:id`(新入口,`isAdmin OR canAdminSpace` + `kind === 'shared'`,失败统一 404)
+>
+> 两个 endpoint 共用 `apps/api/src/lib/spaceMetadata.ts` 的 `updateSpaceMetadata` helper,字段语义统一(`description` / `icon` 显式 `null` 清空,`name` 仅 trim)。
 >
 > 数据加载也分流:
 >
@@ -559,7 +567,7 @@ regular:
 | ReadView 「⋯」菜单 | `ReadView.vue` | items: `canEditPage`(限制 + 分享 + 编辑)、`canReadPage`(历史 + 关注) |
 | EditView mount 重定向 | `EditView.vue` `onMounted` | 拉详情 → 不通过 → `router.replace('/p/:id?readonly=1')` |
 | 「空间设置」入口 | `TopBar.vue` | `isAdmin OR canAdminSpace(...)` |
-| 「访问控制」入口 | `SpaceEditView.vue` | 同上;基本信息 + 危险 = `requireAdmin` 兜底 |
+| 「访问控制」入口 | `SpaceEditView.vue` | 同上;基本信息 = `isAdmin OR canAdminSpace`(shared only);危险 = `requireAdmin` 兜底 |
 | `/manager/*` 全局 | `router/index.ts` | `meta: { requiresAdmin: true }` |
 | `canManageRestrictions` | `routes/pageRestrictions.ts` | `canEditPage`(`canReadPage` 已蕴含) |
 | `gateShareManage` | `routes/pageShares.ts` | `canEditPage OR canAdminSpace` |

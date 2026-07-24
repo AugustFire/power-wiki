@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
 import extensions from '@/editor/extensions'
+import { normalizeLegacyMarks } from '@/editor/htmlToJson'
 import { uploadAndInsert, isAllowedFile, UploadError } from '@/editor/uploadAndInsert'
 import type { UploadErrorKind } from '@/editor/uploadAndInsert'
 import { useActivePageId } from '@/composables/useActivePageId'
@@ -195,7 +196,7 @@ function triggerFilePicker(): void {
 
 const editor = useEditor({
   extensions,
-  content: props.modelValue,
+  content: normalizeLegacyMarks(props.modelValue),
   editorProps: {
     attributes: {
       class: 'tiptap',
@@ -262,7 +263,7 @@ watch(
     if (!ed) return
     const current = JSON.stringify(ed.getJSON())
     if (JSON.stringify(val) !== current) {
-      ed.commands.setContent(val, false)
+      ed.commands.setContent(normalizeLegacyMarks(val), false)
     }
   }
 )

@@ -7,6 +7,11 @@
  * /manager/groups pages; the old paths redirect to ?tab=users|groups
  * (see router/index.ts) for back-compat.
  *
+ * M17: users tab 的 search(name/email) + 状态 + 角色走服务端筛选。
+ *   `users.value` 是当前筛选下的分页结果,`usersTotal` 是命中总数；
+ *   `usersSystemStats` 保持系统级口径,供标题与右侧概览使用。Groups tab
+ *   不挂 filter(状态/角色概念不适用)。
+ *
  * Implementation note: the two tabs are inlined rather than factored
  * into sub-components because the existing UsersView / GroupsView
  * each lean on module-level refs from `useManagerActions()` for
@@ -62,14 +67,15 @@ const {
   groupsLoading,
   usersHasMore,
   groupsHasMore,
-  usersError: usersListError,
-  groupsError: groupsListError,
+  usersTotal,
+  usersSystemStats,
+  userFilters,
+  hasActiveFilter,
+  clearUserFilters,
   ensureUsersLoaded,
   ensureGroupsLoaded,
   loadMoreUsers,
   loadMoreGroups,
-  refreshUsers,
-  refreshGroups,
   upsertUser,
   removeUser,
   upsertGroup,
@@ -99,18 +105,6 @@ watch(showCreateUser, (next, prev) => {
     createUserError.value = null
   }
 })
-
-async function loadUsers() {
-  userLoadError.value = null
-  await refreshUsers()
-  if (usersListError.value) {
-    userLoadError.value =
-      usersListError.value instanceof ApiError
-        ? usersListError.value.message
-        : '加载用户列表失败'
-    uiStore.setError(userLoadError.value)
-  }
-}
 
 async function submitCreateUser() {
   if (creatingUser.value) return
@@ -202,13 +196,44 @@ async function resetUserPassword(u: User) {
   }
 }
 
+/**
+ * 行级直接注销:不进编辑页就能完成。M16 起跟编辑页内的内联面板
+ * 行为等价(同一 API、同样的 sweep),只是确认方式用 useConfirm
+ * 危险对话框 + 强文案,不再要求 typed-name(内部 R&D 工具够用,且
+ * 用户名已在 confirm message 里显眼展示)。
+ */
+async function deregisterUser(u: User) {
+  const ok = await askConfirm({
+    title: '注销用户',
+    message:
+      `确定要注销「${u.name}」吗?该操作不可撤销 —— \n` +
+      '· 清除姓名、邮箱、密码、头像\n' +
+      '· 清除该用户的所有组成员关系、关注、点赞与未读通知\n' +
+      '· 移除该用户的直接空间授权与页面级限制\n' +
+      '· 已创建的页面与评论保留,署名变为「已注销用户」',
+    confirmText: '确认注销',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    const updated = await api.admin.users.anonymize(u.id)
+    upsertUser(updated)
+    uiStore.notify(`已注销用户「${u.name}」`)
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'last_admin') {
+      uiStore.setError('不能注销最后一个管理员')
+    } else if (e instanceof ApiError && e.code === 'self_anonymize') {
+      uiStore.setError('不能注销自己的账号')
+    } else {
+      uiStore.setError(e instanceof ApiError ? e.message : '注销失败,请重试')
+    }
+  }
+}
+
 function openUserEdit(u: User) {
   void router.push(`/manager/people/users/${u.id}`)
 }
-
-const adminCount = computed(
-  () => users.value.filter((u) => u.role === 'admin' && u.status !== 'disabled').length,
-)
 
 function formatLastLogin(ts: number | null): string {
   if (!ts) return '从未'
@@ -224,6 +249,7 @@ function userStatusLabel(s: User['status']): { text: string; tone: 'good' | 'war
     case 'active': return { text: '正常', tone: 'good' }
     case 'must_reset_password': return { text: '需重置', tone: 'warn' }
     case 'disabled': return { text: '已禁用', tone: 'bad' }
+    case 'anonymized': return { text: '已注销', tone: 'muted' }
   }
 }
 
@@ -247,20 +273,6 @@ watch(showCreateGroup, (next, prev) => {
     createGroupError.value = null
   }
 })
-
-async function loadGroups() {
-  groupLoadError.value = null
-  await refreshGroups()
-  if (groupsListError.value) {
-    groupLoadError.value =
-      groupsListError.value instanceof ApiError
-        ? groupsListError.value.message
-        : '加载用户组失败'
-    uiStore.setError(groupLoadError.value)
-    return
-  }
-  // memberCount is aggregated server-side; no per-group `get` calls.
-}
 
 async function submitCreateGroup() {
   if (creatingGroup.value) return
@@ -314,10 +326,19 @@ function formatDate(ts: number): string {
  *     idempotent: if the cache already has data, it returns immediately
  *     and shares with the right-side PeopleContextPanel. ─── */
 async function loadActiveTab() {
-  if (activeTab.value === 'users') {
-    await ensureUsersLoaded()
-  } else {
-    await ensureGroupsLoaded()
+  if (activeTab.value === 'users') userLoadError.value = null
+  else groupLoadError.value = null
+
+  try {
+    if (activeTab.value === 'users') await ensureUsersLoaded()
+    else await ensureGroupsLoaded()
+  } catch (e) {
+    const message = e instanceof ApiError
+      ? e.message
+      : activeTab.value === 'users' ? '加载用户列表失败' : '加载用户组失败'
+    if (activeTab.value === 'users') userLoadError.value = message
+    else groupLoadError.value = message
+    uiStore.setError(message)
   }
 }
 
@@ -337,7 +358,14 @@ watch(activeTab, (t) => {
     <header class="pv-header">
       <div class="pv-header-text">
         <h1 class="pv-title">人员</h1>
-        <p class="pv-sub">共 {{ users.length }} 个用户,{{ adminCount }} 个管理员 · {{ groups.length }} 个用户组</p>
+        <p class="pv-sub">
+          <template v-if="activeTab === 'users' && hasActiveFilter()">
+            找到 {{ usersTotal }} 个用户,系统共 {{ usersSystemStats?.totalCount ?? 0 }} 个用户、{{ usersSystemStats?.adminCount ?? 0 }} 个管理员 · {{ groups.length }} 个用户组
+          </template>
+          <template v-else>
+            共 {{ usersSystemStats?.totalCount ?? usersTotal }} 个用户,{{ usersSystemStats?.adminCount ?? 0 }} 个管理员 · {{ groups.length }} 个用户组
+          </template>
+        </p>
       </div>
       <!-- Active tab determines which create button shows. Showing both
            was confusing because the form opens inside the active tab's
@@ -377,7 +405,7 @@ watch(activeTab, (t) => {
       >
         <span class="material-symbols-outlined">person</span>
         <span>用户</span>
-        <span class="pv-tab-count">{{ users.length }}</span>
+        <span class="pv-tab-count">{{ usersSystemStats?.totalCount ?? usersTotal }}</span>
       </button>
       <button
         type="button"
@@ -395,7 +423,7 @@ watch(activeTab, (t) => {
 
     <!-- ─── Users pane ─── -->
     <section v-show="activeTab === 'users'" class="pv-pane">
-      <div v-if="userLoadError" class="uv-error">{{ userLoadError }}</div>
+      <div v-if="activeTab === 'users' && userLoadError" class="uv-error">{{ userLoadError }}</div>
 
       <div v-if="otpPassword" class="otp-banner" role="alert">
         <div class="otp-row">
@@ -453,18 +481,80 @@ watch(activeTab, (t) => {
       </div>
 
       <div v-if="usersLoading && users.length === 0" class="uv-loading">加载中…</div>
-      <table v-else-if="users.length > 0" class="users-table">
-        <thead>
-          <tr>
-            <th class="col-user">用户</th>
-            <th>角色</th>
-            <th>状态</th>
-            <th>最后登录</th>
-            <th class="col-actions">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="u in users" :key="u.id" :class="{ 'is-disabled': u.status === 'disabled' }">
+      <template v-else>
+      <!-- Filter toolbar (M17) — 仅 users tab 显示,groups tab 不适用
+           状态/角色概念。视觉上跟下面的表格连成一体:工具栏底边去掉,
+           表格顶边内嵌,搜索框宽度按内容自适应而不是 1 1 280。-->
+      <!-- Filter toolbar (M17) — 搜索框做成「主输入框」:无外部 label,
+           icon + placeholder 自带语义;两个 select 跟搜索框之间用 24px
+           间距 + 1px 分隔线分组;整组左 padding 24px,「搜索」字样从
+           左侧框线往里收。 -->
+      <div v-if="users.length > 0 || hasActiveFilter()" class="users-shell">
+        <div class="filter-group filter-group-search">
+          <div class="search-input-wrap">
+            <span class="material-symbols-outlined search-icon">search</span>
+            <input
+              id="pv-search"
+              v-model="userFilters.q"
+              type="text"
+              class="input search-input"
+              placeholder="按姓名或邮箱搜索…"
+              autocomplete="off"
+            />
+            <button
+              v-if="userFilters.q"
+              type="button"
+              class="search-clear"
+              title="清空搜索"
+              @click="userFilters.q = ''"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div class="filter-group-select-wrapper">
+          <div class="filter-group filter-group-select">
+            <label class="filter-label" for="pv-status">状态</label>
+            <select id="pv-status" v-model="userFilters.status" class="select">
+              <option :value="undefined">全部状态</option>
+              <option value="active">正常</option>
+              <option value="must_reset_password">需重置密码</option>
+              <option value="disabled">已禁用</option>
+              <option value="anonymized">已注销</option>
+            </select>
+          </div>
+          <div class="filter-group filter-group-select">
+            <label class="filter-label" for="pv-role">角色</label>
+            <select id="pv-role" v-model="userFilters.role" class="select">
+              <option :value="undefined">全部角色</option>
+              <option value="admin">管理员</option>
+              <option value="user">普通用户</option>
+            </select>
+          </div>
+        </div>
+        <button
+          v-if="hasActiveFilter()"
+          type="button"
+          class="clear-filters"
+          @click="clearUserFilters"
+        >
+          <span class="material-symbols-outlined">filter_alt_off</span>
+          <span>清空筛选</span>
+        </button>
+      </div>
+      <div v-if="users.length > 0 || hasActiveFilter()" class="users-shell">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th class="col-user">用户</th>
+              <th>角色</th>
+              <th>状态</th>
+              <th>最后登录</th>
+              <th class="col-actions">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+          <tr v-for="u in users" :key="u.id" :class="{ 'is-disabled': u.status === 'disabled' || u.status === 'anonymized' }">
             <td>
               <div class="user-cell">
                 <UserAvatar :size="32" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
@@ -479,8 +569,10 @@ watch(activeTab, (t) => {
             <td class="last-login">{{ formatLastLogin(u.lastLoginAt) }}</td>
             <td>
               <div class="row-actions">
-                <button type="button" class="ra-btn" :title="u.status === 'disabled' ? '启用' : '禁用'" @click="toggleDisableUser(u)">
-                  <span class="material-symbols-outlined">{{ u.status === 'disabled' ? 'check_circle' : 'block' }}</span>
+                <!-- 禁用/启用 — anonymized 是终态,整按钮隐藏(后端 enable
+                     端点也会拒,见 adminUsers.ts M16)。 -->
+                <button v-if="u.status !== 'anonymized'" type="button" class="ra-btn" :title="u.status === 'disabled' ? '启用' : '禁用'" @click="toggleDisableUser(u)">
+                  <span class="material-symbols-outlined">{{ u.status === 'disabled' ? 'lock_open' : 'lock' }}</span>
                 </button>
                 <button type="button" class="ra-btn" :disabled="resettingUserId === u.id" title="重置密码" @click="resetUserPassword(u)">
                   <span class="material-symbols-outlined">lock_reset</span>
@@ -488,13 +580,37 @@ watch(activeTab, (t) => {
                 <button type="button" class="ra-btn" title="编辑" @click="openUserEdit(u)">
                   <span class="material-symbols-outlined">edit</span>
                 </button>
+                <!-- 注销 — 不可逆的破坏性操作,直接列在列表就能用,
+                     不必绕编辑页。useConfirm 危险对话框阻击误点。 -->
+                <button
+                  v-if="u.status !== 'anonymized'"
+                  type="button"
+                  class="ra-btn ra-btn-danger"
+                  title="注销用户"
+                  @click="deregisterUser(u)"
+                >
+                  <span class="material-symbols-outlined">person_off</span>
+                </button>
               </div>
             </td>
           </tr>
-        </tbody>
-      </table>
-      <EmptyState v-else icon="group" title="还没有用户" hint="用户首次登录后会出现在这里。" size="sm" />
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-else-if="!hasActiveFilter() && !usersLoading" icon="group" title="还没有用户" hint="用户首次登录后会出现在这里。" size="sm" />
+      <EmptyState
+        v-else
+        icon="search_off"
+        title="没有匹配的用户"
+        hint="试着调整搜索关键词或清空筛选条件"
+        size="sm"
+      >
+        <button type="button" class="btn ghost" @click="clearUserFilters">清空筛选</button>
+      </EmptyState>
+      </template>
 
+      <!-- Load-more 跟 table 同生死 — filter 空匹配时上方已是 EmptyState,
+           再叠一个「已加载全部」footer 没意义。 -->
       <div v-if="users.length > 0" class="load-more-row">
         <button
           v-if="usersHasMore"
@@ -511,7 +627,7 @@ watch(activeTab, (t) => {
 
     <!-- ─── Groups pane ─── -->
     <section v-show="activeTab === 'groups'" class="pv-pane">
-      <div v-if="groupLoadError" class="uv-error">{{ groupLoadError }}</div>
+      <div v-if="activeTab === 'groups' && groupLoadError" class="uv-error">{{ groupLoadError }}</div>
 
       <div v-if="showCreateGroup" class="create-panel">
         <h2 class="cp-title">创建用户组</h2>
@@ -790,16 +906,13 @@ watch(activeTab, (t) => {
 .users-table {
   width: 100%;
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 4px);
   border-collapse: separate;
   border-spacing: 0;
   font-size: 14px;
-  overflow: hidden;
 }
 .users-table th {
   text-align: left;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;
@@ -866,6 +979,156 @@ watch(activeTab, (t) => {
 .ra-btn:hover { background: var(--bg-canvas); color: var(--text-1); }
 .ra-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ra-btn .material-symbols-outlined { font-size: 18px; }
+/* 注销(不可逆破坏性操作)— 默认 danger token,鼠标悬停加深 */
+.ra-btn-danger { color: var(--danger); }
+.ra-btn-danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* ─── Filter toolbar (M17) — 工具栏跟表格合并到同一个 card shell,
+ *     视觉上是一个整体。工具栏底边去掉,表格顶边内嵌。Input/Select
+ *     跟 AuditView / 其他管理页的 .toolbar.card 保持 token 一致:
+ *     bg-canvas 底色、radius-md 圆角、focus 加 2px accent-soft 光环;
+ *     label 不强行 uppercase,留 inline 友好样式。 ─── */
+.users-shell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm, 0 1px 1px rgba(9, 30, 66, 0.13), 0 0 1px rgba(9, 30, 66, 0.13));
+}
+.users-shell .toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 16px 24px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.users-shell .users-table-wrap { background: var(--bg); }
+.users-shell .users-table {
+  border: 0;
+  border-radius: 0;
+}
+/* 三段式工具栏:左侧大块搜索(主输入,无外部 label),中间分组的状态/角色,
+   右侧清空筛选。两段之间用 1px 20px 高的分隔线分开,跟 Atlas section
+   风格一致。 */
+.filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 0 0 auto;
+  position: relative;
+  padding-right: 28px;
+}
+.filter-group:not(:last-child)::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.filter-group:last-child { padding-right: 0; }
+.filter-group-search { width: 400px; flex-shrink: 0; }
+.filter-group-select { flex: 0 0 auto; }
+.filter-group-select-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 28px;
+  padding-right: 28px;
+  position: relative;
+}
+.filter-group-select-wrapper::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.filter-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  flex-shrink: 0;
+  user-select: none;
+}
+.input, .select {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-family: var(--font-sans, inherit);
+  color: var(--text-1);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+.input:hover, .select:hover { border-color: var(--border-strong); }
+.input:focus, .select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.select { padding-right: 28px; cursor: pointer; }
+.filter-group .select { min-width: 156px; }
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-icon {
+  position: absolute;
+  left: 10px;
+  font-size: var(--icon-md, 16px);
+  color: var(--text-3);
+  pointer-events: none;
+}
+.search-input { padding-left: 32px; padding-right: 28px; width: 100%; }
+.search-clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm, 3px);
+  color: var(--text-3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.search-clear:hover { background: var(--bg-subtle); color: var(--text-1); }
+.search-clear .material-symbols-outlined { font-size: var(--icon-sm, 14px); }
+
+.clear-filters {
+  margin-left: auto;
+  height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md, 4px);
+  cursor: pointer;
+}
+.clear-filters:hover { background: var(--bg-subtle); color: var(--text-1); }
+.clear-filters .material-symbols-outlined { font-size: var(--icon-md, 16px); }
 
 /* Group cards */
 

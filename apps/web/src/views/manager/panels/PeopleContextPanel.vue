@@ -13,11 +13,17 @@
  * fetches; subsequent calls hit the cache. Net effect on /manager/people
  * mount: 1 `users?limit=200` + 1 `groups?limit=200` total — vs the old
  * 1 main `users?limit=50` + 2 panel `?limit=200` calls.
+ *
+ * M17: user stats come from `usersSystemStats` (server-aggregated,
+ * filter-independent) instead of being derived from `users.value` so the
+ * panel keeps showing the system-wide picture regardless of what the
+ * main table's filter is doing. Top-logged-in list is also returned
+ * server-side (`topLoggedIn`).
  */
 import { computed, onMounted } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
-import type { User, UserGroup } from '@power-wiki/shared'
+import type { UserGroup } from '@power-wiki/shared'
 import ContextPanel from '@/components/manager/ContextPanel.vue'
 import StatBlock from '@/components/manager/StatBlock.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -27,20 +33,22 @@ const stats = useManagerStats()
 const router = useRouter()
 const pagesStore = usePagesStore()
 
-/* ─── user stats (lifted from old UsersContextPanel) ─── */
-const totalUsers = computed(() => stats.users.value.length)
-const adminCount = computed(() => stats.users.value.filter((u) => u.role === 'admin').length)
-const regularUserCount = computed(() => stats.users.value.filter((u) => u.role === 'user').length)
-const activeCount = computed(() => stats.users.value.filter((u) => u.status === 'active').length)
-const mustResetCount = computed(
-  () => stats.users.value.filter((u) => u.status === 'must_reset_password').length,
+/* ─── user stats (server-aggregated, system-wide) ─── */
+const totalUsers = computed(() => stats.usersSystemStats.value?.totalCount ?? 0)
+const adminCount = computed(() => stats.usersSystemStats.value?.adminCount ?? 0)
+const regularUserCount = computed(
+  () => Math.max(0, totalUsers.value - adminCount.value),
 )
-const disabledCount = computed(() => stats.users.value.filter((u) => u.status === 'disabled').length)
-const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000
+const activeCount = computed(() => stats.usersSystemStats.value?.activeCount ?? 0)
+const mustResetCount = computed(() => stats.usersSystemStats.value?.mustResetCount ?? 0)
+const disabledCount = computed(() => stats.usersSystemStats.value?.disabledCount ?? 0)
+const anonymizedCount = computed(() => stats.usersSystemStats.value?.anonymizedCount ?? 0)
 const recentlyActiveCount = computed(
-  () => stats.users.value.filter((u) => u.lastLoginAt && Date.now() - u.lastLoginAt < SEVEN_DAYS).length,
+  () => stats.usersSystemStats.value?.recentlyActiveCount ?? 0,
 )
-const neverLoggedInCount = computed(() => stats.users.value.filter((u) => !u.lastLoginAt).length)
+const neverLoggedInCount = computed(
+  () => stats.usersSystemStats.value?.neverLoggedInCount ?? 0,
+)
 
 /* ─── group stats (lifted from old GroupsContextPanel) ─── */
 const totalGroups = computed(() => stats.groups.value.length)
@@ -63,12 +71,9 @@ const largestGroup = computed(() => {
 })
 
 /* ─── New in 5d: 最近登录 + 最近活动 (right panel fillers for 2K) ─── */
-const topLoggedIn = computed(() =>
-  [...stats.users.value]
-    .filter((u) => u.lastLoginAt)
-    .sort((a, b) => (b.lastLoginAt ?? 0) - (a.lastLoginAt ?? 0))
-    .slice(0, 5),
-)
+// M17: top-logged-in is now server-sorted & system-wide, so the panel
+// always shows true system leaders regardless of the table's filter.
+const topLoggedIn = computed(() => stats.usersSystemStats.value?.topLoggedIn ?? [])
 // Read recent pages from the shared pagesStore (already loaded by the
 // sidebar / main page tree). Avoids a dedicated `pages.list({ limit: 5 })`
 // round-trip per /manager/people mount.
@@ -145,6 +150,11 @@ onMounted(async () => {
         tone="danger"
         :progress="totalUsers === 0 ? 0 : disabledCount / totalUsers"
       />
+      <StatBlock
+        :value="anonymizedCount"
+        label="已注销"
+        :progress="totalUsers === 0 ? 0 : anonymizedCount / totalUsers"
+      />
     </div>
 
     <div class="section">
@@ -189,10 +199,10 @@ onMounted(async () => {
       <div class="section-title">最近登录</div>
       <ul class="mini-list">
         <li v-for="u in topLoggedIn" :key="u.id" class="mini-row">
-          <UserAvatar :size="24" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
+          <UserAvatar :size="24" :label="u.name ?? ''" :color="u.color ?? ''" :avatar-kind="u.avatarKind ?? null" :avatar-ref="u.avatarRef ?? null" :user-id="u.id" />
           <div class="mini-text">
             <div class="mini-name">{{ u.name }}</div>
-            <div class="mini-sub">{{ relativeShort(u.lastLoginAt!) }}</div>
+            <div class="mini-sub">{{ u.lastLoginAt ? relativeShort(u.lastLoginAt) : '从未' }}</div>
           </div>
         </li>
       </ul>

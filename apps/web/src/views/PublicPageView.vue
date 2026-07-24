@@ -12,8 +12,10 @@
  *   - header 用 BrandLogo + "公开分享" caption,跟登录页保持一致
  *   - 顶部一个细的 "公开链接 · 只读" hint banner,让匿名访客清楚自己
  *     拿到的是临时链接(给登录入口 power-wiki link 作为 affordance)
- *   - 失败态细分:link_off(失效 / 撤销 / 过期)/ broken_link(无效)
- *     EmptyState 图标,EmptyState 中央对齐、icon + title + hint 三段
+ *   - 失败态细分:link_off(失效 / 撤销 / 过期)/ report(无效)
+ *     EmptyState 图标,EmptyState 中央对齐、icon + title 三段(失败态不挂
+ *     hint 文案 —— 公开页是单向入口,「请向分享人索取新链接」对匿名访客
+ *     是元信息噪音,删掉)
  *
  * 设计要点:
  *   - 无 auth,无侧栏,无面包屑导航;只一屏「作者 + 标题 + 内容」
@@ -40,12 +42,32 @@ const error = ref<
   | null
 >(null)
 
+/** 「只读公开分享」提示横幅可关闭,关闭状态写到 sessionStorage —
+ *  同一个会话内不重复打扰。token 变化时仍展示(换页/新链接时重新提示)。 */
+const HINT_KEY = (token: string) => `public-hint-dismissed:${token}`
+const hintDismissed = ref(false)
+function dismissHint() {
+  hintDismissed.value = true
+  try {
+    sessionStorage.setItem(HINT_KEY(token()), '1')
+  } catch {
+    // sessionStorage 不可用(隐私模式)就只在本视图内隐藏,无副作用
+  }
+}
+function refreshHintDismissed() {
+  try {
+    hintDismissed.value = sessionStorage.getItem(HINT_KEY(token())) === '1'
+  } catch {
+    hintDismissed.value = false
+  }
+}
+
 useDocumentTitle(() => (page.value ? `${page.value.title} · 公开分享` : '公开分享'))
 
 async function load() {
   const t = token()
   if (!t) {
-    error.value = { kind: 'invalid', message: '链接无效', hint: '请向分享人索取新链接' }
+    error.value = { kind: 'invalid', message: '链接无效' }
     return
   }
   loading.value = true
@@ -56,9 +78,9 @@ async function load() {
     if (e instanceof ApiError) {
       const code = (e.body as { code?: string } | null)?.code
       if (code === 'share_expired') {
-        error.value = { kind: 'expired', message: '该分享链接已过期', hint: '请向分享人索取新链接' }
+        error.value = { kind: 'expired', message: '该分享链接已过期' }
       } else if (code === 'share_revoked') {
-        error.value = { kind: 'revoked', message: '该分享链接已被撤销', hint: '请向分享人索取新链接' }
+        error.value = { kind: 'revoked', message: '该分享链接已被撤销' }
       } else if (code === 'share_forbidden') {
         error.value = {
           kind: 'forbidden',
@@ -66,7 +88,7 @@ async function load() {
           hint: '仅共享空间、无查看限制的页面才能生成分享链接',
         }
       } else if (code === 'share_invalid' || e.status === 404 || e.status === 410) {
-        error.value = { kind: 'invalid', message: '该分享链接无效', hint: '请向分享人索取新链接' }
+        error.value = { kind: 'invalid', message: '该分享链接无效' }
       } else {
         error.value = { kind: 'load', message: humanizeApiError(e) }
       }
@@ -78,8 +100,14 @@ async function load() {
   }
 }
 
-onMounted(load)
-watch(() => route.params['token'], load)
+onMounted(() => {
+  refreshHintDismissed()
+  void load()
+})
+watch(() => route.params['token'], () => {
+  refreshHintDismissed()
+  void load()
+})
 
 /**
  * 完整时间戳(YYYY-MM-DD HH:mm)用于「最后更新于 X」展示。比
@@ -96,9 +124,9 @@ function formatFullTime(ms: number): string {
 <template>
   <div class="public-shell">
     <header class="public-bar">
-      <RouterLink :to="{ name: 'login' }" class="public-brand" aria-label="power-wiki 首页">
+      <div class="public-brand" aria-hidden="true">
         <BrandLogo :size="24" with-wordmark />
-      </RouterLink>
+      </div>
       <span class="public-bar-divider" aria-hidden="true" />
       <span class="public-bar-caption">
         <span class="material-symbols-outlined" aria-hidden="true">link</span>
@@ -106,10 +134,20 @@ function formatFullTime(ms: number): string {
       </span>
     </header>
 
-    <div class="public-hint" role="status">
-      <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
-      <span>这是一份<strong>只读</strong>的公开分享 — 任何拿到链接的人都可以访问,无需登录。</span>
-      <RouterLink :to="{ name: 'login' }" class="hint-cta">登录 power-wiki</RouterLink>
+    <div v-if="!hintDismissed" class="public-hint" role="status">
+      <div class="hint-center">
+        <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+        <span class="hint-text">这是一份<strong>只读</strong>的公开分享。</span>
+      </div>
+      <button
+        type="button"
+        class="hint-close"
+        aria-label="关闭提示"
+        title="关闭"
+        @click="dismissHint"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
     </div>
 
     <main class="public-main">
@@ -126,9 +164,9 @@ function formatFullTime(ms: number): string {
               ? 'link_off'
               : error.kind === 'forbidden'
                 ? 'lock'
-                : 'broken_link'
+                : 'error'
           "
-          :hint="error.hint ?? '如果您认为这是错误,请联系分享人'"
+          :hint="error.hint"
         />
       </div>
 
@@ -166,10 +204,6 @@ function formatFullTime(ms: number): string {
             <BrandLogo :size="16" />
             <span>通过 <strong>power-wiki</strong> 公开分享访问</span>
           </div>
-          <RouterLink :to="{ name: 'login' }" class="login-cta">
-            <span class="material-symbols-outlined" aria-hidden="true">login</span>
-            登录 power-wiki
-          </RouterLink>
         </footer>
       </article>
     </main>
@@ -239,6 +273,13 @@ function formatFullTime(ms: number): string {
   font-size: 13px;
   line-height: 1.5;
   border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.hint-center {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .public-hint strong {
@@ -252,18 +293,33 @@ function formatFullTime(ms: number): string {
   flex-shrink: 0;
 }
 
-.hint-cta {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-  padding: 2px 8px;
+.hint-close {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
   border-radius: var(--radius);
-  transition: background var(--duration-fast) var(--ease-out);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
 }
 
-.hint-cta:hover {
-  background: var(--accent-soft);
-  text-decoration: none;
+.hint-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
+}
+
+.hint-close .material-symbols-outlined {
+  font-size: 18px;
+  color: inherit;
 }
 
 .public-main {
@@ -484,29 +540,5 @@ function formatFullTime(ms: number): string {
 .public-footer-inner strong {
   color: var(--text-2);
   font-weight: 600;
-}
-
-.login-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #fff;
-  background: var(--accent);
-  text-decoration: none;
-  padding: 6px 14px;
-  border-radius: var(--radius);
-  transition: background var(--duration-fast) var(--ease-out);
-}
-
-.login-cta:hover {
-  background: var(--accent-hover);
-  text-decoration: none;
-  color: #fff;
-}
-
-.login-cta .material-symbols-outlined {
-  font-size: 16px;
 }
 </style>

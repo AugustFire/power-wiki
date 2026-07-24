@@ -43,7 +43,7 @@ const KIND_OPTIONS: { value: '' | AuditKind; label: string }[] = [
   { value: 'page_share_revoke', label: '公开链接 - 撤销' },
   { value: 'space_deleted', label: '空间 - 删除' },
   { value: 'group_deleted', label: '用户组 - 删除' },
-  { value: 'user_anonymized', label: '用户 - 匿名化' },
+  { value: 'user_anonymized', label: '用户 - 注销' },
 ]
 
 const TARGET_KIND_OPTIONS: { value: '' | AuditTargetKind; label: string }[] = [
@@ -253,7 +253,7 @@ function auditSummary(entry: AuditEntry): string {
     case 'page_share_revoke': return '撤销了公开链接'
     case 'space_deleted': return `删除了空间「${displayValue(before.name)}」`
     case 'group_deleted': return `删除了用户组「${displayValue(before.name)}」`
-    case 'user_anonymized': return `匿名化了用户「${displayValue(before.name)}」`
+    case 'user_anonymized': return `注销了用户「${displayValue(before.name)}」`
   }
 }
 

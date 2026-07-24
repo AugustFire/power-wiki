@@ -2,7 +2,8 @@
 /**
  * SpaceEditView — Phase A.6 + v0.7 综合版:空间元信息 + 权限管理合一页。
  *
- *   - 基本信息(name / 描述 / 颜色 / 危险操作)(**全局 admin only**)
+ *   - 基本信息(name / 描述 / 颜色)(**全局 admin 或 space-admin**)
+ *   - 危险操作(删除空间)(**全局 admin only**)
  *   - 访问控制(用户组 + 个人 两栏,角色三档,Save bar)(**全局 admin 或
  *     space-admin**)
  *
@@ -23,7 +24,8 @@
  *     space-admin 走 api.spaces.get + api.spaces.permissions.candidates。
  *
  * 权限 gate(per-section,逐个判):
- *   - 基本信息 + 危险操作:`isGlobalAdmin`
+ *   - 基本信息:`isGlobalAdmin || canAdminSpace(me, spaceId)`
+ *   - 危险操作:`isGlobalAdmin`
  *   - 访问控制:`isGlobalAdmin || canAdminSpace(me, spaceId)`
  *     404-not-403 政策对齐现有 canAccessSpace 风格(不泄漏空间存在性)。
  */
@@ -34,6 +36,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useEscape } from '@/composables/useEscape'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { api, ApiError } from '@/lib/api'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
@@ -50,6 +53,7 @@ const route = useRoute()
 const router = useRouter()
 const uiStore = useUiStore()
 const pagesStore = usePagesStore()
+const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const { confirm: askConfirm } = useConfirm()
 
@@ -106,6 +110,10 @@ const groupPopoverEl = ref<HTMLElement | null>(null)
 const groupAddBtnEl = ref<HTMLElement | null>(null)
 const userPopoverEl = ref<HTMLElement | null>(null)
 const userAddBtnEl = ref<HTMLElement | null>(null)
+const matrixHelpEl = ref<HTMLElement | null>(null)
+const matrixHelpBtnEl = ref<HTMLElement | null>(null)
+/** 默认关闭:点「访问控制」标题旁的帮助按钮弹出角色权限对照 popover。 */
+const matrixHelpOpen = ref(false)
 function closeGroupAdd() {
   groupAddOpen.value = false
   groupAddSearch.value = ''
@@ -116,11 +124,17 @@ function closeUserAdd() {
   userAddSearch.value = ''
   userAddSearchDebounced.value = ''
 }
+function closeMatrixHelp() {
+  matrixHelpOpen.value = false
+}
 // Esc 关闭 — useEscape 内部处理 add/removeEventListener 生命周期
 useEscape(() => groupAddOpen.value, closeGroupAdd)
 useEscape(() => userAddOpen.value, closeUserAdd)
+useEscape(() => matrixHelpOpen.value, closeMatrixHelp)
 // click-outside 关闭 — 用 mousedown 而不是 click,这样 toggle button 的
 // click 仍能正常切换(否则 mousedown 先关、click 再开 = 永远打不开)。
+// matrixHelp 不在这里处理:它现在升级为居中模态,背景遮罩 + 自 .self
+// 点击直接关,不再依赖 document 级监听。
 function onDocMouseDown(e: MouseEvent) {
   const t = e.target as Node
   if (groupAddOpen.value) {
@@ -135,8 +149,8 @@ function onDocMouseDown(e: MouseEvent) {
     closeUserAdd()
   }
 }
-watch([groupAddOpen, userAddOpen], ([g, u]) => {
-  if (g || u) {
+watch([groupAddOpen, userAddOpen], (vals) => {
+  if (vals.some(Boolean)) {
     void nextTick(() => document.addEventListener('mousedown', onDocMouseDown))
   } else {
     document.removeEventListener('mousedown', onDocMouseDown)
@@ -147,16 +161,45 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
 useDocumentTitle(() => (space.value ? `编辑空间: ${space.value.name}` : null))
 
 /* ─── Role options ───────────────────────────────────────────── */
-const ROLE_OPTIONS: Array<{ value: SpaceRole; label: string }> = [
-  { value: 'viewer', label: '只读' },
-  { value: 'editor', label: '编辑' },
-  { value: 'admin', label: '管理' },
+/** 每个 role 一个图标 + 一句话语义,让「只读 / 编辑 / 管理」三档的差别
+ *  一眼看出 —— 之前只有文字标签 + 大块 accent 蓝填充,看起来跟 button
+ *  一样。icon 提示能力边界(description 走 title 属性,鼠标悬停可见)。*/
+const ROLE_OPTIONS: Array<{ value: SpaceRole; label: string; icon: string; hint: string }> = [
+  { value: 'viewer', label: '只读', icon: 'visibility', hint: '可以查看,但不能创建或修改页面' },
+  { value: 'editor', label: '编辑', icon: 'edit', hint: '可以创建和编辑页面' },
+  { value: 'admin',  label: '管理', icon: 'shield_person', hint: '可以管理成员授权和空间基本信息' },
 ]
 /** 用户组 role 子集:不含 admin —— assertNotAdminToGroup 在后端硬拒。 */
 const GROUP_ROLE_OPTIONS = ROLE_OPTIONS.filter((o) => o.value !== 'admin')
 
+/* ─── 角色权限对照表 ─────────────────────────────────────────── */
+/**
+ * 空间三档角色(viewer / editor / admin)× 能力的对照表,顶部只读展示。
+ * 事实来源是 docs/permissions.md 的「能力速查」矩阵 —— 这里只取跟空间角色
+ * 相关、且三档之间有差异或值得强调的行(全局 admin / 页作者 / 匿名的特殊
+ * 规则走脚注,不单列)。改权限判定(permissions.ts)时必须同步这张表。
+ */
+const CAPABILITY_MATRIX: Array<{
+  label: string
+  viewer: boolean
+  editor: boolean
+  admin: boolean
+}> = [
+  { label: '查看页面与内容', viewer: true, editor: true, admin: true },
+  { label: '创建 / 编辑 / 删除页面', viewer: false, editor: true, admin: true },
+  { label: '上传附件、编辑标签', viewer: false, editor: true, admin: true },
+  { label: '版本快照与恢复', viewer: false, editor: true, admin: true },
+  { label: '评论、点赞、关注', viewer: true, editor: true, admin: true },
+  { label: '设置页面查看 / 编辑限制', viewer: false, editor: true, admin: true },
+  { label: '创建 / 撤销公开分享链接', viewer: false, editor: true, admin: true },
+  { label: '管理空间成员与授权', viewer: false, editor: false, admin: true },
+  { label: '修改空间名称 / 描述 / 颜色', viewer: false, editor: false, admin: true },
+]
 /* ─── 身份 / 路由 gate ───────────────────────────────────────── */
 const isGlobalAdmin = computed(() => authStore.isAdmin)
+const canEditMetadata = computed(
+  () => isGlobalAdmin.value || space.value?.viewerRole === 'admin',
+)
 const isManagerRoute = computed(() =>
   route.matched.some((record) => record.path === '/manager'),
 )
@@ -248,12 +291,17 @@ async function onSaveForm() {
   if (!space.value || !formDirty.value || saving.value) return
   saving.value = true
   try {
-    const updated = await api.admin.spaces.update(space.value.id, {
+    const input = {
       name: editName.value.trim(),
-      description: editDesc.value.trim() || undefined,
+      description: editDesc.value.trim() || null,
       color: editColor.value,
-    })
-    space.value = { ...space.value, ...updated }
+    }
+    const updated = isGlobalAdmin.value
+      ? await api.admin.spaces.update(space.value.id, input)
+      : await api.spaces.update(space.value.id, input)
+    const merged = { ...space.value, ...updated }
+    space.value = merged
+    spacesStore.upsert(merged)
     syncFormFromSpace()
     uiStore.notify('空间信息已保存', 'success')
   } catch (e) {
@@ -339,9 +387,11 @@ const candidateUsers = computed(() => {
   const q = userAddSearchDebounced.value.trim().toLowerCase()
   const taken = new Set(grants.value.users.map((u) => u.userId))
   // 含 active + must_reset_password;刚创建没首次重置密码的 user 也允许
-  // 提前授权(admin 一条龙:建账号 → 授空间 → 告知初始密码)。仅排除 disabled。
+  // 提前授权(admin 一条龙:建账号 → 授空间 → 告知初始密码)。排除 disabled
+  // 和 anonymized 两态(M16 起 anonymized 是独立第 4 态,跟 disabled
+  // 同样不可签入/不可授权)。
   const candidates = allUsers.value.filter(
-    (u) => !taken.has(u.id) && u.status !== 'disabled',
+    (u) => !taken.has(u.id) && u.status !== 'disabled' && u.status !== 'anonymized',
   )
   if (!q) return candidates
   return candidates.filter(
@@ -376,6 +426,7 @@ const candidateAlreadyAddedUsers = computed(() => {
     (u) =>
       taken.has(u.id) &&
       u.status !== 'disabled' &&
+      u.status !== 'anonymized' &&
       (u.name.toLowerCase().includes(q) ||
         (u.email ?? '').toLowerCase().includes(q)),
   )
@@ -604,12 +655,12 @@ function formatDate(ts: number): string {
       <div v-if="!isGlobalAdmin" class="se-info">
         <span class="material-symbols-outlined se-info-icon">shield_person</span>
         <span>
-          你是本空间的<strong>管理员</strong>(space-admin),可管理成员授权。空间名称、描述、颜色、删除由全局 admin 处理。
+          你是本空间的<strong>管理员</strong>(space-admin),可管理成员授权、修改空间名称、描述和颜色。删除空间由全局 admin 处理。
         </span>
       </div>
 
-      <!-- ─── 基本信息(全局 admin only) ─── -->
-      <section v-if="isGlobalAdmin" class="se-card">
+      <!-- ─── 基本信息(全局 admin 或 space-admin) ─── -->
+      <section v-if="canEditMetadata" class="se-card">
         <h2 class="se-card-title">基本信息</h2>
         <div class="se-fields">
           <label class="field field-name">
@@ -667,7 +718,7 @@ function formatDate(ts: number): string {
         </div>
 
         <!-- ─── 危险操作(全局 admin only) ─── -->
-        <div class="se-danger-zone">
+        <div v-if="isGlobalAdmin" class="se-danger-zone">
           <h3 class="se-danger-title">危险操作</h3>
           <button type="button" class="btn danger" @click="onDelete">
             <span class="material-symbols-outlined btn-icon">delete</span>
@@ -679,7 +730,20 @@ function formatDate(ts: number): string {
       <!-- ─── 访问控制:用户组 + 个人 两栏(admin 或 space-admin) ─── -->
       <section class="se-card se-perms-card">
         <div class="se-perms-header">
-          <h2 class="se-card-title">访问控制</h2>
+          <div class="se-perms-title-wrap">
+            <h2 class="se-card-title">访问控制</h2>
+            <button
+              ref="matrixHelpBtnEl"
+              type="button"
+              class="se-matrix-help-btn"
+              :class="{ 'se-matrix-help-btn-open': matrixHelpOpen }"
+              :aria-label="matrixHelpOpen ? '关闭角色权限对照表' : '查看角色权限对照表'"
+              title="查看各角色权限差异"
+              @click="matrixHelpOpen = !matrixHelpOpen"
+            >
+              <span class="material-symbols-outlined">{{ matrixHelpOpen ? 'close' : 'help' }}</span>
+            </button>
+          </div>
           <div v-if="permsDirty || permsError" class="se-perms-actions">
             <button type="button" class="btn ghost" :disabled="permsSaving" @click="onCancelPerms">取消</button>
             <button type="button" class="btn primary" :disabled="permsSaving" @click="onSavePerms">
@@ -722,8 +786,12 @@ function formatDate(ts: number): string {
                     class="se-role-btn"
                     :class="{ 'is-active': g.role === opt.value }"
                     :aria-pressed="g.role === opt.value"
+                    :title="opt.hint"
                     @click="setGroupRole(idx, opt.value)"
-                  >{{ opt.label }}</button>
+                  >
+                    <span class="material-symbols-outlined se-role-icon">{{ opt.icon }}</span>
+                    <span>{{ opt.label }}</span>
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -831,8 +899,12 @@ function formatDate(ts: number): string {
                     class="se-role-btn"
                     :class="{ 'is-active': u.role === opt.value }"
                     :aria-pressed="u.role === opt.value"
+                    :title="opt.hint"
                     @click="setUserRole(idx, opt.value)"
-                  >{{ opt.label }}</button>
+                  >
+                    <span class="material-symbols-outlined se-role-icon">{{ opt.icon }}</span>
+                    <span>{{ opt.label }}</span>
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -928,6 +1000,86 @@ function formatDate(ts: number): string {
       </section>
     </div>
 
+    <!-- 居中模态对话框,矩阵权限对照表。Teleport 到 body 避开 stacking
+         context 干扰;backdrop 占满视口 + mousedown.self 关,Esc 兜底。
+         不消耗页面 wheel(背景透出)故只 z-index 遮挡,不必 scroll lock。 -->
+    <Teleport to="body">
+      <Transition name="se-matrix-modal">
+        <div
+          v-if="matrixHelpOpen"
+          class="se-matrix-modal-backdrop"
+          role="presentation"
+          @mousedown.self="closeMatrixHelp"
+        >
+          <div
+            ref="matrixHelpEl"
+            class="se-matrix-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="se-matrix-modal-title"
+          >
+            <header class="se-matrix-modal-head">
+              <span class="material-symbols-outlined se-matrix-modal-icon">shield_lock</span>
+              <div class="se-matrix-modal-head-text">
+                <h3 id="se-matrix-modal-title" class="se-matrix-modal-title">空间角色权限对照</h3>
+                <p class="se-matrix-modal-sub">授予某角色后,该成员在本空间能做什么</p>
+              </div>
+              <button type="button" class="se-matrix-modal-close" aria-label="关闭" @click="closeMatrixHelp">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </header>
+            <div class="se-matrix-modal-body">
+              <table class="se-matrix">
+                <thead>
+                  <tr>
+                    <th class="se-matrix-cap-head" scope="col">能力</th>
+                    <th
+                      v-for="opt in ROLE_OPTIONS"
+                      :key="opt.value"
+                      class="se-matrix-role-head"
+                      scope="col"
+                    >
+                      <span class="material-symbols-outlined se-matrix-role-icon">{{ opt.icon }}</span>
+                      <span>{{ opt.label }}</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in CAPABILITY_MATRIX" :key="row.label">
+                    <td class="se-matrix-cap">{{ row.label }}</td>
+                    <td class="se-matrix-cell">
+                      <span v-if="row.viewer" class="se-matrix-yes" title="可以">
+                        <span class="material-symbols-outlined">check</span>
+                      </span>
+                      <span v-else class="se-matrix-no" title="不可以">—</span>
+                    </td>
+                    <td class="se-matrix-cell">
+                      <span v-if="row.editor" class="se-matrix-yes" title="可以">
+                        <span class="material-symbols-outlined">check</span>
+                      </span>
+                      <span v-else class="se-matrix-no" title="不可以">—</span>
+                    </td>
+                    <td class="se-matrix-cell">
+                      <span v-if="row.admin" class="se-matrix-yes" title="可以">
+                        <span class="material-symbols-outlined">check</span>
+                      </span>
+                      <span v-else class="se-matrix-no" title="不可以">—</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <footer class="se-matrix-modal-foot">
+              <span class="material-symbols-outlined se-matrix-foot-icon">info</span>
+              <span>
+                删除空间、查看审计日志、管理用户组仅限<strong>全局管理员</strong>;页面作者对自己创建的页面始终拥有完整权限,不受空间角色限制。
+              </span>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
   </div>
 </template>
 
@@ -995,6 +1147,239 @@ function formatDate(ts: number): string {
 }
 .se-info-icon { font-size: 18px; flex-shrink: 0; }
 .se-info strong { font-weight: 600; }
+
+/* ─── 角色权限对照表(访问控制标题旁的 help 按钮 + 居中模态对话框)── */
+.se-perms-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.se-matrix-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.se-matrix-help-btn .material-symbols-outlined { font-size: 18px; }
+.se-matrix-help-btn:hover {
+  background: var(--bg-canvas);
+  color: var(--accent);
+}
+.se-matrix-help-btn-open {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* 居中模态:全屏遮罩 + 卡片浮起。Teleport 到 body 配合 fixed 定位
+   避开父组件 stacking context;backdrop 收 pointer events,mousedown.self
+   点空白处关闭面板内容不会触发。 */
+.se-matrix-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 30, 66, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.se-matrix-modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  box-shadow: 0 12px 32px rgba(9, 30, 66, 0.18),
+              0 4px 12px rgba(9, 30, 66, 0.12);
+  width: 100%;
+  max-width: 680px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 顶部 header:accent 色图标 + 标题 / 副标题(左)+ 关闭按钮(右)。
+   浅 accent-soft 背景把它和 body 拉开,视觉权重 > 表 + 脚注。 */
+.se-matrix-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 24px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-softer, #F4F8FF);
+  flex-shrink: 0;
+}
+.se-matrix-modal-icon {
+  font-size: 26px;
+  color: var(--accent);
+  flex-shrink: 0;
+  line-height: 1.1;
+}
+.se-matrix-modal-head-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.se-matrix-modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.3;
+}
+.se-matrix-modal-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.se-matrix-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: -4px -4px 0 0;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.se-matrix-modal-close .material-symbols-outlined { font-size: 20px; }
+.se-matrix-modal-close:hover {
+  background: var(--bg);
+  color: var(--text-1);
+}
+/* 中部表格容器:padding 跟 header / footer 对齐,内容多了自动滚。 */
+.se-matrix-modal-body {
+  padding: 8px 24px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.se-matrix-modal-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 24px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-canvas);
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.55;
+  flex-shrink: 0;
+}
+.se-matrix-foot-icon {
+  font-size: 14px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.se-matrix-modal-foot strong { font-weight: 600; color: var(--text-2); }
+
+.se-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 0;
+}
+.se-matrix th,
+.se-matrix td {
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.se-matrix tbody tr:last-child td { border-bottom: 0; }
+/* 能力行 hover 浅底 —— 不抢眼但暗示「可读」;配合表格视觉重量。 */
+.se-matrix tbody tr {
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.se-matrix tbody tr:hover { background: var(--bg-canvas); }
+
+.se-matrix-cap-head {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 12px;
+}
+/* 角色列头整行作为视觉单位:用 chip 风格(浅底 + 圆角),让 role 单元
+   比行里的 cell 更显眼 —— 头列和能力列是「label」,角色列是「答案选项」,
+   拉开权重。 */
+.se-matrix-role-head {
+  text-align: center;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  padding: 9px 10px;
+}
+.se-matrix-role-icon {
+  font-size: 16px;
+  color: var(--accent);
+  vertical-align: -3px;
+  margin-right: 4px;
+}
+.se-matrix-cap { color: var(--text-1); font-weight: 500; }
+.se-matrix-cell { text-align: center; }
+/* 「可以」用绿色 pill 替代单一 glyph —— 视觉重量够,跟旁边空白处比
+   一下就看出「这是肯定答案」。 */
+.se-matrix-yes {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success-text) 14%, transparent);
+  color: var(--success-text);
+}
+.se-matrix-yes .material-symbols-outlined {
+  font-size: 14px;
+  font-weight: 700;
+}
+.se-matrix-no {
+  color: var(--text-3);
+  user-select: none;
+  font-size: 14px;
+}
+
+/* 模态进入退场:fade-in backdrop + 卡片轻微上浮。durations 取 150ms
+   ~ 200ms 是 Atlassian / Material 的标准节奏,不抢眼。 */
+.se-matrix-modal-enter-active,
+.se-matrix-modal-leave-active {
+  transition: opacity 180ms var(--ease-out);
+}
+.se-matrix-modal-enter-active .se-matrix-modal,
+.se-matrix-modal-leave-active .se-matrix-modal {
+  transition: transform 180ms var(--ease-out),
+              opacity 180ms var(--ease-out);
+}
+.se-matrix-modal-enter-from,
+.se-matrix-modal-leave-to {
+  opacity: 0;
+}
+.se-matrix-modal-enter-from .se-matrix-modal,
+.se-matrix-modal-leave-to .se-matrix-modal {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+
 
 /* ─── Header ─── */
 .se-header { margin-bottom: 14px; }
@@ -1262,6 +1647,11 @@ function formatDate(ts: number): string {
 .se-row-name { font-size: 14px; font-weight: 500; color: var(--text-1); }
 .se-row-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 
+/* 三档角色选择(segmented control)。容器是 bg-canvas 浅底框,
+   按钮之间没有间隔。Active 用 accent 大块填充 + 白字 —— 视觉重,
+   容易跟旁边的「删除」主按钮混淆。改成「outline + icon + 加粗」:
+   active 态只换底色到 bg + 加 1px accent ring + 文字加粗 + 图标着色,
+   不再用大块 accent 填充,跟页面其他 primary button 拉开。 */
 .se-role {
   display: inline-flex;
   background: var(--bg-canvas);
@@ -1271,19 +1661,43 @@ function formatDate(ts: number): string {
   flex-shrink: 0;
 }
 .se-role-btn {
-  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
   padding: 0 10px;
   font-size: 12px;
   font-weight: 500;
+  font-family: var(--font-sans, inherit);
   color: var(--text-2);
   background: transparent;
   border: 0;
   border-radius: 3px;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
 }
-.se-role-btn:hover:not(.is-active) { background: var(--bg); }
-.se-role-btn.is-active { background: var(--accent); color: white; }
+.se-role-icon {
+  font-size: 15px;
+  color: var(--text-3);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.se-role-btn:hover:not(.is-active) {
+  background: var(--bg);
+  color: var(--text-1);
+}
+.se-role-btn:hover:not(.is-active) .se-role-icon { color: var(--text-2); }
+/* Active:不放大块填充色,用 outline + 加粗 + 图标着 accent 色 —— 跟
+   "已选中的 segmented control" 一致(类似 Tabs / 切换器的视觉语法),
+   不会跟 primary button 抢眼。 */
+.se-role-btn.is-active {
+  background: var(--bg);
+  color: var(--text-1);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.se-role-btn.is-active .se-role-icon { color: var(--accent); }
 
 .se-remove {
   background: transparent;

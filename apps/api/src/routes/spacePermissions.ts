@@ -31,7 +31,7 @@
  * `recordPermissionAudit(tx, …)`,audit 行跟业务变更同事务同生死。
  */
 import { Hono } from 'hono'
-import { and, eq, ilike, inArray, like, not, or, sql } from 'drizzle-orm'
+import { and, eq, ilike, inArray, like, not, notInArray, or, sql } from 'drizzle-orm'
 import {
   PaginatedListSchema,
   SetSpacePermissionsInputSchema,
@@ -677,7 +677,7 @@ spacePermissionsRouter.get('/:id/permissions/candidates', async (c) => {
           .from(users)
           .where(
             and(
-              not(eq(users.status, 'disabled')),
+              notInArray(users.status, ['disabled', 'anonymized']),
               or(ilike(users.name, search), ilike(users.email, search)),
             ),
           )
@@ -685,7 +685,7 @@ spacePermissionsRouter.get('/:id/permissions/candidates', async (c) => {
       : db
           .select()
           .from(users)
-          .where(not(eq(users.status, 'disabled')))
+          .where(notInArray(users.status, ['disabled', 'anonymized']))
           .limit(max),
   ])
 

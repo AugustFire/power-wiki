@@ -22,6 +22,8 @@
 import {
   AddLabelInputSchema,
   AdminSettingSchema,
+  AdminSpacesListResponseSchema,
+  AdminUsersListResponseSchema,
   AttachmentSchema,
   AuditEntrySchema,
   AuditListResponseSchema,
@@ -65,6 +67,9 @@ import type {
   ActivityEvent,
   AddLabelInput,
   AdminSetting,
+  AdminSpacesList,
+  AdminUsersListQuery,
+  AdminUsersListResponse,
   Attachment,
   AuditEntry,
   AuditListQuery,
@@ -373,6 +378,11 @@ async function getManyPaginated<T>(
   }
 }
 
+async function getAdminSpacesPaginated(path: string): Promise<AdminSpacesList> {
+  const raw = await request<AdminSpacesList>(path)
+  return AdminSpacesListResponseSchema.parse(raw)
+}
+
 /* ─── Endpoint groups ──────────────────────────────────────────────────── */
 
 export const api = {
@@ -651,6 +661,15 @@ export const api = {
     },
     get: async (id: string): Promise<Space> => {
       const raw = await request<Space>(`/spaces/${encodeURIComponent(id)}`)
+      return SpaceSchema.parse(raw) as Space
+    },
+    update: async (id: string, input: UpdateSpaceInput): Promise<Space> => {
+      const raw = await request<Space>(`/spaces/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      })
+      invalidatePrefix('/spaces')
+      invalidatePrefix('/admin/spaces')
       return SpaceSchema.parse(raw) as Space
     },
     /**
@@ -961,12 +980,25 @@ export const api = {
   // without waiting for the manager UI to land.
   admin: {
     users: {
-      list: (q?: PaginatedQuery): Promise<Paginated<User>> => {
+      /**
+       * M17 server-side filter — `q` (name/email ILIKE), `status` / `role`
+       * (enum 精确)。响应包含 `total` (filter-matching 总行数) +
+       * `systemStats` (system-wide,独立于 filter)。`items` 走 LIMIT N+1
+       * 技巧,`hasMore` 反映是否还有后续页。
+       *
+       * 不复用 `getManyPaginated` —— 响应多了 total / systemStats 两字段,
+       * 改 AdminUsersListResponseSchema 单点定义。
+       */
+      list: async (q: AdminUsersListQuery = {}): Promise<AdminUsersListResponse> => {
         const params = new URLSearchParams()
-        if (q?.limit !== undefined) params.set('limit', String(q.limit))
-        if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        if (q.limit !== undefined) params.set('limit', String(q.limit))
+        if (q.offset !== undefined) params.set('offset', String(q.offset))
+        if (q.q) params.set('q', q.q)
+        if (q.status) params.set('status', q.status)
+        if (q.role) params.set('role', q.role)
         const qs = params.toString() ? `?${params.toString()}` : ''
-        return getManyPaginated(`/admin/users${qs}`, UserSchema)
+        const raw = await request<AdminUsersListResponse>(`/admin/users${qs}`)
+        return AdminUsersListResponseSchema.parse(raw) as AdminUsersListResponse
       },
       get: (id: string) => getOneUser<User>(`/admin/users/${encodeURIComponent(id)}`),
       create: async (
@@ -1016,7 +1048,7 @@ export const api = {
       },
       /**
        * 匿名化(软删,不可逆):
-       *   - 后端覆盖 name / email / password / avatar / color,status='disabled'
+       *   - 后端覆盖 name / email / password / avatar / color,status='anonymized'(M16 第 4 态)
        *   - 同步 sweep 该用户的 group membership / recent / watched / likes /
        *     notifications / space_role_grants / page_restrictions
        *   - 保留 pages / comments / versions / attachments / audit 行内的
@@ -1098,12 +1130,12 @@ export const api = {
       },
     },
     spaces: {
-      list: (q?: PaginatedQuery): Promise<Paginated<Space>> => {
+      list: (q?: PaginatedQuery): Promise<AdminSpacesList> => {
         const params = new URLSearchParams()
         if (q?.limit !== undefined) params.set('limit', String(q.limit))
         if (q?.offset !== undefined) params.set('offset', String(q.offset))
         const qs = params.toString() ? `?${params.toString()}` : ''
-        return getManyPaginated(`/admin/spaces${qs}`, SpaceSchema)
+        return getAdminSpacesPaginated(`/admin/spaces${qs}`)
       },
       get: async (id: string): Promise<Space> => {
         const raw = await request<Space>(

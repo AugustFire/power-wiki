@@ -33,7 +33,7 @@ export interface AuthenticatedUser {
   email: string
   name: string
   role: 'admin' | 'user'
-  status: 'active' | 'disabled' | 'must_reset_password'
+  status: 'active' | 'disabled' | 'must_reset_password' | 'anonymized'
   color: string
   createdAt: number
   updatedAt: number
@@ -86,7 +86,10 @@ export async function getSessionUser(c: Context): Promise<AuthenticatedUser | nu
     clearSessionCookie(c)
     return null
   }
-  if (row.status === 'disabled') {
+  if (row.status === 'disabled' || row.status === 'anonymized') {
+    // Anonymized users have their passwordHash randomized + email set to
+    // a .invalid sentinel, but we still reject the session here for
+    // defense-in-depth so a leftover cookie can't reactivate a row.
     clearSessionCookie(c)
     return null
   }

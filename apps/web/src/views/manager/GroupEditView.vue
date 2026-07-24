@@ -223,6 +223,7 @@ function statusLabel(s: User['status']): string {
     case 'active': return '正常'
     case 'must_reset_password': return '需重置'
     case 'disabled': return '已禁用'
+    case 'anonymized': return '已注销'
   }
 }
 
@@ -231,6 +232,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
     case 'active': return 'good'
     case 'must_reset_password': return 'warn'
     case 'disabled': return 'bad'
+    case 'anonymized': return 'bad'
   }
 }
 </script>
@@ -372,7 +374,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
                 v-for="u in memberUsers"
                 :key="u.id"
                 class="member-row"
-                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
+                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' || u.status === 'anonymized' }"
               >
                 <UserAvatar :size="28" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
                 <div class="member-text">
@@ -416,7 +418,7 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
                 v-for="u in availableUsers"
                 :key="u.id"
                 class="member-row"
-                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' }"
+                :class="{ 'is-pending': pendingUserId === u.id, 'is-disabled': u.status === 'disabled' || u.status === 'anonymized' }"
               >
                 <UserAvatar :size="28" :label="u.name" :color="u.color" :avatar-kind="u.avatarKind" :avatar-ref="u.avatarRef" :user-id="u.id" />
                 <div class="member-text">

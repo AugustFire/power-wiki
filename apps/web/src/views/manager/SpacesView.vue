@@ -28,8 +28,9 @@ import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import KindTabs from '@/components/manager/KindTabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { SPACE_COLOR_PALETTE } from '@/lib/colorPalettes'
-import type { Space, UserGroup } from '@power-wiki/shared'
+import type { PaginatedQuery, Space, SpaceKindCounts, UserGroup } from '@power-wiki/shared'
 import type { User } from '@power-wiki/shared'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 
 const router = useRouter()
 const uiStore = useUiStore()
@@ -55,10 +56,11 @@ const {
   hasMore: spacesHasMore,
   loading: spacesListLoading,
   error: spacesListError,
+  offset: spacesOffset,
   loadMore: loadMoreSpaces,
   reset: resetSpaces,
 } = usePaginatedList<Space>(
-  (q) => api.admin.spaces.list(q),
+  async (q) => loadSpacesPage(q),
   { pageSize: 50 },
 )
 const {
@@ -69,9 +71,15 @@ const {
 } = useManagerStats()
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+const spaceKindCounts = ref<SpaceKindCounts | null>(null)
+
+async function loadSpacesPage(q: PaginatedQuery) {
+  const result = await api.admin.spaces.list(q)
+  spaceKindCounts.value = result.kindCounts
+  return result
+}
 /**
- * `users` here is the legacy reactive view-local alias for the panel —
- * each row in the table needs to look up `ownerName` by ownerId. The
+ * `users` here is the legacy reactive view-local alias for the panel — each row in the table needs to look up `ownerName` by ownerId. The
  * composable already serves the data via `statsUsers`, so this view
  * just forwards it.
  */
@@ -88,6 +96,12 @@ const personalSpaces = computed(() => spaces.value.filter((s) => s.kind === 'per
 const visibleSpaces = computed(() =>
   kindTab.value === 'shared' ? sharedSpaces.value : personalSpaces.value,
 )
+const sharedSpaceCount = computed(() => spaceKindCounts.value?.shared ?? sharedSpaces.value.length)
+const personalSpaceCount = computed(() => spaceKindCounts.value?.personal ?? personalSpaces.value.length)
+const currentKindHasMore = computed(() => {
+  const total = spaceKindCounts.value?.[kindTab.value]
+  return total === undefined ? spacesHasMore.value : visibleSpaces.value.length < total
+})
 
 const { showCreateSpace: showCreate } = useManagerActions()
 const createName = ref('')
@@ -185,6 +199,10 @@ async function onSubmitCreate() {
     // Sync the spaces store so the sidebar switcher reflects the new space
     // immediately if admin switches away from manager.
     spacesStore.upsert(created)
+    // Optimistic push 把「下一轮 server 实际 offset」提前 +1,避免下次
+    // 「加载更多」重复请求到刚 push 的那条。
+    spacesOffset.value += 1
+    if (spaceKindCounts.value) spaceKindCounts.value.shared += 1
     showCreate.value = false
   } catch (e) {
     createError.value = e instanceof ApiError ? e.message : '创建失败'
@@ -204,6 +222,10 @@ async function onDelete(s: Space) {
   try {
     await api.admin.spaces.delete(s.id)
     spaces.value = spaces.value.filter((x) => x.id !== s.id)
+    spacesOffset.value = Math.max(0, spacesOffset.value - 1)
+    if (spaceKindCounts.value) {
+      spaceKindCounts.value.shared = Math.max(0, spaceKindCounts.value.shared - 1)
+    }
     // Mirror to the sidebar store — if the deleted space was the active one,
     // the store already auto-shifts; otherwise just drop it.
     await spacesStore.refresh()
@@ -233,6 +255,34 @@ function formatDate(ts: number): string {
 const ownerNameById = computed<Record<string, string>>(() =>
   Object.fromEntries(users.value.map((u) => [u.id, u.name])),
 )
+
+/* 授权范围 = 授权组 ∪ 个人授权用户;accessGrants 是 DTO 上的服务端结构化
+   数据(Phase A)。这里把 groups / users 拼成「总授权数 + 类型分解」,给
+   card 的 access row 用。返回 0 个时给空状态文案。
+
+   Per-card memoization(space.id → summary)避免模板里多次调用产生重复
+   work —— 5 次 array.filter + .find 在 50 个 card × 6 字段下也会浪费
+   几百次迭代。 */
+interface AccessSummary {
+  groupIds: string[]
+  users: Array<{ id: string; name: string; color?: string | null; avatarKind?: User['avatarKind'] | null; avatarRef?: string | null }>
+}
+const accessSummaryBySpaceId = computed<Record<string, AccessSummary>>(() => {
+  const map: Record<string, AccessSummary> = {}
+  for (const s of spaces.value) {
+    const groupIds = (s.accessGroupIds ?? []).filter((g) => !g.startsWith('pg-'))
+    const userIds = (s.accessGrants?.users ?? []).map((u) => u.userId)
+    const resolved = userIds
+      .map((id) => users.value.find((u) => u.id === id))
+      .filter((u): u is User => !!u)
+      .map((u) => ({ id: u.id, name: u.name, color: u.color, avatarKind: u.avatarKind, avatarRef: u.avatarRef }))
+    map[s.id] = { groupIds, users: resolved }
+  }
+  return map
+})
+function accessSummary(s: Space): AccessSummary {
+  return accessSummaryBySpaceId.value[s.id] ?? { groupIds: [], users: [] }
+}
 </script>
 
 <template>
@@ -241,7 +291,7 @@ const ownerNameById = computed<Record<string, string>>(() =>
     <header class="sv-header">
       <div class="sv-header-text">
         <h1 class="sv-title">空间</h1>
-        <p class="sv-sub">共 {{ sharedSpaces.length }} 个团队空间、{{ personalSpaces.length }} 个个人空间 — 用于按团队 / 项目组织页面并控制访问权限</p>
+        <p class="sv-sub">共 {{ sharedSpaceCount }} 个团队空间、{{ personalSpaceCount }} 个个人空间 — 用于按团队 / 项目组织页面并控制访问权限</p>
       </div>
       <!-- Create action lives in the main header, not the right context
            panel (which is read-only info / stats). Personal-space tab
@@ -250,8 +300,8 @@ const ownerNameById = computed<Record<string, string>>(() =>
       <div class="sv-header-actions">
         <KindTabs
           v-model="kindTab"
-          :shared-count="sharedSpaces.length"
-          :personal-count="personalSpaces.length"
+          :shared-count="sharedSpaceCount"
+          :personal-count="personalSpaceCount"
         />
         <button
           v-if="kindTab === 'shared'"
@@ -422,29 +472,45 @@ const ownerNameById = computed<Record<string, string>>(() =>
           </div>
         </div>
 
-        <!-- Access group avatar preview. Empty state hints at the implication
-             of having no groups (admin-only access). For personal spaces the
-             only authorized "group" is the auto-created `pg-<userId>` group,
-             which adminSpaces.ts filters out of `accessGroupIds` — so this
-             row always renders the empty state on personal cards. -->
+        <!-- 授权范围 = 授权组 ∪ 个人授权用户。空状态只在两者都 0 时
+             触发 —— 单有任一项都视为「有授权」。个人空间的 pg-* 自动组
+             已在 adminSpaces.ts 过滤,所以纯 personal 卡仍会走「仅所有者
+             可见」空态。 -->
         <div class="sc-access">
-          <span class="sc-access-label">授权组:</span>
-          <div v-if="(s.accessGroupIds?.length ?? 0) === 0" class="sc-access-empty">
-            {{ s.kind === 'personal' ? '仅所有者可见' : '无授权 — 只有管理员可访问' }}
-          </div>
+          <span class="sc-access-label">授权范围:</span>
+          <template v-if="accessSummary(s).groupIds.length + accessSummary(s).users.length === 0">
+            <span class="sc-access-empty">
+              {{ s.kind === 'personal' ? '仅所有者可见' : '无授权 — 只有管理员可访问' }}
+            </span>
+          </template>
           <div v-else class="sc-access-avatars">
             <span
-              v-for="gid in (s.accessGroupIds ?? []).slice(0, 5)"
-              :key="gid"
-              class="sc-access-avatar"
-              :title="groupById[gid]?.name ?? gid"
+              v-for="gid in accessSummary(s).groupIds.slice(0, 3)"
+              :key="`g-${gid}`"
+              class="sc-access-avatar sc-access-avatar-group"
+              :title="`组:${groupById[gid]?.name ?? gid}`"
             >
               {{ (groupById[gid]?.name ?? gid).slice(0, 1) }}
             </span>
             <span
-              v-if="(s.accessGroupIds?.length ?? 0) > 5"
+              v-for="u in accessSummary(s).users.slice(0, Math.max(0, 5 - accessSummary(s).groupIds.slice(0, 3).length))"
+              :key="`u-${u.id}`"
+              class="sc-access-avatar sc-access-avatar-user"
+              :title="u.name"
+            >
+              <UserAvatar
+                :size="20"
+                :label="u.name"
+                :color="u.color ?? null"
+                :avatar-kind="u.avatarKind ?? null"
+                :avatar-ref="u.avatarRef ?? null"
+                :user-id="u.id"
+              />
+            </span>
+            <span
+              v-if="accessSummary(s).groupIds.length + accessSummary(s).users.length > 5"
               class="sc-access-more"
-            >+{{ (s.accessGroupIds?.length ?? 0) - 5 }}</span>
+            >+{{ accessSummary(s).groupIds.length + accessSummary(s).users.length - 5 }}</span>
           </div>
         </div>
 
@@ -471,9 +537,9 @@ const ownerNameById = computed<Record<string, string>>(() =>
       </div>
     </div>
 
-    <div v-if="visibleSpaces.length > 0" class="load-more-row">
+    <div v-if="visibleSpaces.length > 0 || currentKindHasMore" class="load-more-row">
       <button
-        v-if="spacesHasMore"
+        v-if="currentKindHasMore"
         type="button"
         class="btn ghost load-more-btn"
         :disabled="spacesListLoading"
@@ -733,24 +799,38 @@ const ownerNameById = computed<Record<string, string>>(() =>
 .sc-access-avatars {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
 }
+/* 共享基础类:叠层叠圈效果(margin-left 负值 + bg 边框)。group
+   单字母头像 / user 真实头像都用同一套尺寸 + 边框,视觉一致。
+   22px content + 2px border = 26px 总尺寸。 */
 .sc-access-avatar {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--accent);
-  color: #FFFFFF;
-  font-size: 11px;
-  font-weight: 700;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   border: 2px solid var(--bg);
   margin-left: -6px;
+  overflow: hidden;
 }
 .sc-access-avatar:first-child { margin-left: 0; }
+.sc-access-avatar-group {
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 700;
+}
+/* user 头像 wrapper,包 UserAvatar。UserAvatar 内部 size-20 设了 20×20
+   (scoped CSS 优先级高于这里,无法覆盖),所以 wrapper 是 22×22 content,
+   UserAvatar 居中即可,视觉上跟 group 头像同尺寸(20+1px×2+2px×2
+   border 看起来一致)。背景由 UserAvatar 自身决定(image / initials),
+   wrapper 不强制 background。 */
+.sc-access-avatar-user {
+  padding: 0;
+}
 .sc-access-more {
   margin-left: 4px;
   font-size: 11px;

@@ -568,7 +568,17 @@ onBeforeUnmount(() => {
           >
             {{ c.title }}
           </a>
-          <span v-else class="crumb-item current">{{ c.title }}</span>
+          <!-- head 最后一段(无折叠)= 当前页:CTA 优先,正常标题次之,
+               跟 tail 最后一段共用同一组 class。 -->
+          <template v-else>
+            <button
+              v-if="isTitleEmpty"
+              type="button"
+              class="crumb-item current rename-cta"
+              @click="focusTitle"
+            >未命名 · 点此重命名</button>
+            <span v-else class="crumb-item current">{{ c.title }}</span>
+          </template>
         </template>
         <template v-if="visibleBreadcrumb.ellipsis">
           <span class="sep">/</span>
@@ -591,19 +601,6 @@ onBeforeUnmount(() => {
             >未命名 · 点此重命名</button>
             <span v-else class="crumb-item current">{{ c.title }}</span>
           </template>
-        </template>
-        <!-- 无 ellipsis 折叠时,head 最后一段 = 当前页 -->
-        <template v-else>
-          <span v-if="visibleBreadcrumb.head.length > 0">
-            <span class="sep">/</span>
-            <button
-              v-if="isTitleEmpty"
-              type="button"
-              class="crumb-item current rename-cta"
-              @click="focusTitle"
-            >未命名 · 点此重命名</button>
-            <span v-else class="crumb-item current">{{ visibleBreadcrumb.head[visibleBreadcrumb.head.length - 1]!.title }}</span>
-          </span>
         </template>
         <span class="edit-mode-badge">
           <span class="material-symbols-outlined icon-sm">edit</span>

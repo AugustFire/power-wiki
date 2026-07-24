@@ -170,7 +170,7 @@ export const UserSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(64),
   role: z.enum(['admin', 'user']),
-  status: z.enum(['active', 'disabled', 'must_reset_password']),
+  status: z.enum(['active', 'disabled', 'must_reset_password', 'anonymized']),
   /** 颜色格式校验:只接受 #RRGGBB / #RGB */
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/, '颜色格式必须是 #RGB 或 #RRGGBB'),
   createdAt: z.number().int().positive(),
@@ -399,12 +399,12 @@ export const CreateSpaceInputSchema = z.object({
   icon: z.string().max(40).optional(),
 })
 
-/** PATCH /api/admin/spaces/:id */
+/** PATCH /api/spaces/:id 或 /api/admin/spaces/:id */
 export const UpdateSpaceInputSchema = z.object({
   name: z.string().min(1).max(64).optional(),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).nullable().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/).optional(),
-  icon: z.string().max(40).optional(),
+  icon: z.string().max(40).nullable().optional(),
 })
 
 /** PUT /api/admin/spaces/:id/access — 整组替换 */
@@ -823,6 +823,82 @@ export const PaginatedListSchema = <T extends z.ZodTypeAny>(item: T) =>
     offset: z.number(),
     hasMore: z.boolean(),
   })
+
+/** Admin spaces list totals by the two tabs shown in SpacesView. */
+export const SpaceKindCountsSchema = z.object({
+  shared: z.number().int().nonnegative(),
+  personal: z.number().int().nonnegative(),
+})
+
+/** `GET /api/admin/spaces` response with totals for tab-aware pagination. */
+export const AdminSpacesListResponseSchema = PaginatedListSchema(SpaceSchema).extend({
+  kindCounts: SpaceKindCountsSchema,
+})
+
+export type SpaceKindCounts = z.infer<typeof SpaceKindCountsSchema>
+export type AdminSpacesList = z.infer<typeof AdminSpacesListResponseSchema>
+
+/* ---------- M17: 人员管理 server-side filter ----------
+ * q/status/role 三个维度;`q` 走 name OR email ILIKE,大小写不敏感。
+ * status / role 是 enum 精确匹配。`limit` / `offset` 同其他 paginated 端点。
+ * 复用 PaginatedQuerySchema 的 limit / offset 字段(都 optional)。*/
+export const AdminUsersListQuerySchema = PaginatedQuerySchema.extend({
+  q: z.string().trim().min(1).max(100).optional(),
+  status: z.enum(['active', 'disabled', 'must_reset_password', 'anonymized']).optional(),
+  role: z.enum(['admin', 'user']).optional(),
+})
+
+/**
+ * 「最近登录」section / PeopleContextPanel 的精简 user DTO —— 只列渲染所需字段
+ * (头像 + 姓名 + 时间戳),不返 email / role / status 等冗余信息。`name` /
+ * `color` 走与 UserSchema 一致的 nullable(anonymized / 已删除 user 显示
+ * null 兜底)。
+ */
+export const UserSummarySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().nullable(),
+  color: z.string().nullable(),
+  avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  avatarRef: z.string().min(1).max(64).nullable().optional(),
+  lastLoginAt: z.number().int().positive().nullable(),
+})
+
+/**
+ * 人员管理页的右栏统计块 —— **独立于筛选条件**(永远 system-wide)。
+ * 设计动机:filter 是「找用户的工具」,不应影响「系统概览」的展示;否则用户
+ * 切到「已禁用」筛掉所有人时,概览也跟着归零,失去 dashboard 价值。
+ *
+ * 单条 SQL `SELECT COUNT(*) FILTER (WHERE …)` 聚合出全部 8 个计数;外加
+ * top 5 最近登录用户(单条 ORDER BY last_login_at DESC LIMIT 5)。
+ */
+export const UserSystemStatsSchema = z.object({
+  totalCount: z.number().int().nonnegative(),
+  adminCount: z.number().int().nonnegative(),
+  activeCount: z.number().int().nonnegative(),
+  mustResetCount: z.number().int().nonnegative(),
+  disabledCount: z.number().int().nonnegative(),
+  anonymizedCount: z.number().int().nonnegative(),
+  recentlyActiveCount: z.number().int().nonnegative(),
+  neverLoggedInCount: z.number().int().nonnegative(),
+  topLoggedIn: z.array(UserSummarySchema),
+})
+
+/**
+ * `GET /api/admin/users` 的响应包装。`total` = 匹配当前 filter 的总数
+ * (用于 sub-text「显示 N / 共 M」);`systemStats` 永远 system-wide,不受
+ * filter 影响。`items` / `limit` / `offset` / `hasMore` 与 PaginatedListSchema
+ * 同构,但这里**不复用** —— schema 多了 systemStats / total 两字段,
+ * 强行 extend 会让其他 list 端点复用时变成「选了不存在的字段」陷阱。
+ */
+export const AdminUsersListResponseSchema = z.object({
+  items: z.array(UserSchema),
+  limit: z.number(),
+  offset: z.number(),
+  hasMore: z.boolean(),
+  /** 匹配当前 filter 的总行数(无 filter = 全表总行数)。 */
+  total: z.number().int().nonnegative(),
+  systemStats: UserSystemStatsSchema,
+})
 
 /* ---------- 类型推导(对外的 TS 类型) ---------- */
 

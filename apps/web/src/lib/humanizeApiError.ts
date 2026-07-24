@@ -59,7 +59,7 @@ const CODE_MESSAGES: Record<string, string> = {
   space_required: '请先选择一个空间',
   space_not_found: '空间不存在',
   space_not_empty: '空间下还有页面,无法删除',
-  personal_space_cannot_delete: '个人空间不能直接删除,请改用「匿名化该用户」清理',
+  personal_space_cannot_delete: '个人空间不能直接删除,请改用「注销该用户」清理',
 
   // Phase A — 空间角色管理
   invalid_role: '无效的角色类型',
@@ -83,7 +83,7 @@ const CODE_MESSAGES: Record<string, string> = {
   last_admin: '不能停用或删除最后一个管理员',
   self_disable: '不能停用自己的账号',
   self_reset: '不能重置自己的密码,请用「修改密码」',
-  self_anonymize: '不能匿名化自己的账号',
+  self_anonymize: '不能注销自己的账号',
 
   // 附件上传
   size_mismatch: '上传文件大小与声明不一致,请重试',

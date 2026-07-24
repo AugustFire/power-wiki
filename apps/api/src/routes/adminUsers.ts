@@ -5,16 +5,19 @@
  *   POST   /api/admin/users                    create user; returns {user, initialPassword}
  *   PATCH  /api/admin/users/:id                update name/color
  *   POST   /api/admin/users/:id/disable        set status='disabled'
- *   POST   /api/admin/users/:id/enable         set status='active' (only from 'disabled')
+ *   POST   /api/admin/users/:id/enable         set status='active' (only from 'disabled';
+ *                                              anonymized returns 409 invalid_state —
+ *                                              M16;identity was scrubbed, no recovery)
  *   POST   /api/admin/users/:id/reset-password generate new initial password + flip to
  *                                              status='must_reset_password'; returns it ONCE
  *   POST   /api/admin/users/:id/anonymize      irreversible "soft delete": clears name /
- *                                              email / password / avatar, kills sessions,
- *                                              sweeps all membership tables, audit row
- *                                              written. pages / comments / versions /
- *                                              attachments / audit rows PRESERVED for
- *                                              attribution (LEFT JOIN shows anonymized
- *                                              display name).
+ *                                              email / password / avatar, sets status to
+ *                                              'anonymized' (M16 4th state, no longer
+ *                                              'disabled'), kills sessions, sweeps all
+ *                                              membership tables, audit row written.
+ *                                              pages / comments / versions / attachments
+ *                                              / audit rows PRESERVED for attribution
+ *                                              (LEFT JOIN shows anonymized display name).
  *
  * All routes require admin role (requireAdmin middleware).
  *
@@ -22,7 +25,9 @@
  *   400 invalid_input     zod validation failed / target is self / target is last admin
  *   403 forbidden         non-admin (handled by middleware)
  *   404 not_found         target user doesn't exist
- *   409 conflict          email taken (create) / last admin (disable) / already in target state
+ *   409 conflict          email taken (create) / last admin (disable / anonymize) /
+ *                         already in target state / anonymized is terminal
+ *                         (enable on anonymized → invalid_state)
  *
  * Security note: initial passwords are returned in the response body. The caller
  * (manager UI) is expected to display them ONCE and never store them. There is
@@ -30,13 +35,16 @@
  * plain-text value at creation/reset time.
  */
 import { Hono } from 'hono'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, ne, or, sql } from 'drizzle-orm'
 import {
+  AdminUsersListQuerySchema,
+  AdminUsersListResponseSchema,
   CreateUserInputSchema,
-  PaginatedListSchema,
   UpdateUserInputSchema,
   UserSchema,
+  UserSummarySchema,
 } from '@power-wiki/shared/schemas'
+import type { UserSummary, UserSystemStats } from '@power-wiki/shared'
 import { db } from '../db/client'
 import {
   notifications,
@@ -57,7 +65,6 @@ import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
 import { recordPermissionAudit } from '../lib/auditLog'
-import { applyPagination, safeParsePagination } from '../lib/paginate'
 
 /** Anonymized display name — shown in JOIN fallbacks everywhere authorship
  *  displays. Keep stable: UI strings / snapshots / tests reference this. */
@@ -78,16 +85,144 @@ export const adminUsersRouter = new Hono<{ Variables: Variables }>()
 adminUsersRouter.use('*', requireAdmin)
 
 // ─── GET /api/admin/users ───────────────────────────────────────────────────
+/**
+ * M17: server-side filter — `q` (name/email ILIKE substring), `status` /
+ * `role` (enum 精确)。响应包含 `total`(匹配 filter 的总行数,用于 sub-text
+ * 「显示 N / 共 M」)+ `systemStats`(system-wide,不受 filter 影响,给右栏
+ * 概览用 — filter 不应污染 system dashboard)。
+ *
+ * 四个并发查询(Promise.all):
+ *   1) paginated filtered items(用 LIMIT N+1 技巧拿 hasMore)
+ *   2) filtered total count(单条 COUNT)
+ *   3) system-wide 统计(单条 COUNT(*) FILTER (WHERE …))
+ *   4) top 5 最近登录(单条 ORDER BY DESC LIMIT 5,只返渲染所需字段)
+ *
+ * 没有「全部加载完才能搜索」的客户端 200 行瓶颈 —— q 命中后第 137 行的
+ * 用户也能搜出来。
+ */
 adminUsersRouter.get('/', async (c) => {
-  const parsed = safeParsePagination(c)
-  if (!parsed.ok) return parsed.response
-  const { limit, offset } = parsed.args
-  let q = db.select().from(users).$dynamic()
-  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
-  const rows = await q
-  const items = rows.map((r) => UserSchema.parse(rowToUser(r)))
-  const result = applyPagination(items, limit, offset)
-  return c.json(PaginatedListSchema(UserSchema).parse(result))
+  const parsed = AdminUsersListQuerySchema.safeParse(c.req.query())
+  if (!parsed.success) {
+    return c.json(
+      { error: 'invalid_input', issues: parsed.error.issues },
+      400,
+    )
+  }
+  const { q, status, role, limit, offset = 0 } = parsed.data
+
+  // Build the WHERE clause for items + total (filtered).
+  // q → ILIKE on name OR email (case-insensitive substring).
+  // status / role → exact enum match. All optional; undefined → no filter.
+  const conds = []
+  if (q) {
+    const pattern = `%${q}%`
+    conds.push(or(ilike(users.name, pattern), ilike(users.email, pattern))!)
+  }
+  if (status) conds.push(eq(users.status, status))
+  if (role) conds.push(eq(users.role, role))
+  const filterWhere = conds.length > 0 ? and(...conds) : undefined
+
+  // Three concurrent queries — filter-aware items + filtered total + system
+  // stats (independent of filter). They're cheap (each touches `users`
+  // once; system stats uses a single FILTER aggregation) so no transaction.
+  const itemsPromise = (() => {
+    let q = db.select().from(users).$dynamic()
+    if (filterWhere) q = q.where(filterWhere)
+    // Stable order — same reasoning as adminSpaces: nanoid primary keys
+    // have no implicit order. createdAt ASC is the LEAST surprising
+    // (oldest users first; matches a typical "I want to find the user I
+    // added in 2024" mental model).
+    q = q.orderBy(asc(users.createdAt))
+    if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
+    return q
+  })()
+
+  const totalPromise = (() => {
+    let q = db.select({ n: count() }).from(users).$dynamic()
+    if (filterWhere) q = q.where(filterWhere)
+    return q
+  })()
+
+  // System stats — single aggregate with FILTER (WHERE …) clauses. No
+  // FILTER on never_logged_in since IS NULL isn't a boolean expression;
+  // use a separate aggregate instead.
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+  const cutoff = sql`${sql.raw(String(Date.now() - SEVEN_DAYS_MS))}`
+  const statsPromise = db
+    .select({
+      totalCount: count(),
+      adminCount: sql<number>`COUNT(*) FILTER (WHERE ${users.role} = 'admin')::int`,
+      activeCount: sql<number>`COUNT(*) FILTER (WHERE ${users.status} = 'active')::int`,
+      mustResetCount: sql<number>`COUNT(*) FILTER (WHERE ${users.status} = 'must_reset_password')::int`,
+      disabledCount: sql<number>`COUNT(*) FILTER (WHERE ${users.status} = 'disabled')::int`,
+      anonymizedCount: sql<number>`COUNT(*) FILTER (WHERE ${users.status} = 'anonymized')::int`,
+      recentlyActiveCount: sql<number>`COUNT(*) FILTER (WHERE ${users.lastLoginAt} IS NOT NULL AND ${users.lastLoginAt} >= ${cutoff})::int`,
+      neverLoggedInCount: sql<number>`COUNT(*) FILTER (WHERE ${users.lastLoginAt} IS NULL)::int`,
+    })
+    .from(users)
+
+  // top 5 最近登录 —— 单条 ORDER BY ... DESC LIMIT 5,只返渲染所需字段。
+  // 把 avatar / color 一并 denormalize,前端 UserAvatar 直接吃,不需二次拉。
+  const topLoggedInPromise = db
+    .select({
+      id: users.id,
+      name: users.name,
+      color: users.color,
+      avatarKind: users.avatarKind,
+      avatarRef: users.avatarRef,
+      lastLoginAt: users.lastLoginAt,
+    })
+    .from(users)
+    .where(sql`${users.lastLoginAt} IS NOT NULL`)
+    .orderBy(desc(users.lastLoginAt))
+    .limit(5)
+
+  const [rows, totalRow, statsRow, topRows] = await Promise.all([
+    itemsPromise,
+    totalPromise,
+    statsPromise,
+    topLoggedInPromise,
+  ])
+
+  const total = totalRow[0]?.n ?? 0
+  // hasMore = "filtered total > (offset + items.length)"
+  const itemsLen = limit !== undefined ? Math.min(rows.length, limit) : rows.length
+  const hasMore = limit !== undefined ? rows.length > limit : false
+  const items = rows
+    .slice(0, itemsLen)
+    .map((r) => UserSchema.parse(rowToUser(r)))
+
+  const systemStats: UserSystemStats = {
+    totalCount: statsRow[0]?.totalCount ?? 0,
+    adminCount: statsRow[0]?.adminCount ?? 0,
+    activeCount: statsRow[0]?.activeCount ?? 0,
+    mustResetCount: statsRow[0]?.mustResetCount ?? 0,
+    disabledCount: statsRow[0]?.disabledCount ?? 0,
+    anonymizedCount: statsRow[0]?.anonymizedCount ?? 0,
+    recentlyActiveCount: statsRow[0]?.recentlyActiveCount ?? 0,
+    neverLoggedInCount: statsRow[0]?.neverLoggedInCount ?? 0,
+    topLoggedIn: topRows.map(
+      (r): UserSummary =>
+        UserSummarySchema.parse({
+          id: r.id,
+          name: r.name,
+          color: r.color,
+          avatarKind: r.avatarKind,
+          avatarRef: r.avatarRef,
+          lastLoginAt: r.lastLoginAt,
+        }),
+    ),
+  }
+
+  const response = AdminUsersListResponseSchema.parse({
+    items,
+    limit: limit ?? items.length,
+    offset,
+    hasMore,
+    total,
+    systemStats,
+  })
+  return c.json(response)
 })
 
 // ─── GET /api/admin/users/:id ──────────────────────────────────────────────
@@ -236,8 +371,13 @@ adminUsersRouter.post('/:id/disable', async (c) => {
   if (!existing) return c.json({ error: 'not_found' }, 404)
 
   // Refuse to disable the last active admin — would leave the system with
-  // no admins and no way to recover.
-  if (existing.role === 'admin' && existing.status !== 'disabled') {
+  // no admins and no way to recover. 'disabled' / 'anonymized' 都不算
+  // 在任,所以这两种状态都跳过 last-admin 检查(M16)。
+  if (
+    existing.role === 'admin' &&
+    existing.status !== 'disabled' &&
+    existing.status !== 'anonymized'
+  ) {
     const otherActiveAdmins = await db
       .select({ id: users.id })
       .from(users)
@@ -257,8 +397,9 @@ adminUsersRouter.post('/:id/disable', async (c) => {
     }
   }
 
-  if (existing.status === 'disabled') {
-    // Idempotent: already disabled, just return current state.
+  // Idempotent: already 'disabled' OR 'anonymized' 都是终态-ish,
+  // disable 操作无意义,直接回当前状态(M16 起 anonymized 也视为「已禁用」)。
+  if (existing.status === 'disabled' || existing.status === 'anonymized') {
     return c.json(UserSchema.parse(rowToUser(existing)))
   }
 
@@ -283,6 +424,15 @@ adminUsersRouter.post('/:id/enable', async (c) => {
   const id = c.req.param('id')
   const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
   if (!existing) return c.json({ error: 'not_found' }, 404)
+  if (existing.status === 'anonymized') {
+    // Anonymized rows are terminal — identity fields (name / email / password
+    // / avatar) are gone, only the row id is preserved for attribution joins.
+    // Even if some future code path flips the status, refuse to re-enable.
+    return c.json(
+      { error: 'invalid_state', message: '已注销的用户不可恢复' },
+      409,
+    )
+  }
   if (existing.status !== 'disabled') {
     // Only meaningful for transitioning out of 'disabled'. If they're already
     // active or must_reset_password, return current state (idempotent).
@@ -351,7 +501,11 @@ adminUsersRouter.post('/:id/reset-password', async (c) => {
  *   - avatar    → avatarKind=null, avatarRef=null (UserAvatar falls back to
  *                 initials+color placeholder)
  *   - color     → ANONYMIZED_COLOR gray
- *   - status    → 'disabled'
+ *   - status    → 'anonymized' (M16:独立 4 态;以前写 'disabled' 跟 admin
+ *                            禁用撞名,enable 端点曾能误把 anonymized
+ *                            行翻成 active,造成 zombie 用户 —— 见
+ *                            M16 plan;enable handler 已加 anonymized
+ *                            守卫)
  *
  * What gets SWEPT (per-user references that lose meaning without the user):
  *   - sessions                       active sign-ins killed
@@ -393,7 +547,7 @@ adminUsersRouter.post('/:id/anonymize', async (c) => {
   // Refuse to anonymize yourself — irreversible + would lock you out.
   if (id === me.id) {
     return c.json(
-      { error: 'self_anonymize', message: '不能匿名化自己的账号' },
+      { error: 'self_anonymize', message: '不能注销自己的账号' },
       409,
     )
   }
@@ -401,8 +555,10 @@ adminUsersRouter.post('/:id/anonymize', async (c) => {
   const existing = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
   if (!existing) return c.json({ error: 'not_found' }, 404)
 
-  // Refuse to anonymize the last active admin — even though anonymize sets
-  // status='disabled', same invariant as disable: we always need a way in.
+  // Refuse to anonymize the last active admin — same invariant as disable:
+  // we always need a way in. (M16 起 anonymize 写 status='anonymized'
+  // 而不是 'disabled',但语义不变 —— 这里只要求「还有别的 admin」,
+  // 不区分其它 admin 的 status。)
   if (existing.role === 'admin') {
     const otherActiveAdmins = await db
       .select({ id: users.id })
@@ -410,7 +566,7 @@ adminUsersRouter.post('/:id/anonymize', async (c) => {
       .where(and(eq(users.role, 'admin'), ne(users.id, id)))
     if (otherActiveAdmins.length === 0) {
       return c.json(
-        { error: 'last_admin', message: '不能匿名化最后一个管理员' },
+        { error: 'last_admin', message: '不能注销最后一个管理员' },
         409,
       )
     }
@@ -441,7 +597,7 @@ adminUsersRouter.post('/:id/anonymize', async (c) => {
         avatarKind: null,
         avatarRef: null,
         color: ANONYMIZED_COLOR,
-        status: 'disabled',
+        status: 'anonymized',
         updatedAt: now,
       })
       .where(eq(users.id, id))
@@ -482,7 +638,7 @@ adminUsersRouter.post('/:id/anonymize', async (c) => {
       targetId: id,
       payload: {
         before,
-        after: { name: ANONYMIZED_NAME, email: anonymizedEmail(id), status: 'disabled' },
+        after: { name: ANONYMIZED_NAME, email: anonymizedEmail(id), status: 'anonymized' },
       },
     })
   })

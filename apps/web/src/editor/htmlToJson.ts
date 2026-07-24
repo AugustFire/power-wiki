@@ -89,3 +89,46 @@ export function stampSchemaVersion(json: AnyJSON): AnyJSON {
   json.__schemaVersion = CURRENT_SCHEMA_VERSION
   return json
 }
+
+/**
+ * 旧 mark 名 → Tiptap StarterKit mark 名的映射。
+ *
+ * 存量页面(尤其是走 Markdown 导入的)可能带 prosemirror-markdown /
+ * markdown-it 的 mark 名 `strong` / `em` / `strikethrough`,而 Tiptap
+ * StarterKit 的 mark 分别叫 `bold` / `italic` / `strike`。EditView 把
+ * contentJson 直接喂 `setContent` 时,未知 mark type 会抛
+ * "There is no mark type strong in this schema"。
+ * 导入侧已在 `apps/api/src/lib/mdImport.ts` 修正,这里是打开编辑器前的
+ * 兜底,顺带自愈:改后的内容在下一次 auto-save 会以正确 mark 名回写。
+ */
+const LEGACY_MARK_NAME_MAP: Record<string, string> = {
+  strong: 'bold',
+  em: 'italic',
+  strikethrough: 'strike',
+}
+
+/**
+ * 深拷贝一份 JSON,并把其中所有 text 节点的 legacy mark 名规范化成 Tiptap
+ * 名。返回新对象,不改动传入的(可能是 reactive 的)原对象。
+ */
+export function normalizeLegacyMarks(json: AnyJSON): AnyJSON {
+  const clone = JSON.parse(JSON.stringify(json)) as AnyJSON
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const walk = (node: any): void => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      node.forEach(walk)
+      return
+    }
+    if (Array.isArray(node.marks)) {
+      for (const mk of node.marks) {
+        if (mk && typeof mk === 'object' && typeof mk.type === 'string' && LEGACY_MARK_NAME_MAP[mk.type]) {
+          mk.type = LEGACY_MARK_NAME_MAP[mk.type]
+        }
+      }
+    }
+    if (Array.isArray(node.content)) node.content.forEach(walk)
+  }
+  walk(clone)
+  return clone
+}

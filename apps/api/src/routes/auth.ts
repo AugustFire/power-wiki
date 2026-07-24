@@ -9,7 +9,7 @@
  * Error model:
  *   400 invalid_input         zod validation failed
  *   401 unauthorized          bad credentials / no session / expired
- *   403 account_disabled      user.status === 'disabled' (admin-disabled)
+ *   403 account_disabled      user.status === 'disabled' | 'anonymized' (admin-disabled / anonymized)
  *   200 OK on success
  *   204 No Content on sign-out
  *
@@ -58,7 +58,12 @@ authRouter.post('/sign-in', async (c) => {
     return c.json({ error: 'unauthorized', message: '邮箱或密码错误' }, 401)
   }
 
-  if (row.status === 'disabled') {
+  if (row.status === 'disabled' || row.status === 'anonymized') {
+    // 403 message is intentionally generic — we don't leak whether the
+    // account was disabled vs anonymized. Anonymized rows have their
+    // passwordHash randomized + email=@.invalid, so this is defense-in-
+    // depth: even if some other path produced a non-null row here, we
+    // still refuse sign-in.
     return c.json(
       { error: 'account_disabled', message: '账号已被禁用,请联系管理员' },
       403,

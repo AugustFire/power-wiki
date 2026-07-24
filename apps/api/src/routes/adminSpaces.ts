@@ -34,9 +34,8 @@ import { Hono } from 'hono'
 import { eq, inArray, sql, and, asc } from 'drizzle-orm'
 import {
   CreateSpaceInputSchema,
-  PaginatedListSchema,
+  AdminSpacesListResponseSchema,
   SetSpaceAccessInputSchema,
-  SpaceSchema,
   UpdateSpaceInputSchema,
 } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
@@ -45,6 +44,7 @@ import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
+import { updateSpaceMetadata } from '../lib/spaceMetadata'
 import { loadGrantsForSpaces, type SpaceGrants } from '../lib/permissions'
 import { recordPermissionAudit } from '../lib/auditLog'
 import type { Space } from '@power-wiki/shared'
@@ -150,7 +150,20 @@ adminSpacesRouter.get('/', async (c) => {
     ),
   )
   const result = applyPagination(items, limit, offset)
-  return c.json(PaginatedListSchema(SpaceSchema).parse(result))
+  const kindCountRows = await db
+    .select({
+      kind: spaces.kind,
+      count: sql<number>`COUNT(*)::int`,
+    })
+    .from(spaces)
+    .groupBy(spaces.kind)
+  const kindCounts = { shared: 0, personal: 0 }
+  for (const row of kindCountRows) {
+    if (row.kind === 'shared' || row.kind === 'personal') {
+      kindCounts[row.kind] = row.count
+    }
+  }
+  return c.json(AdminSpacesListResponseSchema.parse({ ...result, kindCounts }))
 })
 
 /* ─── POST /api/admin/spaces ──────────────────────────────────────────── */
@@ -207,17 +220,8 @@ adminSpacesRouter.patch('/:id', async (c) => {
   if (Object.keys(parsed.data).length === 0) {
     return c.json({ error: 'invalid_input', message: '至少需要更新一个字段' }, 400)
   }
-  const existing = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]
-  if (!existing) return c.json({ error: 'not_found' }, 404)
-
-  const patch: Partial<typeof spaces.$inferInsert> = { updatedAt: Date.now() }
-  if (parsed.data.name !== undefined) patch.name = parsed.data.name
-  if (parsed.data.description !== undefined) patch.description = parsed.data.description ?? null
-  if (parsed.data.color !== undefined) patch.color = parsed.data.color
-  if (parsed.data.icon !== undefined) patch.icon = parsed.data.icon ?? null
-
-  await db.update(spaces).set(patch).where(eq(spaces.id, id))
-  const updated = (await db.select().from(spaces).where(eq(spaces.id, id)).limit(1))[0]!
+  const updated = await updateSpaceMetadata(id, parsed.data)
+  if (!updated) return c.json({ error: 'not_found' }, 404)
   const accessGroupIds = await getAccessGroupIds(id)
   const statsBySpace = await getSpacePageStats([id])
   const ownerNameBySpace = await getSpaceOwnerNames([id])
@@ -256,7 +260,7 @@ adminSpacesRouter.delete('/:id', async (c) => {
     return c.json(
       {
         error: 'personal_space_cannot_delete',
-        message: '个人空间不能直接删除。请改用「匿名化该用户」清理。',
+        message: '个人空间不能直接删除。请改用「注销该用户」清理。',
       },
       400,
     )
