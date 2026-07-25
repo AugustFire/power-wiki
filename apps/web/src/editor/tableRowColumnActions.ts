@@ -282,6 +282,11 @@ function renderColPopover(
       { label: '在右侧插入列', icon: 'align_horizontal_right', run: () => editor.chain().focus().addColumnAfter().run() },
     ],
     [
+      { label: '左对齐该列', icon: 'format_align_left', run: () => editor.chain().focus().setCellAttribute('textAlign', 'left').run() },
+      { label: '居中对齐该列', icon: 'format_align_center', run: () => editor.chain().focus().setCellAttribute('textAlign', 'center').run() },
+      { label: '右对齐该列', icon: 'format_align_right', run: () => editor.chain().focus().setCellAttribute('textAlign', 'right').run() },
+    ],
+    [
       { label: '删除该列', icon: 'vertical_distribute', run: () => editor.chain().focus().deleteColumn().run(), danger: true },
     ],
     [

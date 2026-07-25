@@ -2581,9 +2581,7 @@ button:active:not(:disabled):not(.btn) {
     background: var(--accent);
 }
 
-/* 列 hot zone — 同样 3px 视觉「顶端色带」+ 10px 命中区(往表格上方空白扩,
-   host 底边贴表格上边,命中区落在 gutter 里,零遮挡首行文字点击)。
-   配色跟行 hot zone 一致:hover 灰、active 蓝。 */
+/* 列 hot zone — 只在表格顶部显示横向提示条，避免最后一列在右侧形成整条蓝线。 */
 .tiptap .table-col-hotzone {
     position: absolute;
     top: -10px;
@@ -2598,9 +2596,9 @@ button:active:not(:disabled):not(.btn) {
 .tiptap .table-col-hotzone::after {
     content: '';
     position: absolute;
-    bottom: 0;
     left: 0;
     right: 0;
+    bottom: 0;
     height: 3px;
     background: var(--text-3);
     border-radius: 2px 2px 0 0;
