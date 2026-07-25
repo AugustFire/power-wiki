@@ -2385,6 +2385,318 @@ button:active:not(:disabled):not(.btn) {
 }
 
 /* ============================================================
+   表格悬停 "+" 控件(editor only — read view 不需要)
+   - .table-add-row 紧贴表格下边,addRowToEnd 一键加行
+   - .table-add-col 紧贴表格右边,addColumnToEnd 一键加列
+   - 关键约束:wrapper 必须 100% 落在 tableWrapper 之外 —— 之前用
+     bottom:-10px + height:30,按钮区有 20px 跟表格内容重叠(压在最后
+     一行空 cell 上,视觉上像"占了表格内的空间")。改成 bottom/right
+     -30px,30px 高 wrapper 整体挪到表格外,按钮(24×24)居中后离表格
+     边 3px。
+   - 默认 opacity:0 + pointer-events:none;鼠标悬停 .tableWrapper(或
+     控件自身)时 opacity:1,跟 table 的 column-resize-handle 同一套
+     "hover 才出现"视觉语法,不打扰用户。
+   - 视觉:纯扁平 —— 按钮本体 24×24 圆角矩形(6px),无 shadow、无
+     缩放、wrapper 无背景色。集成感只通过朝向表格一侧的 2px×48px
+     实心 accent 短杆(默认 0.5 透明,hover 升到 1)给"按钮属于这张
+     表"的暗示,其它都跟普通 inline button 一致。
+   - 行 / 列按钮形状统一(都用 .table-add-btn,strip 槽位只控制位置)。
+   - contentEditable:false 在 JS 层做,见 tableRowColumnActions.ts;CSS
+     端只需要负责布局 + 显隐。
+   ============================================================ */
+.tiptap .tableWrapper { position: relative; }
+
+.tiptap .table-add-row,
+.tiptap .table-add-col {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+    z-index: 5;
+}
+
+.tiptap .table-add-row {
+    position: absolute;
+    bottom: -18px;
+    height: 18px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+}
+
+.tiptap .table-add-col {
+    position: absolute;
+    top: 0;
+    width: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.tiptap .table-add-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: var(--bg);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-user-select: none;
+    transition:
+        background var(--duration-fast) var(--ease-out),
+        color var(--duration-fast) var(--ease-out),
+        border-color var(--duration-fast) var(--ease-out);
+}
+/* 行按钮横向扁平、列按钮纵向扁平，像从表格边框伸出的短标签。 */
+.tiptap .table-add-row .table-add-btn {
+    width: 40px;
+    height: 18px;
+    border-top: 0;
+    border-radius: 0 0 7px 7px;
+}
+.tiptap .table-add-col .table-add-btn {
+    width: 18px;
+    height: 40px;
+    border-left: 0;
+    border-radius: 0 7px 7px 0;
+}
+/* hover:只染按钮本体，不加阴影或额外连接线。 */
+.tiptap .table-add-btn:hover {
+    background: var(--accent-bg-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.tiptap .table-add-btn:active {
+    border-color: var(--accent-hover);
+}
+.tiptap .table-add-btn .material-symbols-outlined {
+    font-size: 16px !important;
+    line-height: 1;
+    font-weight: 400;
+}
+
+.tiptap .tableWrapper:hover .table-add-row,
+.tiptap .tableWrapper:hover .table-add-col,
+.tiptap .table-add-row:hover,
+.tiptap .table-add-col:hover {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tiptap .tableWrapper:hover .table-add-row,
+.tiptap .tableWrapper:hover .table-add-col,
+.tiptap .table-add-row:hover,
+.tiptap .table-add-col:hover {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ============================================================
+   ReadView 空 cell 高度对齐
+   - Tiptap 渲染空 cell 是 <td><p></p></td>,空 <p> collapse 到 ~0 高,
+     加上 8px×2 padding 行也只有 ~16px,跟有内容的 ~36px 行对比强烈,
+     看起来像"行没画完"。
+   - 给空 <p> 一个 min-height,让空行纵向高度跟有内容的行接近(典型
+     1.5em ≈ 24px + 8px×2 padding ≈ 40px,跟 filled 行一致)。
+   - 只在 .prose 里生效(ReadView),不进入 .tiptap 编辑器 —— 编辑器里
+     StarterKit 的空段 placeholder(`>` placeholder) 会跟这里的 min-height
+     视觉打架,而且编辑时空行本身就不丑(光标所在行),用户没反馈这块。
+   ============================================================ */
+.prose table td > p:empty,
+.prose table th > p:empty {
+    min-height: 1.5em;
+}
+
+/* ============================================================
+   表格行 / 列 hot zone + 动作 popover(editor only,read view 不需要)
+   - .table-row-hotzone:行左缘细色带(3px 宽,贴在表格内边缘)。
+   - .table-col-hotzone:列顶端细色带(3px 高,贴在表格内上缘)。
+   - 浮现条件是「悬停整张表」(.tableWrapper:hover),不是「悬停某一行」。
+     手柄是 .tableWrapper 的 DOM 后代(挂在 <tbody> 里),CSS :hover 会沿
+     DOM 祖先链上冒泡 —— 即使手柄视觉上画在表格外侧,鼠标移到手柄上时
+     wrapper 依旧保持 :hover,手柄不会消失。这修掉了老实现「鼠标离开单元格
+     → 手柄瞬间隐藏 → 够不到」的 hover 间隙 bug(老版靠 JS 追踪 tr:hover)。
+   - 设计选择:把手柄做成「贴边的细色带」而不是「外凸的厚条」,让 row/col
+     选中看起来是 cell 选中的自然延展,而不是一个独立的视觉块。
+   - 配色统一用 var(--accent),靠 opacity 区分三种状态:0(默认隐藏)/
+     0.45(表格 hover 提示)/ 0.95(直接指到或 popover 打开)。不用 text-3
+     灰,避免 hover/active 两态颜色割裂让人误以为是两个不同的 affordance。
+   - .table-action-popover:点 hot zone 后弹出的 5 个动作按钮容器
+     (insert × 2 / delete / move × 2);is-open 由 tableRowColumnActions.ts 的
+     plugin view toggle。复用 var(--bg) / var(--border) / var(--radius-md) /
+     var(--shadow-md) / var(--text-2) / var(--text-3) / var(--accent) /
+     var(--danger) / var(--danger-soft) / var(--z-popover)。
+   ============================================================ */
+/* 行 hot zone — 视觉是 3px 细「左缘色带」,但命中区扩到 10px(往表格外侧
+   的左空白扩,不侵入单元格 —— host 的右边缘正好贴表格左边,整个 10px 命中
+   区落在 gutter 里,零遮挡首列文字点击)。细条本体由 ::after 画,host 透明只
+   当扩大的点击靶。这样解决「3px 太细选不中」而不牺牲贴边细条的视觉。
+   - 默认:host 常在(透明),::after opacity 0 完全不可见
+   - 表格 hover:::after 中性灰 var(--text-3) 0.5 透明(柔和提示,跟选中蓝
+     拉开距离,避免 hover/active 两态同色分不清)
+   - 直接指到 / popover 打开(is-active):::after 纯色 var(--accent) opacity 1,
+     跟选中行 cell 的浅蓝背景明显不同(背景软、stripe 实) */
+.tiptap .table-row-hotzone {
+    position: absolute;
+    left: -10px;
+    width: 10px;
+    background: transparent;
+    opacity: 0;
+    pointer-events: none;
+    cursor: pointer;
+    transition: opacity var(--duration-fast) var(--ease-out);
+    z-index: 3;
+}
+.tiptap .table-row-hotzone::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--text-3);
+    border-radius: 2px 0 0 2px;
+    transition: background-color var(--duration-fast) var(--ease-out);
+}
+.tiptap .tableWrapper:hover .table-row-hotzone,
+.tiptap .table-row-hotzone:hover,
+.tiptap .table-row-hotzone.is-active {
+    pointer-events: auto;
+}
+.tiptap .tableWrapper:hover .table-row-hotzone:not(.is-active):not(:hover) {
+    opacity: 0.5;
+}
+.tiptap .table-row-hotzone:hover,
+.tiptap .table-row-hotzone.is-active {
+    opacity: 1;
+}
+.tiptap .table-row-hotzone:hover::after,
+.tiptap .table-row-hotzone.is-active::after {
+    background: var(--accent);
+}
+
+/* 列 hot zone — 同样 3px 视觉「顶端色带」+ 10px 命中区(往表格上方空白扩,
+   host 底边贴表格上边,命中区落在 gutter 里,零遮挡首行文字点击)。
+   配色跟行 hot zone 一致:hover 灰、active 蓝。 */
+.tiptap .table-col-hotzone {
+    position: absolute;
+    top: -10px;
+    height: 10px;
+    background: transparent;
+    opacity: 0;
+    pointer-events: none;
+    cursor: pointer;
+    transition: opacity var(--duration-fast) var(--ease-out);
+    z-index: 3;
+}
+.tiptap .table-col-hotzone::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--text-3);
+    border-radius: 2px 2px 0 0;
+    transition: background-color var(--duration-fast) var(--ease-out);
+}
+.tiptap .tableWrapper:hover .table-col-hotzone,
+.tiptap .table-col-hotzone:hover,
+.tiptap .table-col-hotzone.is-active {
+    pointer-events: auto;
+}
+.tiptap .tableWrapper:hover .table-col-hotzone:not(.is-active):not(:hover) {
+    opacity: 0.5;
+}
+.tiptap .table-col-hotzone:hover,
+.tiptap .table-col-hotzone.is-active {
+    opacity: 1;
+}
+.tiptap .table-col-hotzone:hover::after,
+.tiptap .table-col-hotzone.is-active::after {
+    background: var(--accent);
+}
+
+/* 动作 popover — 横向 icon-only 工具条(Confluence/Notion 风格的浮动工具栏)
+   而不是传统的下拉菜单。每个按钮 28×28 方形,只画 icon,不画文字;
+   鼠标 hover 触发浏览器原生 tooltip(title)看名字。
+   三组用 .group-divider 竖线隔开(insert / delete / move),跟桌面的
+   工具栏视觉语言对齐。
+   - 子 widget 上挂 dataset.tablePos 给 syncPopoverDom 用
+   - is-open 由 tableRowColumnActions.ts 的 plugin view toggle
+   - 复用 var(--bg) / var(--border) / var(--radius-md) / var(--shadow-md) /
+     var(--text-2) / var(--text-3) / var(--accent) / var(--bg-subtle) /
+     var(--danger) / var(--danger-soft) / var(--z-popover) */
+.tiptap .table-action-popover {
+    display: none;
+    position: absolute;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    padding: 3px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: var(--z-popover);
+    font-family: inherit;
+}
+.tiptap .table-action-popover.is-open {
+    display: flex;
+}
+.tiptap .table-action-popover button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: inherit;
+}
+.tiptap .table-action-popover button:hover:not(:disabled) {
+    background: var(--bg-subtle);
+    color: var(--text-1);
+}
+.tiptap .table-action-popover button:disabled {
+    color: var(--text-3);
+    cursor: not-allowed;
+}
+.tiptap .table-action-popover button.danger {
+    color: var(--danger);
+}
+.tiptap .table-action-popover button.danger:hover {
+    background: var(--danger-soft);
+}
+.tiptap .table-action-popover button .icon {
+    font-size: 18px;
+    line-height: 1;
+    width: 18px;
+    text-align: center;
+}
+/* 组与组之间的竖线分隔(在 [insert] [delete] [move] 三组之间) */
+.tiptap .table-action-popover button.group-divider {
+    width: 1px;
+    height: 16px;
+    margin: 0 3px;
+    padding: 0;
+    background: var(--border);
+    color: transparent;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* ============================================================
    行内日期(DateInline 扩展)
    - 编辑器内 + 读视图共用样式
    - 节点是 inline atom,在文本流里嵌一个柔和的"芯片"

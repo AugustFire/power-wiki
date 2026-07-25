@@ -26,6 +26,7 @@ import { DateInline } from './dateInlineExtension'
 import { Mention } from './mentionExtension'
 import { ImageAttachment } from './imageAttachmentExtension'
 import { BlockquoteIndent } from './extensions/blockquoteIndent'
+import { TableRowColumnActions } from './tableRowColumnActions'
 
 /**
  * 仅拦截 Cmd/Ctrl+S(浏览器"保存网页"对话框)。
@@ -114,6 +115,8 @@ const cellAttrs = {
  *
  * 当前约束:
  * - BlockBrowserSave 拦截 Cmd/Ctrl+S 防浏览器保存对话框
+ * - TableHoverControls 在每个 .tableWrapper 挂悬停「+ 添加行/列」按钮,
+ *   配合 components.css 的 .tiptap .table-add-row/.table-add-col 样式显示
  * - Markdown 输入规则开启(`## ` → h2、`**bold**` → bold、`- ` → ul 等)
  * - IME 中文拼音期间,Tiptap 通过 `view.composing` 字段自动跳过 inputRules
  *   (见 @tiptap/core/src/InputRule.ts:97-104),无需自己写 composition 插件
@@ -133,6 +136,7 @@ const extensions = [
   TaskList,
   TaskItem.configure({ nested: true }),
   Table.configure({ resizable: true }),
+  TableRowColumnActions,
   TableRow,
   TableCell.extend({
     addAttributes() {
