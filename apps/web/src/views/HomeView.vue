@@ -21,7 +21,6 @@ import { useRecentPages } from '@/composables/useRecentPages'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useRouter } from 'vue-router'
 import { newId } from '@/lib/id'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import MeDashboardView from '@/views/MeDashboardView.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
@@ -171,7 +170,7 @@ function excerpt(html: string): string {
     <MeDashboardView v-if="isPersonalSpace" />
 
     <div v-else class="home-shell">
-      <div class="subheader">
+      <Teleport to="#app-subheader">
         <div class="breadcrumb">
           <span class="crumb-item current">{{ activeSpace?.name ?? '我的知识库' }}</span>
           <!-- viewer-role 只读:空间名旁挂 14px 小锁,跟侧栏 chip 同款。
@@ -189,13 +188,9 @@ function excerpt(html: string): string {
             新建页面
           </button>
         </div>
-      </div>
+      </Teleport>
 
-    <div class="layout no-toc">
-      <Sidebar />
-
-      <div class="content">
-        <div class="content-inner home-page">
+      <div class="content-inner home-page">
           <!-- 空状态 -->
           <div v-if="rootPages.length === 0" class="empty">
             <div class="empty-illustration">
@@ -361,16 +356,12 @@ function excerpt(html: string): string {
               </a>
             </div>
           </template>
-        </div>
       </div>
-    </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.home-shell { min-height: calc(100vh - var(--topbar-h)); }
-
 .home-hero { margin-bottom: 8px; }
 
 /* 空间简介:avatar 40 + name + description 两行,放在 hero 之下、统计之上,

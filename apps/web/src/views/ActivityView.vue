@@ -20,7 +20,6 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -146,38 +145,45 @@ function chipColor(kind: ActivityEvent['kind']): string {
 </script>
 
 <template>
-  <div class="activity-layout">
-    <Sidebar />
-    <main class="activity-main">
+  <div class="activity-main">
+    <Teleport to="#app-subheader">
+      <div class="breadcrumb">
+        <a href="#/" class="crumb-item crumb-link">我的知识库</a>
+        <span class="sep">/</span>
+        <span class="crumb-item current">最近页面活动</span>
+      </div>
+      <div class="page-actions">
+        <label class="filter-select">
+          <span>空间</span>
+          <select v-model="selectedSpace">
+            <option :value="ALL_SPACES">所有空间</option>
+            <option v-for="s in accessibleSpaces" :key="s.id" :value="s.id">
+              {{ s.name }}
+            </option>
+          </select>
+        </label>
+        <button
+          class="refresh-btn"
+          type="button"
+          :disabled="state.loading"
+          @click="refresh"
+        >
+          <span
+            class="material-symbols-outlined icon-md"
+            :class="{ 'is-loading': state.loading }"
+          >refresh</span>
+          刷新
+        </button>
+      </div>
+    </Teleport>
+
+    <div class="content-inner activity-page">
       <header class="activity-header">
         <div class="title-block">
           <h1 class="title">最近页面活动</h1>
           <p class="subtitle">
             Workspace-wide 最近 50 条 page 活动事件,涵盖编辑/创建/复制/移动/恢复/发布。按发生时间倒序,点击进入对应页。
           </p>
-        </div>
-        <div class="controls">
-          <label class="filter-select">
-            <span>空间</span>
-            <select v-model="selectedSpace">
-              <option :value="ALL_SPACES">所有空间</option>
-              <option v-for="s in accessibleSpaces" :key="s.id" :value="s.id">
-                {{ s.name }}
-              </option>
-            </select>
-          </label>
-          <button
-            class="refresh-btn"
-            type="button"
-            :disabled="state.loading"
-            @click="refresh"
-          >
-            <span
-              class="material-symbols-outlined icon-md"
-              :class="{ 'is-loading': state.loading }"
-            >refresh</span>
-            刷新
-          </button>
         </div>
       </header>
 
@@ -270,19 +276,18 @@ function chipColor(kind: ActivityEvent['kind']): string {
         </button>
         <span v-else class="end-hint">已经到底了</span>
       </div>
-    </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.activity-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  min-height: 100vh;
-}
 .activity-main {
-  padding: 24px 32px 48px;
-  overflow-y: auto;
+  min-height: 100%;
+}
+.activity-page {
+  padding-top: 24px;
+  padding-bottom: 64px;
+  max-width: 960px;
 }
 .activity-header {
   display: flex;

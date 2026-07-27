@@ -22,7 +22,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useRouter } from 'vue-router'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import VersionList from '@/components/page/VersionList.vue'
 import VersionDiffView from '@/components/page/VersionDiffView.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -166,7 +165,7 @@ function formatChangeNote(note: string | null | undefined): string {
 
 <template>
   <div class="history-shell">
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="left-actions">
         <button
           type="button"
@@ -190,11 +189,9 @@ function formatChangeNote(note: string | null | undefined): string {
           共 {{ getState().versions.length }} 个版本
         </span>
       </div>
-    </div>
+    </Teleport>
 
-    <div class="layout history-layout">
-      <Sidebar />
-
+    <div class="history-layout">
       <section class="history-list-pane" aria-label="版本列表">
         <div class="history-list-header">
           <span class="material-symbols-outlined">schedule</span>
@@ -253,16 +250,6 @@ function formatChangeNote(note: string | null | undefined): string {
 </template>
 
 <style scoped>
-.history-shell {
-  min-height: calc(100vh - var(--topbar-h));
-}
-
-.subheader {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 20px;
-}
 .left-actions { display: inline-flex; align-items: center; }
 .back-link {
   gap: 4px;
@@ -304,11 +291,6 @@ function formatChangeNote(note: string | null | undefined): string {
   font-size: 13px;
 }
 
-.page-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 .vp-count {
   font-size: 11px;
   font-weight: 500;
@@ -318,12 +300,12 @@ function formatChangeNote(note: string | null | undefined): string {
   padding: 1px 8px;
 }
 
-/* 三列 grid:sidebar / 340 list / 1fr diff。高度跟 ReadView 一致,
- * 子面板各自 overflow-y 滚动。 */
+/* 双列 grid:340 list / 1fr diff。子面板各自 overflow-y 滚动;AppShell
+ * 已提供 Sidebar 和外层 content 高度。 */
 .history-layout {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 340px 1fr;
-  height: calc(100vh - var(--topbar-h) - var(--sub-h));
+  grid-template-columns: 340px minmax(0, 1fr);
+  height: 100%;
   column-gap: 0;
 }
 

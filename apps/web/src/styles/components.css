@@ -192,32 +192,32 @@
 }
 
 /* =========================
-   Layout (3-column grid)
+   Layout (3-column grid, owned by AppShell)
    ========================= */
-.layout {
+
+/* AppShell 工作区三栏:Sidebar + 内容 + Teleport 右栏。`minmax(0, 1fr)`
+   让内容列可缩(< min-content 不会撑爆 grid)。右栏由 View 通过 Teleport
+   注入(#app-right-rail);无 TocPanel 时右栏为空,列宽由 .toc-collapsed
+   / .layout-wide 控制。 */
+.app-shell .layout {
     display: grid;
-    grid-template-columns: var(--sidebar-w) 1fr var(--toc-w);
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
-    /* 专题 12:TOC 折叠 —— 第三列 240→0 时整 grid 平滑过渡,避免内容列硬切。 */
+    /* TOC 折叠 —— 第三列 240→0 时整 grid 平滑过渡,避免内容列硬切。 */
     transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.layout.with-subheader {
-    height: calc(100vh - var(--topbar-h) - var(--sub-h));
-}
-
-.layout.no-toc {
-    /* 编辑视图没有 TocPanel,但仍占住 var(--toc-w) 列宽,
-       保证跟 ReadView 的内容列宽度一致 — 切换视图时内容不跳动 */
-    grid-template-columns: var(--sidebar-w) 1fr var(--toc-w);
+/* 历史页专用 —— Sidebar + 内容,无右栏(版本时间线占满剩余宽度)。 */
+.app-shell .layout.layout-wide {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
 }
 
 /* TOC 折叠态 —— ReadView 绑 .toc-collapsed class 后,第三列收为 0,
    TOC 自身淡出并失去 pointer-events,避免折叠后还挡点击。 */
-.layout.toc-collapsed {
+.app-shell .layout.toc-collapsed {
     grid-template-columns: var(--sidebar-w) 1fr 0;
 }
-.layout.toc-collapsed .toc-panel {
+.app-shell .layout.toc-collapsed .toc-panel {
     opacity: 0;
     pointer-events: none;
     /* TOC panel 自身带 overflow-y: auto,即使 grid 列宽 0 也保留
@@ -225,6 +225,17 @@
      * 折叠态强制 hidden + padding 0,展开后浏览器自动恢复。 */
     overflow: hidden;
     padding: 0;
+}
+
+/* 无 TOC 的路由(活动 / 我的 / 关注 / 404 / Home 等)—— 第三列直接为 0,
+   不留 240px 空列浪费视口,让内容列铺满 Sidebar 右侧全部剩余空间。
+   同时把 .app-right-rail 移出 grid(display:none),避免空 div 落到隐式
+   第二行占用高度 / 列宽。 */
+.app-shell .layout.no-toc {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+.app-shell .layout.no-toc > .app-right-rail {
+    display: none;
 }
 
 /* =========================
@@ -486,6 +497,17 @@
     /* 防止内容增减时浏览器自动重锚滚动位置,避免 Tiptap 自动保存 / 输入引
        起的"页面上滑"。注意:必须作用在真正的滚动容器上 */
     overflow-anchor: none;
+}
+/* AppShell:右栏(Teleport 入口)按三栏平衡列占位,无内容时仅留出列宽。 */
+.app-shell .layout > .app-right-rail {
+    background: var(--bg);
+    padding: 0 16px 24px;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+}
+.app-shell .layout > .app-right-rail:empty {
+    padding: 0;
 }
 .content-inner {
     max-width: 1680px;

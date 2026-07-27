@@ -4,7 +4,6 @@ import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
 import { api, ApiError, invalidatePath } from '@/lib/api'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import RichEditor from '@/components/editor/RichEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
@@ -556,7 +555,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="edit-shell">
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="breadcrumb">
         <a href="#/" class="crumb-item crumb-link">我的知识库</a>
         <template v-for="(c, i) in visibleBreadcrumb.head" :key="'h-' + i">
@@ -655,7 +654,7 @@ onBeforeUnmount(() => {
         </button>
         <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 专题 12:TOC 折叠手柄 —— 只在 tocCollapsed 时显示。
        放 EditView 内部(而非 App.vue 顶层)是为了路由切回 ReadView 等
@@ -671,11 +670,7 @@ onBeforeUnmount(() => {
       <span class="material-symbols-outlined">keyboard_double_arrow_left</span>
     </button>
 
-    <div class="layout" :class="{ 'toc-collapsed': uiStore.tocCollapsed }">
-      <Sidebar />
-
-      <div class="content">
-        <div class="content-inner edit-page">
+    <div class="content-inner edit-page">
           <EditorToolbar :editor="editorRef" @close="closeEditor" />
 
           <input
@@ -720,13 +715,14 @@ onBeforeUnmount(() => {
             <span class="word-count">{{ wordCount.words }} 字</span>
           </div>
         </div>
-      </div>
 
-      <TocPanel
-        :content-ref="editorContentEl"
-        :page-key="localId ?? undefined"
-        :labels="page?.labels ?? []"
-      />
+      <Teleport to="#app-right-rail">
+        <TocPanel
+          :content-ref="editorContentEl"
+          :page-key="localId ?? undefined"
+          :labels="page?.labels ?? []"
+        />
+      </Teleport>
 
       <!-- 图片附件全屏预览(ReadView 同款),点击 .ProseMirror 内的
            figure.attachment-image > img 触发,见 onAttachmentImgClickInEditor。 -->
@@ -756,13 +752,11 @@ onBeforeUnmount(() => {
         :page-id="localId!"
         :page-title="localTitle"
       />
-    </div>
 
   </div>
 </template>
 
 <style scoped>
-.edit-shell { min-height: calc(100vh - var(--topbar-h)); }
 .edit-page { padding-top: 16px; }
 
 .edit-mode-badge {

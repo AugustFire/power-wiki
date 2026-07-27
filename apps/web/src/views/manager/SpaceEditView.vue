@@ -528,7 +528,20 @@ function formatDate(ts: number): string {
 
 <template>
   <div class="space-edit">
-    <nav class="se-breadcrumb" aria-label="面包屑导航">
+    <Teleport v-if="!isManagerRoute" to="#app-subheader">
+      <div class="breadcrumb">
+        <RouterLink :to="backTarget" class="crumb-item crumb-link">
+          {{ backLabel }}
+        </RouterLink>
+        <span class="sep">/</span>
+        <span class="crumb-item current">
+          <Skeleton v-if="loading" width="120px" height="14px" />
+          <template v-else-if="space">{{ space.name }}</template>
+          <template v-else>—</template>
+        </span>
+      </div>
+    </Teleport>
+    <nav v-else class="se-breadcrumb" aria-label="面包屑导航">
       <RouterLink :to="backTarget">
         {{ backLabel }}
       </RouterLink>

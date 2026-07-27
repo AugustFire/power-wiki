@@ -6,7 +6,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import ScrollProgress from '@/components/layout/ScrollProgress.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
@@ -607,7 +606,7 @@ watch(
 <template>
   <div class="read-shell">
     <ScrollProgress />
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="breadcrumb">
         <a href="#/" class="crumb-item crumb-link">我的知识库</a>
         <template v-for="(c, i) in visibleBreadcrumb.head" :key="'h-' + i">
@@ -691,7 +690,7 @@ watch(
           编辑
         </button>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Viewer 兜底 banner —— EditView 检测到无权限时,redirect 到当前
          read URL 并挂 ?readonly=1。这里消费 query、显示提示、然后用
@@ -734,11 +733,7 @@ watch(
       <span class="material-symbols-outlined">keyboard_double_arrow_left</span>
     </button>
 
-    <div class="layout" :class="{ 'toc-collapsed': uiStore.tocCollapsed }">
-      <Sidebar />
-
-      <div class="content">
-        <div class="content-inner read-page">
+    <div class="content-inner read-page">
           <!-- 冷启动 / store 还没 fetch 完时显示 Skeleton(直链 / 刷新场景)。
                遵守 docs/loading-ux.md:33 "首次加载用 Skeleton,不用「加载中…」文本"。
                Skeleton 形状模仿真实内容(title + byline + 多行正文 + callout-ish),
@@ -908,7 +903,6 @@ watch(
             <button class="btn primary" @click="router.push('/')">返回首页</button>
           </div>
         </div>
-      </div>
 
       <!-- 图片附件全屏预览。Teleport 到 body,锁住背景滚动。
            放 content div 之外,跟 v-if/v-else 解耦。 -->
@@ -947,18 +941,18 @@ watch(
         :page-title="page.title"
       />
 
-      <TocPanel
-        v-if="page"
-        :content-ref="contentEl"
-        :page-key="page.id"
-        :labels="page.labels ?? []"
-      />
-    </div>
+      <Teleport to="#app-right-rail">
+        <TocPanel
+          v-if="page"
+          :content-ref="contentEl"
+          :page-key="page.id"
+          :labels="page.labels ?? []"
+        />
+      </Teleport>
   </div>
 </template>
 
 <style scoped>
-.read-shell { min-height: calc(100vh - var(--topbar-h)); }
 .read-page { padding-top: 24px; }
 
 /* M2: 空内容占位 —— Confluence 风格的居中提示块,跟 page-reactions 之

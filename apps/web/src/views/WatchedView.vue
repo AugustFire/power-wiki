@@ -16,7 +16,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/lib/api'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useSpacesStore } from '@/stores/spaces'
@@ -122,18 +121,15 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
 
 <template>
   <div class="read-shell">
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="breadcrumb">
         <a href="#/">我的知识库</a>
         <span class="sep">/</span>
         <span class="crumb-item current">我的关注</span>
       </div>
-    </div>
+    </Teleport>
 
-    <div class="layout">
-      <Sidebar />
-      <div class="content">
-        <div class="content-inner watched-page">
+    <div class="content-inner watched-page">
           <h1 class="page-title">我的关注</h1>
           <p class="watched-hint">
             所有我关注的页面(跨空间)。点击标题进入,顶部 👁 按钮可取消关注。
@@ -182,13 +178,11 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
             </div>
           </div>
         </div>
-      </div>
-    </div>
+        </div>
   </div>
 </template>
 
 <style scoped>
-.read-shell { min-height: calc(100vh - var(--topbar-h)); }
 .watched-page { padding-top: 24px; max-width: 880px; }
 
 .page-title {

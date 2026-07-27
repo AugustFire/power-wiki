@@ -12,6 +12,14 @@ declare module 'vue-router' {
     /** Mark route as requiring role === 'admin'. Falls back to NotFound (not /login)
      *  to avoid leaking the existence of /manager/* to non-admin users. */
     requiresAdmin?: boolean
+    /** Select the authenticated chrome. Workspace is the default. */
+    appLayout?: 'workspace' | 'manager'
+    /** Use all space to the right of Sidebar instead of reserving a TOC rail. */
+    workspaceWidth?: 'balanced' | 'wide'
+    /** Let the routed view own padding and scrolling. */
+    contentMode?: 'standard' | 'flush'
+    /** Enable the shared TOC collapse behavior for this route. */
+    hasToc?: boolean
   }
 }
 
@@ -65,14 +73,14 @@ const routes: RouteRecordRaw[] = [
     name: 'read',
     component: () => import('@/views/ReadView.vue'),
     props: true,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, hasToc: true },
   },
   {
     path: '/p/:id/edit',
     name: 'edit',
     component: () => import('@/views/EditView.vue'),
     props: true,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, hasToc: true },
   },
   {
     // Confluence-style dedicated page history: full-viewport surface
@@ -82,14 +90,18 @@ const routes: RouteRecordRaw[] = [
     name: 'history',
     component: () => import('@/views/HistoryView.vue'),
     props: true,
-    meta: { requiresAuth: true },
+    meta: {
+      requiresAuth: true,
+      workspaceWidth: 'wide',
+      contentMode: 'flush',
+    },
   },
   {
     path: '/new',
     name: 'new',
     component: () => import('@/views/EditView.vue'),
     props: (route) => ({ parentId: route.query.parent ?? null }),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, hasToc: true },
   },
   // P1-3: workspace-wide 编辑活动流。TopBar history_toggle_off icon 入口。
   // Sidebar 不再暴露这条入口 — 三列布局 + 主 list,跟 HomeView / HistoryView 同档位。
@@ -133,7 +145,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/manager',
     component: () => import('@/views/manager/ManagerLayout.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true },
+    meta: { requiresAuth: true, requiresAdmin: true, appLayout: 'manager' },
     children: [
       {
         path: '',

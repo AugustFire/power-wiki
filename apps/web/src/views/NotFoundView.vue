@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
@@ -14,19 +13,15 @@ function goHome() {
 
 <template>
   <div class="notfound-shell">
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="breadcrumb">
         <a href="#/">我的知识库</a>
         <span class="sep">/</span>
         <span class="crumb-item current">页面不存在</span>
       </div>
-    </div>
+    </Teleport>
 
-    <div class="layout no-toc">
-      <Sidebar />
-
-      <div class="content">
-        <div class="empty notfound">
+    <div class="empty notfound">
           <BrandLogo :size="32" class="nf-mark" />
           <div class="empty-illustration">
             <svg viewBox="0 0 240 160" width="220" height="146" aria-hidden="true">
@@ -44,13 +39,10 @@ function goHome() {
             <button class="btn primary" @click="goHome">返回首页</button>
           </div>
         </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
-.notfound-shell { min-height: calc(100vh - var(--topbar-h)); }
 .empty.notfound { display: flex; flex-direction: column; align-items: center; }
 .nf-mark { margin-bottom: 12px; }
 .empty.notfound h2 { margin-top: 4px; }

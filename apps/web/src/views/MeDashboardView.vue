@@ -30,7 +30,6 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import Sidebar from '@/components/layout/Sidebar.vue'
 import DashboardCard from '@/components/page/DashboardCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -261,7 +260,7 @@ const heroSubtitle = computed(() => {
     <!-- Subheader —— 跟 WatchedView / HomeView 一致,提供「我的空间」breadcrumb。
          2560 宽下 subheader 跟其他页面在同一条 y 轴上,避免页面切换时 banner
          高度跳动。 -->
-    <div class="subheader">
+    <Teleport to="#app-subheader">
       <div class="breadcrumb">
         <span class="crumb-item current">我的空间</span>
       </div>
@@ -280,12 +279,9 @@ const heroSubtitle = computed(() => {
           <span class="refresh-label">刷新</span>
         </button>
       </div>
-    </div>
+    </Teleport>
 
-    <div class="layout no-toc">
-      <Sidebar />
-      <div class="content">
-        <div class="content-inner dash-page">
+    <div class="content-inner dash-page">
           <!-- Hero —— 纯排版页面标题 + 右侧 live clock 配重。
                上一版左文右空,headline 偏左像浮岛。这里用 flex 两列:
                  左:text column(meta eyebrow + 大 H1 + lead 段落)
@@ -449,8 +445,6 @@ const heroSubtitle = computed(() => {
         />
       </section>
 
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -468,7 +462,6 @@ const heroSubtitle = computed(() => {
  * 是密集 list-style view,3 个 section 卡片列需要更多 horizontal 呼吸空间,
  * 这里 override 把 max-width 拿掉,让 .dash-page 铺满整个 .content column。
  * 2560 下内容从 1648 → 2008,真正"用满"中间 column。 */
-.dash-shell { min-height: calc(100vh - var(--topbar-h)); }
 .dash-page {
   padding-top: 32px;
   padding-bottom: 64px;
