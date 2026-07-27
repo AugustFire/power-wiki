@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, provide, ref, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterView, useRoute } from 'vue-router'
 import TopBar from '@/components/layout/TopBar.vue'
@@ -10,6 +10,7 @@ import CheatSheetModal from '@/components/ui/CheatSheetModal.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import SettingsDrawer from '@/components/layout/SettingsDrawer.vue'
 import ImportMarkdownModal from '@/components/editor/ImportMarkdownModal.vue'
+import MovePageDialog from '@/components/layout/MovePageDialog.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -20,12 +21,34 @@ const uiStore = useUiStore()
 const pagesStore = usePagesStore()
 const { topSearchOpen, error } = storeToRefs(uiStore)
 const { loading, loaded, loadError } = storeToRefs(pagesStore)
+const { moveModalOpen, moveContext } = storeToRefs(uiStore)
 const { isOnline } = useNetworkStatus()
 
 const isManagerLayout = computed(() => route.meta.appLayout === 'manager')
 const isWideWorkspace = computed(() => route.meta.workspaceWidth === 'wide')
 const isFlushContent = computed(() => route.meta.contentMode === 'flush')
 const hasToc = computed(() => route.meta.hasToc === true)
+
+/**
+ * 拿到 <div id="app-right-rail"> 的 DOM 引用,provide 给所有需要 Teleport
+ * 进右栏的后代(ReadView / EditView 的 <TocPanel>)。
+ *
+ * 为什么用 ref 而不是字符串选择器:Vue 3 的 <Teleport to="..."> 接受 string
+ * 时会在 mount 阶段 querySelector,如果 target 那一刻还没在 DOM 里(ReadView
+ * 是 () => import(...) 异步 chunk,vite 命中缓存时会在 layout 同 flush 内
+ * 同步挂载,与右栏 mountChildren 时序赛跑),会 warn "Failed to locate
+ * Teleport target" 并把 subTree 留在 null,后续 patch 时触发
+ * "Cannot read properties of null (reading 'emitsOptions')",且右栏 TOC
+ * 永远不渲染。
+ *
+ * 直接传 HTMLElement:Vue 在 Teleport.process() 里 `typeof targetProp === 'string'`
+ * 才走 querySelector,否则用传入的元素,完全跳过字符串查找。Vue 的 mountChildren
+ * 按 source 顺序处理 layout 子节点,右栏在 Sidebar 和 content 之前,ref 在
+ * mountElement 里同步赋值,所以后代 mount 时(包括同 flush 异步 chunk 已 resolve
+ * 的情况)ref.value 已经是元素。
+ */
+const rightRailEl = ref<HTMLElement | null>(null)
+provide<Ref<HTMLElement | null>>('appRightRail', rightRailEl)
 </script>
 
 <template>
@@ -92,13 +115,20 @@ const hasToc = computed(() => route.meta.hasToc === true)
             'toc-collapsed': hasToc && uiStore.tocCollapsed,
           }"
         >
+          <!-- #app-right-rail 必须先于 <div class="content"> 渲染 —— 顺序
+               决定 Vue 的 mountChildren 顺序,确保 rightRailEl ref 在
+               ReadView/EditView mount 前已经赋值。ReadView 内的
+               <Teleport :to="rightRailEl"> 直接拿 HTMLElement 跳过
+               querySelector,详见 <script setup> 里的 rightRailEl 注释。
+               grid 用 order 把右栏视觉上挪回第三列,DOM 顺序仍然是 mount
+               顺序。 -->
+          <div id="app-right-rail" ref="rightRailEl" class="app-right-rail"></div>
           <Sidebar />
           <div class="content" :class="{ 'content-flush': isFlushContent }">
             <RouterView v-slot="{ Component }">
               <component :is="Component" />
             </RouterView>
           </div>
-          <div id="app-right-rail" class="app-right-rail"></div>
         </div>
       </template>
     </main>
@@ -109,6 +139,11 @@ const hasToc = computed(() => route.meta.hasToc === true)
     <ToastContainer />
     <SettingsDrawer />
     <ImportMarkdownModal />
+    <MovePageDialog
+      v-if="moveModalOpen && moveContext"
+      :page-id="moveContext.pageId"
+      @close="uiStore.closeMoveDialog()"
+    />
   </div>
 </template>
 

@@ -296,6 +296,30 @@ export const useUiStore = defineStore('ui', () => {
     }, 200)
   }
 
+  /**
+   * MovePageDialog 全局开关。挂 AppShell 顶级,跟 ImportMarkdownModal
+   * 同模式 —— dialog 不能挂在 PageTree 内,因为 move 成功后 pages.value
+   * 重算,挂载 dialog 的那个 PageTree 实例会 unmount/remount,Vue 在后续
+   * patch 时拿到已 null 的 component 触发 `Cannot read properties of
+   * null (reading 'emitsOptions')`。AppShell 是 router 顶层,dialog 在
+   * 这里生命周期跟 tree 完全解耦。
+   *
+   * Context 持 page 引用,跟 import 一致;close 后保留一帧再清,避免
+   * close 动画期间 dialog 突然无数据。
+   */
+  const moveModalOpen = ref(false)
+  const moveContext = ref<{ pageId: string } | null>(null)
+  function openMoveDialog(ctx: { pageId: string }): void {
+    moveContext.value = ctx
+    moveModalOpen.value = true
+  }
+  function closeMoveDialog(): void {
+    moveModalOpen.value = false
+    setTimeout(() => {
+      if (!moveModalOpen.value) moveContext.value = null
+    }, 200)
+  }
+
   return {
     expanded,
     openMenuId,
@@ -337,5 +361,9 @@ export const useUiStore = defineStore('ui', () => {
     importContext,
     openImport,
     closeImport,
+    moveModalOpen,
+    moveContext,
+    openMoveDialog,
+    closeMoveDialog,
   }
 })

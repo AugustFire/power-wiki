@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
@@ -34,6 +34,13 @@ const router = useRouter()
 const uiStore = useUiStore()
 const { confirm } = useConfirm()
 const { set: setActivePageId } = useActivePageId()
+
+/**
+ * AppShell provide 的右栏 DOM 引用。EditView 同样用 :to="rightRailEl"
+ * 把 HTMLElement 直接喂给 Teleport,绕过 querySelector 异步挂载时序赛跑。
+ * 详见 AppShell.vue 的 rightRailEl 注释 + ReadView 的同名字段。
+ */
+const rightRailEl = inject<Ref<HTMLElement | null>>('appRightRail', ref(null))
 
 /**
  * 当前用户能否编辑 `props.id` 对应的页面。对齐 ReadView.canEdit 与后端
@@ -716,7 +723,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-      <Teleport to="#app-right-rail">
+      <Teleport v-if="rightRailEl" :to="rightRailEl">
         <TocPanel
           :content-ref="editorContentEl"
           :page-key="localId ?? undefined"

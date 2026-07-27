@@ -497,67 +497,11 @@ async function submit(): Promise<void> {
 </template>
 
 <style scoped>
-.import-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim-2);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 32px;
-}
-.import-dialog {
-  width: 640px;
-  max-width: calc(100vw - 64px);
-  max-height: calc(100vh - 64px);
-  background: var(--bg);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.import-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 24px 14px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.import-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-1);
-  margin: 0;
-}
-.import-close {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.import-close:hover { background: var(--bg-canvas); }
-.import-close .material-symbols-outlined { font-size: 20px; }
-
-.import-body {
-  padding: 18px 24px 8px;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
+/* 共享 modal 框架 (.import-backdrop / .import-dialog / .import-head /
+   .import-title / .import-close / .import-body / .import-foot / .import-fade-*)
+   已在 components.css 全局定义 —— 必须全局,不能 scoped,否则 MovePageDialog
+   之类「另一个组件用同一套类名」的场景拿不到样式。这里只留 ImportMarkdownModal
+   独有的 import-dest / dropzone / textarea / title-input / error / spinner。 */
 
 .import-row {
   display: flex;
@@ -738,19 +682,4 @@ async function submit(): Promise<void> {
   vertical-align: middle;
 }
 @keyframes ip-spin { to { transform: rotate(360deg); } }
-
-.import-fade-enter-active,
-.import-fade-leave-active {
-  transition: opacity var(--duration-fast) ease;
-}
-.import-fade-enter-active .import-dialog,
-.import-fade-leave-active .import-dialog {
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.import-fade-enter-from,
-.import-fade-leave-to { opacity: 0; }
-.import-fade-enter-from .import-dialog,
-.import-fade-leave-to .import-dialog {
-  transform: translateY(-8px) scale(0.97);
-}
 </style>

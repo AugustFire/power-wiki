@@ -207,6 +207,21 @@
     transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* #app-right-rail 必须先于 <div class="content"> 在 DOM 里(详见
+   AppShell.vue 注释),保证 ReadView 的 Teleport mount 阶段能 querySelector
+   拿到 target。用 grid `order` 把右栏视觉上挪回第三列;DOM 顺序仍然是
+   mount 顺序,这是修 Vue 那个 "Cannot read properties of null
+   (reading 'emitsOptions')" 的关键。Sidebar 顺序保持 1。 */
+.app-shell .layout > .app-right-rail {
+    order: 3;
+}
+.app-shell .layout > .sidebar {
+    order: 1;
+}
+.app-shell .layout > .content {
+    order: 2;
+}
+
 /* 历史页专用 —— Sidebar + 内容,无右栏(版本时间线占满剩余宽度)。 */
 .app-shell .layout.layout-wide {
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
@@ -484,6 +499,115 @@
 .menu-item.danger { color: var(--danger); }
 .menu-item.danger:hover { background: var(--danger-soft); }
 .menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* 分组小标签 —— 「更多操作」分区(P1-4)用,跟 Sidebar 的
+   `.sidebar-section-title` 同款 11px / uppercase / 0.04em / text-3 / 600,
+   让低频段有可识别的分区身份而不是单纯多一道横线。border-top 替代额外
+   的 .menu-sep,留 4px 上间距把段落推离主区。 */
+.menu-section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+    font-weight: 600;
+    padding: 8px 10px 4px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+
+/* ============================================================
+ * 共享 modal 框架 (P1-4 MovePageDialog 跟 ImportMarkdownModal 同款)
+ * — 必须全局,不能 scoped。Vue 的 <style scoped> 会把所有选择器
+ * 加 [data-v-xxx] 属性后缀,导致 MovePageDialog 这种"另一个组件
+ * 用同一套类名"的场景拿不到样式(dialog 直接 position: static
+ * 落到页面最底下,看上去像没出来)。
+ * 真正属于 ImportMarkdownModal 独有的样式(import-dest /
+ * import-dropzone / import-textarea / import-title-input /
+ * import-error / ip-spinner)仍留在 ImportMarkdownModal.vue 的
+ * scoped 块里。
+ * ============================================================ */
+.import-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim-2);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 32px;
+}
+.import-dialog {
+    width: 640px;
+    max-width: calc(100vw - 64px);
+    max-height: calc(100vh - 64px);
+    background: var(--bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.import-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.import-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin: 0;
+}
+.import-close {
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.import-close:hover { background: var(--bg-canvas); }
+.import-close .material-symbols-outlined { font-size: 20px; }
+.import-body {
+    padding: 18px 24px 8px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.import-foot {
+    padding: 14px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+    background: var(--bg-subtle);
+}
+.import-fade-enter-active,
+.import-fade-leave-active {
+    transition: opacity var(--duration-fast) ease;
+}
+.import-fade-enter-active .import-dialog,
+.import-fade-leave-active .import-dialog {
+    transition: transform var(--duration-base) var(--ease-out);
+}
+.import-fade-enter-from,
+.import-fade-leave-to { opacity: 0; }
+.import-fade-enter-from .import-dialog,
+.import-fade-leave-to .import-dialog {
+    transform: translateY(-8px) scale(0.97);
+}
 
 /* =========================
    Main content

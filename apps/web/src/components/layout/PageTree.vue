@@ -468,6 +468,31 @@ function onRenameKey(e: KeyboardEvent) {
 }
 
 /**
+ * 「移动」菜单项 —— 通过 uiStore.openMoveDialog 触发全局 dialog。
+ * MovePageDialog 挂在 AppShell 顶级,跟 tree 解耦 —— move 成功后
+ * pages.value 重算,挂载 dialog 的 PageTree 实例可能 unmount/remount,
+ * 在内部挂 dialog 会触发 Vue `Cannot read properties of null
+ * (reading 'emitsOptions')`(dialog 中途被销毁,后续 patch 拿到
+ * null component)。提到顶级后生命周期跟 tree 完全分开。
+ *
+ * 菜单先关,dialog 自己负责 body 锁 / Esc 监听;失败由 store 抛错触发
+ * 全局 banner,这里不再 toast。跨 space 走 movePageToSpace(不在 P1-4)。
+ */
+function openMoveDialog() {
+  uiStore.closeMenu()
+  uiStore.openMoveDialog({ pageId: props.node.id })
+}
+
+/**
+ * 「更多操作」section 出现条件 —— 任意 low-freq 项可见时,才显示分区标签,
+ * 避免 viewer 场景下空标签悬空(canEditPage/canEditSpace/canPublish 全 false
+ * 时,6 个 more 项都隐藏,label 也没必要存在)。
+ */
+const showMoreSection = computed(
+  () => canEditPage.value || canEditSpace.value || canPublish.value,
+)
+
+/**
  * Track which row is the keyboard focus anchor so that when the user
  * clicks a different row the previously focused one gets reset to
  * `-1` tabindex (and only this one becomes `0`). Not currently
@@ -673,59 +698,31 @@ watch(isRenaming, (val) => {
     <template v-if="isMenuOpen">
       <div class="menu-backdrop" @click="uiStore.closeMenu()"></div>
       <div class="menu" :style="menuStyle" @click.stop>
-        <button v-if="canEditSpace" class="menu-item" @click="addSibling">
-          <span class="material-symbols-outlined icon-md">add</span>
-          <span>添加同级页面</span>
-        </button>
-        <button v-if="canEditSpace" class="menu-item" @click="addChild">
+        <!-- ─── 主区:高频动作 ─── -->
+        <button data-test="primary" data-action="add-child" v-if="canEditSpace" class="menu-item" @click="addChild">
           <span class="material-symbols-outlined icon-md">subdirectory_arrow_right</span>
           <span>在此页下添加子页面</span>
         </button>
-        <button v-if="canEditSpace && node.parentId !== null" class="menu-item" @click="promoteToRoot">
-          <span class="material-symbols-outlined icon-md">format_indent_decrease</span>
-          <span>提升为根级</span>
+        <button data-test="primary" data-action="add-sibling" v-if="canEditSpace" class="menu-item" @click="addSibling">
+          <span class="material-symbols-outlined icon-md">add</span>
+          <span>添加同级页面</span>
         </button>
-        <div v-if="canEditSpace || canEditPage" class="menu-sep"></div>
-        <button v-if="canEditPage" class="menu-item" @click="startRename">
+        <button data-test="primary" data-action="rename" v-if="canEditPage" class="menu-item" @click="startRename">
           <span class="material-symbols-outlined icon-md">edit</span>
           <span>重命名</span>
         </button>
-        <button v-if="canEditSpace" class="menu-item" @click="openImportModal">
-          <span class="material-symbols-outlined icon-md">upload_file</span>
-          <span>导入 Markdown 到子级</span>
-        </button>
-        <button v-if="canEditPage" class="menu-item" @click="duplicatePage(false)">
+        <button data-test="primary" data-action="duplicate" v-if="canEditPage" class="menu-item" @click="duplicatePage(false)">
           <span class="material-symbols-outlined icon-md">content_copy</span>
           <span>复制页面</span>
         </button>
-        <button
-          v-if="canEditPage"
-          class="menu-item"
-          :disabled="!hasLiveChildren"
-          :title="hasLiveChildren ? '复制此页面及其所有子页面' : '此页面没有子页可复制'"
-          @click="duplicatePage(true)"
-        >
-          <span class="material-symbols-outlined icon-md">copy_all</span>
-          <span>复制整棵子树</span>
-        </button>
-        <button
-          v-if="canPublish"
-          class="menu-item"
-          @click="openPublishTo"
-        >
-          <span class="material-symbols-outlined icon-md">publish</span>
-          <span>发布到...</span>
-        </button>
-        <button class="menu-item" @click="openInNewTab">
-          <span class="material-symbols-outlined icon-md">open_in_new</span>
-          <span>在新窗口打开</span>
-        </button>
-        <button class="menu-item" @click="copyLink">
-          <span class="material-symbols-outlined icon-md">{{ copyFlash === null ? 'link' : 'check' }}</span>
-          <span>{{ copyFlash ?? '复制链接' }}</span>
+        <button data-test="primary" data-action="move" v-if="canEditPage" class="menu-item" @click="openMoveDialog">
+          <span class="material-symbols-outlined icon-md">drive_file_move</span>
+          <span>移动</span>
         </button>
         <div v-if="canEditPage" class="menu-sep"></div>
         <button
+          data-test="primary"
+          data-action="delete"
           v-if="canEditPage"
           class="menu-item danger"
           :disabled="hasLiveChildren"
@@ -735,6 +732,41 @@ watch(isRenaming, (val) => {
           <span class="material-symbols-outlined icon-md">delete</span>
           <span>删除</span>
         </button>
+
+        <!-- ─── 更多操作:低频管理动作 ─── -->
+        <div v-if="showMoreSection" data-test="more-label" class="menu-section-label">更多操作</div>
+        <button
+          data-test="more"
+          data-action="duplicate-subtree"
+          v-if="canEditPage"
+          class="menu-item"
+          :disabled="!hasLiveChildren"
+          :title="hasLiveChildren ? '复制此页面及其所有子页面' : '此页面没有子页可复制'"
+          @click="duplicatePage(true)"
+        >
+          <span class="material-symbols-outlined icon-md">copy_all</span>
+          <span>复制整棵子树</span>
+        </button>
+        <button data-test="more" data-action="promote-root" v-if="canEditSpace && node.parentId !== null" class="menu-item" @click="promoteToRoot">
+          <span class="material-symbols-outlined icon-md">format_indent_decrease</span>
+          <span>提升为根页面</span>
+        </button>
+        <button data-test="more" data-action="import-md" v-if="canEditSpace" class="menu-item" @click="openImportModal">
+          <span class="material-symbols-outlined icon-md">upload_file</span>
+          <span>导入 Markdown 到子级</span>
+        </button>
+        <button data-test="more" data-action="publish" v-if="canPublish" class="menu-item" @click="openPublishTo">
+          <span class="material-symbols-outlined icon-md">publish</span>
+          <span>发布到...</span>
+        </button>
+        <button data-test="more" data-action="open-new-tab" class="menu-item" @click="openInNewTab">
+          <span class="material-symbols-outlined icon-md">open_in_new</span>
+          <span>在新窗口打开</span>
+        </button>
+        <button data-test="more" data-action="copy-link" class="menu-item" @click="copyLink">
+          <span class="material-symbols-outlined icon-md">{{ copyFlash === null ? 'link' : 'check' }}</span>
+          <span>{{ copyFlash ?? '复制链接' }}</span>
+        </button>
       </div>
       <PublishToSpaceMenu
         v-if="publishToOpen && currentPage"
@@ -743,6 +775,9 @@ watch(isRenaming, (val) => {
         @close="closePublishTo"
       />
     </template>
+
+    <!-- MovePageDialog 提到 AppShell 顶级挂载(不在这里),跟 tree
+         完全解耦 —— 见 openMoveDialog() 注释。 -->
 
     <div v-if="hasChildren && isEffectivelyExpanded" class="tree-children">
       <PageTree

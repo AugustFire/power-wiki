@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
@@ -42,6 +42,19 @@ const uiStore = useUiStore()
 const router = useRouter()
 const route = useRoute()
 const { recordVisit } = useRecentPages()
+
+/**
+ * AppShell provide 的右栏 DOM 引用 —— 直接给 Teleport 喂 HTMLElement,
+ * 避开 querySelector('#app-right-rail') 的异步挂载时序赛跑(异步 chunk
+ * 在 layout 同 flush 内 mount 时,字符串选择器会查到 null,导致 Teleport
+ * subTree 留 null,后续 patch 撞 "emitsOptions of null")。详见
+ * AppShell.vue 的 rightRailEl 注释。
+ *
+ * 默认值用 ref(null) —— 正常路径下 AppShell 一定先于本组件 mount,provide
+ * 已就位;默认值是兜底,防止独立单元测试 / Storybook 等无 provider 场景
+ * 直接抛 "inject() ... cannot read 'value'"。
+ */
+const rightRailEl = inject<Ref<HTMLElement | null>>('appRightRail', ref(null))
 
 /**
  * Viewer 兜底 banner —— EditView 检测到当前用户在 page 上没有 edit 权限时
@@ -941,7 +954,7 @@ watch(
         :page-title="page.title"
       />
 
-      <Teleport to="#app-right-rail">
+      <Teleport v-if="rightRailEl" :to="rightRailEl">
         <TocPanel
           v-if="page"
           :content-ref="contentEl"
