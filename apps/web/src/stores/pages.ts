@@ -105,6 +105,25 @@ export const usePagesStore = defineStore('pages', () => {
     loadingPromises.clear()
   }
 
+  function clearSpaceCache(spaceId: string): void {
+    pages.value = pages.value.filter((page) => page.spaceId !== spaceId)
+    trashed.value = trashed.value.filter((page) => page.spaceId !== spaceId)
+    const prefix = `${spaceId}:`
+    for (const key of childrenLoaded) {
+      if (key.startsWith(prefix)) childrenLoaded.delete(key)
+    }
+    for (const key of loadingPromises.keys()) {
+      if (key.startsWith(prefix)) loadingPromises.delete(key)
+    }
+  }
+
+  function removeCachedPage(id: string): void {
+    const page = pages.value.find((item) => item.id === id)
+    if (!page) return
+    pages.value = pages.value.filter((item) => item.id !== id)
+    invalidateChildren(page.parentId, page.spaceId)
+  }
+
   /**
    * 把 `loaded` 翻成 true 但不触发任何 fetch。
    *
@@ -1298,6 +1317,8 @@ export const usePagesStore = defineStore('pages', () => {
     init,
     refresh,
     reset,
+    clearSpaceCache,
+    removeCachedPage,
     markLoaded,
     ensureChildrenLoaded,
     ensureAncestorsLoaded,

@@ -20,9 +20,12 @@ import ExportMenu from '@/components/editor/ExportMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { useBreadcrumb } from '@/composables/useBreadcrumb'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
+import { api, ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import { sanitizeAndHardenLinks } from '@/lib/sanitize'
 import { highlightCodeBlocks } from '@/lib/renderHighlight'
 import { addHeadingAnchors } from '@/lib/headingAnchors'
@@ -130,6 +133,71 @@ function bindInternalLinkHover(root: HTMLElement) {
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
+type PageLoadState = 'loading' | 'ready' | 'not-found' | 'error'
+const pageLoadState = ref<PageLoadState>(page.value ? 'ready' : 'loading')
+const pageLoadError = ref('')
+let pageLoadRun = 0
+
+async function loadPageResource(id: string): Promise<void> {
+  const run = ++pageLoadRun
+  const cached = pagesStore.getPage(id)
+  const cachedSpaceId = cached?.spaceId ?? null
+  if (!cached) pageLoadState.value = 'loading'
+  pageLoadError.value = ''
+
+  try {
+    const loaded = await api.pages.get(id)
+    if (run !== pageLoadRun) return
+    pagesStore.syncPageFromServer(loaded)
+    pageLoadState.value = 'ready'
+  } catch (error) {
+    if (run !== pageLoadRun) return
+    if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
+      pagesStore.removeCachedPage(id)
+      if (cachedSpaceId && cachedSpaceId === spacesStore.activeSpaceId.value) {
+        try {
+          await spacesStore.refresh()
+        } catch (refreshError) {
+          if (run !== pageLoadRun) return
+          pageLoadError.value = humanizeApiError(refreshError)
+          pageLoadState.value = 'error'
+          uiStore.setError(`刷新空间失败：${pageLoadError.value}`)
+          return
+        }
+        if (run !== pageLoadRun) return
+        const stillVisible = spacesStore.spaces.value.some((space) => space.id === cachedSpaceId)
+        if (!stillVisible) {
+          pagesStore.clearSpaceCache(cachedSpaceId)
+          if (router.currentRoute.value.path !== '/') await router.replace('/')
+          return
+        }
+      }
+      pageLoadState.value = 'not-found'
+      return
+    }
+
+    pageLoadError.value = humanizeApiError(error)
+    pageLoadState.value = cached ? 'ready' : 'error'
+    uiStore.setError(`加载页面失败：${pageLoadError.value}`)
+  }
+}
+
+function retryPageLoad(): void {
+  void loadPageResource(props.id)
+}
+
+function returnToSpaceHome(): void {
+  void router.push('/')
+}
+
+watch(
+  () => props.id,
+  (id) => {
+    pageLoadState.value = pagesStore.getPage(id) ? 'ready' : 'loading'
+    void loadPageResource(id)
+  },
+  { immediate: true },
+)
 
 /** 当前页是否在个人空间 —— 个人空间是用户私有草稿区,不暴露关注入口
  * (无 watch 语义,也不向别人推送通知)。activeSpaceId 用作兜底,这样即使
@@ -677,7 +745,7 @@ watch(
                chrome 高度稳定,load 后是 fade 而不是空白闪一下。
                按 active space 判断根是否就绪 —— 全局 `loaded` 是「至少一个空间
                加载完」太宽,在跨空间跳转或刚切空间时会过早取消 skeleton。 -->
-          <div v-if="!pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value)" class="read-skeleton" aria-busy="true" aria-live="polite">
+          <div v-if="pageLoadState === 'loading' || (spacesStore.activeSpaceId.value && !pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value))" class="read-skeleton" aria-busy="true" aria-live="polite">
             <Skeleton height="36px" width="70%" />
             <div class="read-skeleton-byline">
               <Skeleton width="32px" height="32px" radius="50%" />
@@ -692,6 +760,29 @@ watch(
               <Skeleton :count="3" height="14px" />
             </div>
           </div>
+          <EmptyState
+            v-else-if="pageLoadState === 'not-found'"
+            variant="no-permission"
+            icon="find_in_page"
+            title="无法打开这个页面"
+            hint="页面可能已被删除，或者你没有访问权限。"
+            size="lg"
+          >
+            <button type="button" class="btn primary" @click="returnToSpaceHome">
+              返回空间首页
+            </button>
+          </EmptyState>
+          <EmptyState
+            v-else-if="pageLoadState === 'error'"
+            icon="cloud_off"
+            title="页面暂时无法加载"
+            :hint="pageLoadError"
+            size="lg"
+          >
+            <button type="button" class="btn primary" @click="retryPageLoad">
+              重新加载
+            </button>
+          </EmptyState>
           <div v-else-if="page">
             <!-- 标签条(紧凑版) — 已发布是页面状态,作者 pill 是贡献者元数据,
                  都归 .page-tags。每条 pill 角色清晰:已发布 = 状态,创建者 = 角色。

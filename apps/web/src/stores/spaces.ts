@@ -14,9 +14,10 @@
 import { computed, ref, watch } from 'vue'
 import type { CreateSpaceInput, Space, UpdateSpaceInput } from '@power-wiki/shared'
 import { PERSIST_KEYS } from '@power-wiki/shared/keys'
-import { api } from '@/lib/api'
+import { api, invalidatePath } from '@/lib/api'
 import { readJSON, writeJSON } from '@/lib/storage'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 
 const spaces = ref<Space[]>([])
 const activeSpaceId = ref<string | null>(readJSON<string | null>(PERSIST_KEYS.ACTIVE_SPACE, null))
@@ -60,6 +61,18 @@ export function useSpacesStore() {
     { flush: 'post' },
   )
 
+  function resolveActiveSpace(preferPersonal: boolean): string | null {
+    const auth = useAuthStore()
+    const current = activeSpaceId.value
+    const personalId = auth.personalSpaceId
+    const personalVisible = personalId && spaces.value.some((space) => space.id === personalId)
+
+    if (preferPersonal && personalVisible) return personalId
+    if (current && spaces.value.some((space) => space.id === current)) return current
+    if (personalVisible) return personalId
+    return spaces.value[0]?.id ?? null
+  }
+
   async function init() {
     if (loaded.value || loading.value) return
     loading.value = true
@@ -67,31 +80,20 @@ export function useSpacesStore() {
     try {
       spaces.value = (await api.spaces.list()).items
       const auth = useAuthStore()
-      // Active space resolution priority:
-      //   1. First-login override: if the user just arrived (no persisted
-      //      activeSpaceId, or still in must_reset_password) AND has a
-      //      personal space, land them on it so they see the welcome page.
-      //   2. Persisted ID, if still visible.
-      //   3. Personal space (defensive: if no persisted, prefer personal
-      //      over arbitrary first space — keeps the user's personal space
-      //      at hand).
-      //   4. First space in the list.
-      //   5. null (no accessible spaces).
       const persisted = activeSpaceId.value
-      const psid = auth.personalSpaceId
-      const personalVisible = psid && spaces.value.some((s) => s.id === psid)
+      const persistedVisible = persisted
+        ? spaces.value.some((space) => space.id === persisted)
+        : false
       const isFirstVisit = !persisted || auth.needsPasswordReset
-      if (isFirstVisit && personalVisible) {
-        activeSpaceId.value = psid
-      } else if (persisted && spaces.value.some((s) => s.id === persisted)) {
-        activeSpaceId.value = persisted
-      } else if (!activeSpaceId.value && personalVisible) {
-        activeSpaceId.value = psid
-      } else if (!activeSpaceId.value && spaces.value.length > 0) {
-        activeSpaceId.value = spaces.value[0]!.id
-      } else if (activeSpaceId.value && !spaces.value.some((s) => s.id === activeSpaceId.value)) {
-        // Persisted space no longer visible (removed from groups). Fall back.
-        activeSpaceId.value = spaces.value[0]?.id ?? psid ?? null
+      activeSpaceId.value = resolveActiveSpace(isFirstVisit)
+      if (persisted && !persistedVisible) {
+        const fallback = activeSpace.value
+        useUiStore().notify(
+          fallback
+            ? `原空间已不可访问，已切换到「${fallback.name}」`
+            : '当前没有可访问的空间',
+          'info',
+        )
       }
       loaded.value = true
     } catch (e) {
@@ -104,8 +106,25 @@ export function useSpacesStore() {
 
   /** Re-fetch the list — used after admin operations and after sign-out. */
   async function refresh() {
+    invalidatePath('GET', '/spaces')
     loaded.value = false
     await init()
+  }
+
+  async function invalidateActiveSpace(id: string): Promise<boolean> {
+    if (activeSpaceId.value !== id) return false
+    invalidatePath('GET', '/spaces')
+    activeSpaceId.value = null
+    loaded.value = false
+    await init()
+    const fallback = activeSpace.value
+    useUiStore().notify(
+      fallback
+        ? `当前空间已不可访问，已切换到「${fallback.name}」`
+        : '当前没有可访问的空间',
+      'info',
+    )
+    return true
   }
 
   /**
@@ -160,7 +179,7 @@ export function useSpacesStore() {
     await api.admin.spaces.delete(id)
     spaces.value = spaces.value.filter((s) => s.id !== id)
     if (activeSpaceId.value === id) {
-      activeSpaceId.value = spaces.value[0]?.id ?? null
+      activeSpaceId.value = resolveActiveSpace(false)
     }
   }
 
@@ -177,6 +196,7 @@ export function useSpacesStore() {
     // actions
     init,
     refresh,
+    invalidateActiveSpace,
     reset,
     setActiveSpace,
     upsert,

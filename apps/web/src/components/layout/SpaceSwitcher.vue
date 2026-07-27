@@ -40,11 +40,15 @@ import { useRouter } from 'vue-router'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
+import { ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const authStore = useAuthStore()
+const uiStore = useUiStore()
 const router = useRouter()
 
 const open = ref(false)
@@ -83,7 +87,17 @@ async function pick(id: string) {
   // 新 activeSpaceId 重渲染。
   spacesStore.setActiveSpace(id)
   open.value = false
-  void pagesStore.ensureRootsLoaded(id)
+  try {
+    await pagesStore.ensureRootsLoaded(id)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
+      pagesStore.clearSpaceCache(id)
+      await spacesStore.invalidateActiveSpace(id)
+    } else {
+      uiStore.setError(`加载空间失败：${humanizeApiError(error)}`)
+      return
+    }
+  }
   // 总是跳到新空间的首页 — 否则用户可能停留在旧空间的某个页面(在新空间里
   // 不存在 → 404,管理页 /manager/* 同样需要被带离)。
   if (router.currentRoute.value.path !== '/') {

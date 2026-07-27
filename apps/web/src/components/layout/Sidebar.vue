@@ -6,6 +6,8 @@ import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { newId } from '@/lib/id'
+import { ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
@@ -200,10 +202,26 @@ async function autoExpandAndLocate(pageId: string): Promise<void> {
  * `immediate: true` 让 Sidebar mount 时立刻跑一次(覆盖场景 1)。
  * ensureRootsLoaded 自身 idempotent + inflight dedup,无副作用。
  */
+async function ensureActiveRoots(id: string): Promise<void> {
+  try {
+    await pagesStore.ensureRootsLoaded(id)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
+      pagesStore.clearSpaceCache(id)
+      const changed = await spacesStore.invalidateActiveSpace(id)
+      if (changed && router.currentRoute.value.path !== '/') {
+        await router.replace('/')
+      }
+      return
+    }
+    uiStore.setError(`加载空间失败：${humanizeApiError(error)}`)
+  }
+}
+
 watch(
   () => spacesStore.activeSpaceId.value,
   (id) => {
-    if (id) void pagesStore.ensureRootsLoaded(id)
+    if (id) void ensureActiveRoots(id)
   },
   { immediate: true },
 )
