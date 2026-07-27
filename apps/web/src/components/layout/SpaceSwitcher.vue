@@ -76,16 +76,16 @@ function toggle() {
 }
 
 async function pick(id: string) {
-  if (id === activeId.value) {
-    open.value = false
-    return
-  }
+  // 不做 id === activeId 的 early-return:用户在 /manager/* 上选当前空间
+  // 也应该跳回 / (否则感觉"点了没反应")。同值时 setActiveSpace 是浅等
+  // no-op、ensureRootsLoaded 有 childrenLoaded 缓存幂等、router.push('/')
+  // 又有 path 守卫 —— 全部安全。已在 / 时整套是 no-op,reactive 计算会用
+  // 新 activeSpaceId 重渲染。
   spacesStore.setActiveSpace(id)
   open.value = false
   void pagesStore.ensureRootsLoaded(id)
   // 总是跳到新空间的首页 — 否则用户可能停留在旧空间的某个页面(在新空间里
-  // 不存在 → 404)。已在首页时 router.push('/') 是 no-op,reactive 计算
-  // 会用新 activeSpaceId 自动重渲染。
+  // 不存在 → 404,管理页 /manager/* 同样需要被带离)。
   if (router.currentRoute.value.path !== '/') {
     void router.push('/')
   }

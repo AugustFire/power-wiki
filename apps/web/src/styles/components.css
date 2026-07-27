@@ -371,6 +371,11 @@
     color: var(--text-3);
     flex-shrink: 0;
     margin-right: 4px;
+    /* caret 用 margin: 0 -4px 让行紧凑,但 hover 时 caret 的 24px 灰色背景
+     * 会盖住 doc-icon 左 4px。z-index 把 doc-icon 抬到 caret 背景之上,既
+     * 保留紧凑布局又解决遮挡。*/
+    position: relative;
+    z-index: 1;
 }
 .tree-row.active .doc-icon { color: var(--accent); }
 .tree-row .label {
@@ -735,7 +740,8 @@
     font-weight: 500;
     cursor: pointer;
     border-radius: 3px;
-    transition: background-color 0.12s ease, color 0.12s ease;
+    transition: background-color var(--duration-fast) var(--ease-out),
+        color var(--duration-fast) var(--ease-out);
     user-select: none;
     font-family: inherit;
 }
@@ -754,19 +760,95 @@
     cursor: progress;
     opacity: 0.7;
 }
-.page-reactions .like-button .like-icon {
-    font-size: 18px;
-    /* outlined 拇指 → filled 拇指,用 font-variation-settings 切;
-       size 18px 跟正文行高和谐。 */
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+
+/* —— icon 容器 —— 两个 thumb_up 叠加做 FILL 交叉淡入。
+   outlined (FILL 0) 在 default 态可见,filled (FILL 1) 在 active 态淡入;
+   这样能保留 Material Symbols 的字形细节(FILL 轴无法做 transition,
+   硬切会有顿挫感),用透明度差补一个柔顺过渡。 */
+.page-reactions .like-button .like-icon-wrap {
+    position: relative;
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    isolation: isolate;
+    line-height: 1;
+    flex: 0 0 auto;
 }
-.page-reactions .like-button.active .like-icon {
+.page-reactions .like-button .like-icon-wrap > .like-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    transition: opacity var(--duration-base) var(--ease-out),
+        color var(--duration-base) var(--ease-out);
+}
+.page-reactions .like-button .like-icon-wrap .like-icon--outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+    opacity: 1;
+    color: currentColor;
+}
+.page-reactions .like-button .like-icon-wrap .like-icon--filled {
     font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 20;
+    opacity: 0;
+    color: var(--accent);
+}
+.page-reactions .like-button.active .like-icon-wrap .like-icon--outlined {
+    opacity: 0;
+}
+.page-reactions .like-button.active .like-icon-wrap .like-icon--filled {
+    opacity: 1;
+}
+
+/* —— 点击回弹 —— 用 .popping 类单次触发。popping 由 script 在点击瞬间
+   置 true、420ms 后置 false;rAF 重置让连续点击也能重启动画。 */
+@keyframes like-icon-bounce {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.28); }
+    60%  { transform: scale(0.92); }
+    100% { transform: scale(1); }
+}
+.page-reactions .like-button.popping .like-icon-wrap {
+    animation: like-icon-bounce 360ms var(--ease-out);
+}
+
+/* —— 激活时柔光环 —— ::before 是个 22x22 圆,从 0.5 scale 扩散到 1.4 同时
+   透明度从 0.5 衰减到 0。z-index:-1 + isolation 让它停在 icon 后面、
+   不抢 button 底色。 */
+@keyframes like-pulse-ring {
+    0%   { opacity: 0.55; transform: scale(0.5); }
+    100% { opacity: 0; transform: scale(1.4); }
+}
+.page-reactions .like-button .like-icon-wrap::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0;
+    transform: scale(0.5);
+}
+.page-reactions .like-button.popping .like-icon-wrap::before {
+    animation: like-pulse-ring 480ms var(--ease-out);
+}
+
+/* —— 计数滑入 —— Vue 用 :key 触发 remount,每次 likesCount 变化都重跑
+   keyframe;新数字从下方 8px 滑入 + 淡入。tabular-nums + min-width 防止
+   位移时数字宽度变化把 button 撑变形。 */
+@keyframes like-count-pop {
+    0%   { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
 }
 .page-reactions .like-button .like-count {
     font-variant-numeric: tabular-nums;
     min-width: 12px;
     text-align: left;
+    display: inline-block;
+    animation: like-count-pop var(--duration-base) var(--ease-out);
 }
 
 /* =========================

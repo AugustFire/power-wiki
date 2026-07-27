@@ -1061,7 +1061,7 @@ watch(activeTab, (t) => {
   user-select: none;
 }
 .input, .select {
-  height: 32px;
+  height: 36px;
   padding: 0 10px;
   font-size: 13px;
   font-family: var(--font-sans, inherit);
@@ -1089,11 +1089,25 @@ watch(activeTab, (t) => {
 .search-icon {
   position: absolute;
   left: 10px;
-  font-size: var(--icon-md, 16px);
+  font-size: 18px;
   color: var(--text-3);
   pointer-events: none;
 }
-.search-input { padding-left: 32px; padding-right: 28px; width: 100%; }
+/* 视觉对齐 TrashView 的 .tt-search-input(36px / 14px / 18px icon /
+   focus-only 边框变色);保留清空按钮 → padding-right 留出 close 按钮位置,
+   跟 trash 的 12px 不一样。*/
+.search-input {
+  height: 36px;
+  font-size: 14px;
+  padding: 0 36px 0 36px;
+  width: 100%;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.input.search-input:hover { border-color: var(--border); }
+.input.search-input:focus {
+  border-color: var(--accent);
+  box-shadow: none;
+}
 .search-clear {
   position: absolute;
   right: 4px;

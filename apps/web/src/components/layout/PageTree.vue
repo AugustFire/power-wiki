@@ -646,7 +646,9 @@ watch(isRenaming, (val) => {
       >
         <span v-if="hasChildren" class="material-symbols-outlined icon-md">chevron_right</span>
       </span>
-      <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
+      <span class="material-symbols-outlined doc-icon" style="font-size:18px">
+        {{ hasChildren ? (isEffectivelyExpanded ? 'folder_open' : 'folder') : 'description' }}
+      </span>
       <input
         v-if="isRenaming"
         ref="renameInputRef"

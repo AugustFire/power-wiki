@@ -290,8 +290,27 @@ function relativeTime(ts: number): string {
  * 防护:toggling=true 期间忽略第二次点击)。
  */
 const togglingLike = ref(false)
+/**
+ * 点赞点击动效触发器:点击瞬间置 true,360ms 后回 false。
+ * rAF 隔一帧再加 class 是为了连点时能重启动画(同 class 直接赋值不会
+ * 重跑 @keyframes);clearTimeout 防止连点叠加导致提前复位。
+ */
+const popping = ref(false)
+let popResetTimer: ReturnType<typeof setTimeout> | null = null
+function triggerLikePop() {
+  popping.value = false
+  if (popResetTimer !== null) clearTimeout(popResetTimer)
+  requestAnimationFrame(() => {
+    popping.value = true
+    popResetTimer = setTimeout(() => {
+      popping.value = false
+      popResetTimer = null
+    }, 420)
+  })
+}
 async function onToggleLike() {
   if (!page.value || togglingLike.value) return
+  triggerLikePop()
   togglingLike.value = true
   try {
     await pagesStore.togglePageLike(page.value.id)
@@ -752,14 +771,18 @@ watch(
               <button
                 type="button"
                 class="like-button"
-                :class="{ active: page.likedByMe === true }"
+                :class="{ active: page.likedByMe === true, popping }"
                 :disabled="togglingLike"
                 :aria-pressed="page.likedByMe === true"
                 :title="page.likedByMe ? '取消点赞' : '赞一下'"
                 @click="onToggleLike"
               >
-                <span class="material-symbols-outlined like-icon">thumb_up</span>
-                <span class="like-count">{{ page.likesCount ?? 0 }}</span>
+                <span class="like-icon-wrap" aria-hidden="true">
+                  <span class="material-symbols-outlined like-icon like-icon--outlined">thumb_up</span>
+                  <span class="material-symbols-outlined like-icon like-icon--filled">thumb_up</span>
+                </span>
+                <!-- :key 触发 remount,likesCount 变化时 likes-count-pop 重跑 -->
+                <span :key="page.likesCount ?? 0" class="like-count">{{ page.likesCount ?? 0 }}</span>
               </button>
               <WhoLikedList :page="page" />
             </div>
