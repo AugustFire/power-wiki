@@ -183,6 +183,18 @@ export function useSpacesStore() {
     }
   }
 
+  async function archiveSpace(id: string): Promise<Space> {
+    const updated = await api.admin.spaces.archive(id)
+    upsert(updated)
+    return updated
+  }
+
+  async function unarchiveSpace(id: string): Promise<Space> {
+    const updated = await api.admin.spaces.unarchive(id)
+    upsert(updated)
+    return updated
+  }
+
   return {
     // state
     spaces: visible,
@@ -203,5 +215,7 @@ export function useSpacesStore() {
     createSpace,
     updateSpace,
     deleteSpace,
+    archiveSpace,
+    unarchiveSpace,
   }
 }

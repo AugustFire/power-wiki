@@ -156,6 +156,23 @@ export const spaces = pgTable('spaces', {
   ownerId: text('owner_id'),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  /**
+   * P1-1: 空间归档(P1-1 §「空间没有归档状态」)。Date.now() 毫秒;null
+   * 表示未归档(正常状态),非 null 表示已归档(团队空间下线但页面保留可读、
+   * 默认禁止新增和编辑)。archive ↔ unarchive 是一对幂等切换,管理员
+   * 通过 POST /api/admin/spaces/:id/{archive,unarchive} 触发。
+   *
+   * 检查约束(MIG 0032 写):kind='personal' 时必须为 null —— 个人空间
+   * 由用户 anonymize 全权管理,绕过 archive 生命周期(否则把 owner 的
+   * scratchpad 隐了,产品语义错)。
+   */
+  archivedAt: bigint('archived_at', { mode: 'number' }),
+  /**
+   * 归档操作者 user id。归档写入时由 archive 路由插入,unarchive 时同事务
+   * 置 null。No FK —— admin 被 disable/delete 后归档行保留(审计上下文),
+   * UI 不取这个名字也行,后端 audit 表有专门记录(target_kind='space')。
+   */
+  archivedByUserId: text('archived_by_user_id'),
 })
 
 /**
@@ -964,8 +981,10 @@ export type NewPageRestrictionRow = typeof pageRestrictions.$inferInsert
  *       change = principal 仍在但 role 改了)
  *     - page_restriction_set / page_restriction_add / page_restriction_remove:页面限制变更
  *     - page_share_create / page_share_revoke:公开链接生命周期
- *   资源生命周期 3 个(2026-07 起合并到同一张表):
+ *   资源生命周期 5 个(2026-07 起合并到同一张表;P1-1 在 0032 加 archive 相关 2 个):
  *     - space_deleted:空间被 admin DELETE(目标:shared space;personal 拒绝)
+ *     - space_archived / space_unarchived:空间归档 / 恢复(shared only;personal 由
+ *                                          CHECK spaces_archived_kind_check 拒)
  *     - group_deleted:用户组被 admin DELETE(pg-* 系统组不删)
  *     - user_anonymized:用户被 admin 匿名化(改 name/email/status,保留
  *       authorship/comments/audit 行,sentinel 化)
@@ -981,11 +1000,13 @@ export type NewPageRestrictionRow = typeof pageRestrictions.$inferInsert
  *   - page_restriction_set: { before: {view,edit}, after: {view,edit} }
  *   - *_add / *_remove:同款单行形态
  *   - space_deleted: { before: { id, name, kind } }
+ *   - space_archived: { after: { archivedAt, archivedByUserId } }
+ *   - space_unarchived: { before: { archivedAt, archivedByUserId } }
  *   - group_deleted: { before: { id, name, memberCount } }
  *   - user_anonymized: { before: { name, email }, after: { name, email, status } }
  *
  * target_kind ∈ {space, page, page_share, group, user};CHECK 在 migration
- * 里限定(0027 + 0029_extend_audit_kinds + 0031_space_grant_change)。
+ * 里限定(0027 + 0029 + 0031 + 0032_space_archive)。
  *
  * No FK:audit 永远不被级联 —— 即使被改的 user/group/space/page 被
  * 删了,审计行保留(audit 本身就是"那时的快照")。这跟

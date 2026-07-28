@@ -27,6 +27,8 @@ export interface PaginationArgs {
   /** undefined = 调用方没传 limit,走全量分支 */
   limit?: number
   offset: number
+  /** P1-1: kind 维度过滤(shared / personal),让分页跟 tab 对齐 */
+  kind?: 'shared' | 'personal'
 }
 
 /**
@@ -40,11 +42,12 @@ export function parsePagination(c: Context): PaginationArgs {
   const raw = {
     limit: c.req.query('limit'),
     offset: c.req.query('offset'),
+    kind: c.req.query('kind'),
   }
-  // .partial() 因为 PaginatedQuerySchema 的两个字段本来就 optional,
+  // .partial() 因为 PaginatedQuerySchema 的字段本来就 optional,
   // 这里再 partial 一次只为了拿到"两个都缺省"也合法的解析路径。
   const parsed = PaginatedQuerySchema.partial().parse(raw)
-  return { limit: parsed.limit, offset: parsed.offset ?? 0 }
+  return { limit: parsed.limit, offset: parsed.offset ?? 0, kind: parsed.kind }
 }
 
 /**

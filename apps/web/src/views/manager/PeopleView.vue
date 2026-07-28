@@ -611,9 +611,8 @@ watch(activeTab, (t) => {
 
       <!-- Load-more 跟 table 同生死 — filter 空匹配时上方已是 EmptyState,
            再叠一个「已加载全部」footer 没意义。 -->
-      <div v-if="users.length > 0" class="load-more-row">
+      <div v-if="usersHasMore" class="load-more-row">
         <button
-          v-if="usersHasMore"
           type="button"
           class="btn ghost load-more-btn"
           :disabled="usersLoading"
@@ -621,7 +620,6 @@ watch(activeTab, (t) => {
         >
           {{ usersLoading ? '加载中…' : '加载更多' }}
         </button>
-        <div v-else class="load-more-end">— 已加载全部 —</div>
       </div>
     </section>
 
@@ -688,9 +686,8 @@ watch(activeTab, (t) => {
         </div>
       </div>
 
-      <div v-if="groups.length > 0" class="load-more-row">
+      <div v-if="groupsHasMore" class="load-more-row">
         <button
-          v-if="groupsHasMore"
           type="button"
           class="btn ghost load-more-btn"
           :disabled="groupsLoading"
@@ -698,7 +695,6 @@ watch(activeTab, (t) => {
         >
           {{ groupsLoading ? '加载中…' : '加载更多' }}
         </button>
-        <div v-else class="load-more-end">— 已加载全部 —</div>
       </div>
     </section>
     </div>
@@ -1196,10 +1192,5 @@ watch(activeTab, (t) => {
 .load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.load-more-end {
-  font-size: 12px;
-  color: var(--text-3);
-  padding: 24px 0 8px;
 }
 </style>

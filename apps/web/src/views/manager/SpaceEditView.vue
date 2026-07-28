@@ -479,6 +479,36 @@ function onResetForm() {
   syncFormFromSpace()
 }
 
+async function onArchive() {
+  if (!space.value) return
+  const s = space.value
+  const ok = await askConfirm({
+    title: '归档空间',
+    message: `确定要归档空间「${s.name}」吗?归档后该空间将从切换器中隐藏,页面仍可读但禁止新增和编辑。管理员可随时恢复。`,
+    confirmText: '归档',
+    danger: false,
+  })
+  if (!ok) return
+  try {
+    const updated = await api.admin.spaces.archive(s.id)
+    space.value = updated
+    await spacesStore.refresh()
+  } catch (e) {
+    uiStore.setError(e instanceof ApiError ? e.message : '归档失败')
+  }
+}
+
+async function onUnarchive() {
+  if (!space.value) return
+  try {
+    const updated = await api.admin.spaces.unarchive(space.value.id)
+    space.value = updated
+    await spacesStore.refresh()
+  } catch (e) {
+    uiStore.setError(e instanceof ApiError ? e.message : '恢复失败')
+  }
+}
+
 async function onDelete() {
   if (!space.value) return
   const s = space.value
@@ -923,12 +953,60 @@ function formatDate(ts: number): string {
         </div>
 
         <!-- ─── 危险操作(全局 admin only) ─── -->
+        <!-- 分两块:① 生命周期(归档/恢复,可逆,灰按钮一行)
+                     ② 不可逆(删除,左红描边警示卡 + 单独按钮)
+             两块之间用分割线隔开,视觉权重明确:删除一眼能看见,但不会被三个按钮挤成一行干扰视线。 -->
         <div v-if="isGlobalAdmin" class="se-danger-zone">
-          <h3 class="se-danger-title">危险操作</h3>
-          <button type="button" class="btn danger" @click="onDelete">
-            <span class="material-symbols-outlined btn-icon">delete</span>
-            <span>删除空间</span>
-          </button>
+          <!-- ① 归档生命周期(可逆) -->
+          <div class="se-danger-row se-danger-row-muted">
+            <div class="se-danger-text">
+              <h3 class="se-danger-title">归档空间</h3>
+              <p class="se-danger-desc">
+                {{
+                  space?.archivedAt
+                    ? '空间已归档 — 从切换器隐藏,成员仍可读,禁止新增和编辑。'
+                    : '归档后从切换器隐藏,页面保留可读,禁止新增和编辑。随时可恢复。'
+                }}
+              </p>
+            </div>
+            <button
+              v-if="!space?.archivedAt"
+              type="button"
+              class="btn ghost-secondary"
+              @click="onArchive"
+            >
+              <span class="material-symbols-outlined btn-icon">archive</span>
+              <span>归档</span>
+            </button>
+            <button
+              v-if="space?.archivedAt"
+              type="button"
+              class="btn ghost-secondary"
+              @click="onUnarchive"
+            >
+              <span class="material-symbols-outlined btn-icon">unarchive</span>
+              <span>恢复</span>
+            </button>
+          </div>
+
+          <div class="se-danger-divider" />
+
+          <!-- ② 不可逆:删除 -->
+          <div class="se-danger-row se-danger-row-destructive">
+            <div class="se-danger-text">
+              <h3 class="se-danger-title se-danger-title-destructive">
+                <span class="material-symbols-outlined se-danger-icon">warning</span>
+                删除空间
+              </h3>
+              <p class="se-danger-desc">
+                永久删除此空间及其下所有页面,操作不可撤销。空间必须为空才能删除,否则请先归档。
+              </p>
+            </div>
+            <button type="button" class="btn danger" @click="onDelete">
+              <span class="material-symbols-outlined btn-icon">delete</span>
+              <span>删除空间</span>
+            </button>
+          </div>
         </div>
       </section>
       </template>
@@ -1856,12 +1934,48 @@ function formatDate(ts: number): string {
 }
 
 /* ─── Danger zone ─── */
+/* 两块布局:左文案 + 右操作。
+   - 归档块:mute 灰色,弱化"日常操作"语义;
+   - 删除块:淡红背景 + 红描边 + 红标题 + warning icon,语义权重最大。 */
 .se-danger-zone {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  padding-top: 0;
+  border-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
-.se-danger-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0; }
+.se-danger-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: var(--radius-md, 4px);
+}
+.se-danger-row-muted { background: var(--bg-subtle); }
+.se-danger-row-destructive {
+  background: #fff5f5;
+  border: 1px solid #ffcdd2;
+  margin-top: 12px;
+}
+.se-danger-text { flex: 1; min-width: 0; }
+.se-danger-text p { margin: 0; }
+.se-danger-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.se-danger-title-destructive { color: var(--danger); }
+.se-danger-icon { font-size: 16px !important; color: var(--danger); }
+.se-danger-desc { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.se-danger-divider { height: 1px; background: transparent; }
 
 /* ─── Access control (perms card) ─── */
 .se-perms-header {

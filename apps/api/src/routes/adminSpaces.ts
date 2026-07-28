@@ -68,6 +68,10 @@ function rowToSpace(row: SpaceRow, accessGroupIds: string[] = []): Space {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     accessGroupIds: accessGroupIds.filter((g) => !g.startsWith('pg-')),
+    // P1-1: admin 路径透传归档字段(同 rowToUser 等价策略)。
+    archivedAt:
+      typeof row.archivedAt === 'string' ? Number(row.archivedAt) : row.archivedAt ?? null,
+    archivedByUserId: row.archivedByUserId ?? undefined,
   }
 }
 
@@ -113,12 +117,19 @@ async function countPagesInSpace(spaceId: string): Promise<number> {
 adminSpacesRouter.get('/', async (c) => {
   const parsed = safeParsePagination(c)
   if (!parsed.ok) return parsed.response
-  const { limit, offset } = parsed.args
+  const { limit, offset, kind } = parsed.args
   // Stable order by creation time so the manager list (and the topbar
   // SpaceSwitcher dropdown) doesn't shuffle between refreshes — Postgres
   // doesn't guarantee an implicit order for a plain SELECT, and nanoid
   // primary keys are random so the default order is meaningless.
   let q = db.select().from(spaces).orderBy(asc(spaces.createdAt)).$dynamic()
+  // P1-1: `?kind=shared|personal` 过滤 —— 让前端 tab 维度的分页对齐。
+  // 不传 = 全量(向后兼容 stores / 单次拉全的脚本)。
+  // kind 维度的分页必须对齐 tab,否则 limit=50 拿到 48 personal + 2 shared,
+  // 第 3 个 shared 会被切掉,前端 tab 永远显示不全。
+  if (kind === 'shared' || kind === 'personal') {
+    q = q.where(eq(spaces.kind, kind))
+  }
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
   // Pull all access mappings in one query to avoid N+1.
@@ -306,6 +317,161 @@ adminSpacesRouter.delete('/:id', async (c) => {
   })
   return c.body(null, 204)
 })
+
+/* ─── POST /api/admin/spaces/:id/archive ────────────────────────────────
+ * P1-1: 空间归档(team space 生命周期中间态)。
+ *
+ *   - 拒绝 personal space(矩阵:个人空间走 owner anonymize 路径,不属于归档
+ *     语义;DB CHECK spaces_archived_kind_check 已经强制,这里再前置一次返回
+ *     清晰 400 而不是裸 5xx CHECK 违例)。
+ *   - 拒绝已经归档(idempotent 走 archived_at IS NOT NULL 早返,audit 不写
+ *     —— 已归档再发"归档"是 noop,不该污染审计)。
+ *   - 同事务写 permission_audit(kind='space_archived')。
+ *
+ * 归档后:
+ *   - canEditSpace 在 archived 时返 false(见 permissions.ts)→ 自动拦截所有
+ *     page-side 写路径;
+ *   - GET /api/spaces 非 admin 路径过滤 archived(main switcher 自动隐藏);
+ *   - page-side 读不受影响(成员走直接 page URL 仍能访问)。
+ *
+ * Admin 写权限:由 router 上游 `requireAdmin` middleware 守住 —— archive 是
+ * 元数据变更,任何人(包括空间 admin)都不能自己归档自己的空间(避免一个空间
+ * admin 离职/误操作把 team space 隐了,影响其他成员)。只有全局 admin 才允许
+ * 这个动作。
+ */
+adminSpacesRouter.post('/:id/archive', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+  const existing = (
+    await db
+      .select({
+        id: spaces.id,
+        name: spaces.name,
+        kind: spaces.kind,
+        archivedAt: spaces.archivedAt,
+      })
+      .from(spaces)
+      .where(eq(spaces.id, id))
+      .limit(1)
+  )[0]
+  if (!existing) return c.json({ error: 'not_found' }, 404)
+  if (existing.kind === 'personal') {
+    return c.json(
+      {
+        error: 'personal_space_cannot_archive',
+        message: '个人空间不支持归档,请走「注销该用户」清理。',
+      },
+      400,
+    )
+  }
+  if (existing.archivedAt !== null) {
+    const [row] = await db.select().from(spaces).where(eq(spaces.id, id)).limit(1)
+    if (!row) return c.json({ error: 'not_found' }, 404)
+    return c.json(await archiveResponse(row, id))
+  }
+
+  const now = Date.now()
+  const updated = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(spaces)
+      .set({ archivedAt: now, archivedByUserId: me.id, updatedAt: now })
+      .where(eq(spaces.id, id))
+      .returning()
+    const row = rows[0]
+    if (!row) return undefined
+    await recordPermissionAudit(tx, {
+      kind: 'space_archived',
+      actorId: me.id,
+      targetKind: 'space',
+      targetId: id,
+      payload: { after: { archivedAt: now, archivedByUserId: me.id } },
+    })
+    return row
+  })
+  if (!updated) return c.json({ error: 'not_found' }, 404)
+  return c.json(await archiveResponse(updated, id))
+})
+
+/* ─── POST /api/admin/spaces/:id/unarchive ──────────────────────────────
+ * P1-1: 解除归档。恢复成正常 team space,所有写路径自动可用(canEditSpace
+ * 重新打开,见 lib/permissions.ts)。
+ *
+ *   - 拒绝 personal space(同 archive,矩阵不允许)。
+ *   - 拒绝未归档(no-op,audit 不写)。
+ *   - 写 permission_audit(kind='space_unarchived',payload.before 记归档
+ *     时间 + 操作者)。
+ */
+adminSpacesRouter.post('/:id/unarchive', async (c) => {
+  const me = c.get('user')
+  const id = c.req.param('id')
+  const existing = (
+    await db
+      .select({
+        id: spaces.id,
+        name: spaces.name,
+        kind: spaces.kind,
+        archivedAt: spaces.archivedAt,
+        archivedByUserId: spaces.archivedByUserId,
+      })
+      .from(spaces)
+      .where(eq(spaces.id, id))
+      .limit(1)
+  )[0]
+  if (!existing) return c.json({ error: 'not_found' }, 404)
+  if (existing.kind === 'personal') {
+    return c.json(
+      {
+        error: 'personal_space_cannot_unarchive',
+        message: '个人空间不属于归档生命周期。',
+      },
+      400,
+    )
+  }
+  if (existing.archivedAt === null) {
+    const [row] = await db.select().from(spaces).where(eq(spaces.id, id)).limit(1)
+    if (!row) return c.json({ error: 'not_found' }, 404)
+    return c.json(await archiveResponse(row, id))
+  }
+
+  const before = {
+    archivedAt:
+      typeof existing.archivedAt === 'string'
+        ? Number(existing.archivedAt)
+        : existing.archivedAt,
+    archivedByUserId: existing.archivedByUserId,
+  }
+  const now = Date.now()
+  const updated = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(spaces)
+      .set({ archivedAt: null, archivedByUserId: null, updatedAt: now })
+      .where(eq(spaces.id, id))
+      .returning()
+    const row = rows[0]
+    if (!row) return undefined
+    await recordPermissionAudit(tx, {
+      kind: 'space_unarchived',
+      actorId: me.id,
+      targetKind: 'space',
+      targetId: id,
+      payload: { before },
+    })
+    return row
+  })
+  if (!updated) return c.json({ error: 'not_found' }, 404)
+  return c.json(await archiveResponse(updated, id))
+})
+
+/**
+ * Compose the standard admin Space DTO for archive / unarchive responses.
+ * 不带 page stats —— 归档状态变更不影响 pageCount / childPageCount /
+ * lastPageUpdatedAt;前端 invalidate 缓存后 GET 时再聚合。
+ */
+async function archiveResponse(row: SpaceRow, id: string): Promise<Space> {
+  const accessGroupIds = await getAccessGroupIds(id)
+  const ownerNames = await getSpaceOwnerNames([id])
+  return attachStats(rowToSpace(row, accessGroupIds), undefined, ownerNames)
+}
 
 /* ─── PUT /api/admin/spaces/:id/access ────────────────────────────────── */
 /**

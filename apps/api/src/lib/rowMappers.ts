@@ -34,6 +34,11 @@ export function rowToUser(row: UserRow): User {
  * responses (the sidebar manager UI + /manager/spaces/:id use it to render
  * the "所有者" field); false for regular users (who don't need to know who
  * owns a space they have access to).
+ *
+ * P1-1: archivedAt / archivedByUserId 总是透传(不管 admin 还是非 admin)——
+ * 团队空间归档状态是普通用户也需要看到的元信息(影响切换器显隐 + 写按钮
+ * badge)。但 archivedByUserId 只在 admin 路径附带(`opts.includeOwner`
+ * 同款语义),避免给非 admin 暴露「谁归档的」这种管理元信息。
  */
 export function rowToSpace(row: SpaceRow, opts: { includeOwner?: boolean } = {}): Space {
   return {
@@ -48,5 +53,10 @@ export function rowToSpace(row: SpaceRow, opts: { includeOwner?: boolean } = {})
     ownerId: opts.includeOwner ? row.ownerId ?? undefined : undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    // pg driver returns bigint as string by default. Coerce to number —
+    // the columns hold Date.now() ms which are safely within Number.MAX_SAFE_INTEGER.
+    archivedAt:
+      typeof row.archivedAt === 'string' ? Number(row.archivedAt) : row.archivedAt ?? null,
+    archivedByUserId: opts.includeOwner ? row.archivedByUserId ?? undefined : undefined,
   }
 }

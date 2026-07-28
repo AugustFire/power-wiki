@@ -40,6 +40,7 @@ import { useRouter } from 'vue-router'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
@@ -47,6 +48,7 @@ import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const uiStore = useUiStore()
+const authStore = useAuthStore()
 const router = useRouter()
 
 const open = ref(false)
@@ -55,7 +57,11 @@ const rootEl = ref<HTMLElement | null>(null)
 // Personal spaces are intentionally filtered out — see the file-level doc.
 // The trigger still reflects whatever the active space is, which may itself
 // be the user's personal space; only the dropdown list is restricted.
-const spacesList = computed(() => spacesStore.sharedSpaces.value)
+// P1-1: archived spaces are also filtered from the main list.
+const spacesList = computed(() => spacesStore.sharedSpaces.value.filter((s) => !s.archivedAt))
+// P1-1: archived spaces shown in a separate section for admins only.
+const archivedSpaces = computed(() => spacesStore.sharedSpaces.value.filter((s) => !!s.archivedAt))
+const isAdmin = computed(() => authStore.user?.role === 'admin')
 const active = computed(() => spacesStore.activeSpace.value)
 const activeId = computed(() => spacesStore.activeSpaceId.value)
 
@@ -159,7 +165,7 @@ onBeforeUnmount(() => {
       <span class="ss-empty-text">还没有可访问的空间</span>
     </div>
 
-    <div v-if="open && spacesList.length > 0" class="ss-menu" role="listbox">
+    <div v-if="open && (spacesList.length > 0 || (isAdmin && archivedSpaces.length > 0))" class="ss-menu" role="listbox">
       <button
         v-for="s in spacesList"
         :key="s.id"
@@ -181,6 +187,29 @@ onBeforeUnmount(() => {
           aria-hidden="true"
         >check</span>
       </button>
+      <template v-if="isAdmin && archivedSpaces.length > 0">
+        <div class="ss-archived-divider">已归档</div>
+        <button
+          v-for="s in archivedSpaces"
+          :key="s.id"
+          type="button"
+          class="ss-menu-item ss-menu-item-archived"
+          :class="{ 'ss-menu-item-active': s.id === active?.id }"
+          role="option"
+          :aria-selected="s.id === active?.id"
+          @click="pick(s.id)"
+        >
+          <SpaceAvatar :space="s" :size="28" />
+          <span class="ss-menu-text">
+            <span class="ss-menu-name">{{ s.name }}</span>
+          </span>
+          <span
+            v-if="s.id === active?.id"
+            class="material-symbols-outlined ss-check"
+            aria-hidden="true"
+          >check</span>
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -337,4 +366,15 @@ onBeforeUnmount(() => {
   font-size: var(--icon-lg, 18px) !important;
   color: var(--accent);
 }
+.ss-archived-divider {
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.ss-menu-item-archived { opacity: 0.65; }
 </style>

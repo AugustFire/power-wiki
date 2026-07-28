@@ -160,15 +160,36 @@ export async function canReadSpace(me: Principal, spaceId: string): Promise<bool
 }
 
 /**
+ * P1-1: 查空间是否归档。一行 SELECT,共享团队的 archived 状态。
+ *
+ * 性能:写入路径(canEditSpace / canEditPage)每条 page 写大约多 1 个
+ * SELECT,代价 1-2ms,可接受;读路径不调(读不受归档影响)。高频 list
+ * 读路径反而因为 archived_at 已删除的 list 走更窄的 WHERE,反而更快。
+ */
+export async function isSpaceArchived(spaceId: string): Promise<boolean> {
+  const rows = await db.execute<{ archivedAt: number | null }>(sql`
+    SELECT archived_at AS "archivedAt" FROM spaces WHERE id = ${spaceId} LIMIT 1
+  `)
+  const v = rows.rows[0]?.archivedAt
+  return v !== null && v !== undefined
+}
+
+/**
  * 主体能否编辑该空间的内容(创建/修改/删除页面、附件、评论)。
  *
  *  - admin:永远 true。**personal space 的 403 拦截由
  *    `assertAdminNotWritingPersonalSpace` 在调用 canEditSpace
  *    之后独立完成**,不在这层做(保留个人空间 owner-only 语义)。
  *  - viewer:false。editor / admin:true。
+ *  - **archived(P1-1)**:永远 false —— 归档后 team space 默认禁止新增
+ *    和编辑,包含 admin(spec: admin 想改先 unarchive)。personal space
+ *    永远不会被归档(CHECK spaces_archived_kind_check 限制),不影响。
+ *    由于这是 hot path 同步多一个 SELECT,需要确保 archived_at 的 SELECT
+ *    走 spaces_pkey(主键索引) —— 见 isSpaceArchived 的 SQL。
  */
 export async function canEditSpace(me: Principal, spaceId: string): Promise<boolean> {
   if (me.kind === 'anonymous') return false
+  if (await isSpaceArchived(spaceId)) return false
   if (me.isAdmin) return true
   const role = await effectiveSpaceRole(me, spaceId)
   return role === 'admin' || role === 'editor'

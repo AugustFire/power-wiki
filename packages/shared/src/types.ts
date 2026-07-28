@@ -295,6 +295,18 @@ export interface Space {
    * 「只读」badge,把后端 404 提前到按钮不可见阶段。
    * admin 路径下永远为 'admin'(见 apps/api/src/routes/spaces.ts)。 */
   viewerRole?: 'viewer' | 'editor' | 'admin' | null
+  /**
+   * P1-1: 归档时间(Date.now() 毫秒)。null/undefined = 未归档(正常),
+   * 非 null = 已归档 —— 从主列表隐藏,block page 写操作,管理员可恢复。
+   * 老 cache 没这个字段时按未归档对待(向后兼容)。
+   */
+  archivedAt?: number | null
+  /**
+   * P1-1: 归档操作者 user id。仅 admin 路径附带;非归档空间为 undefined。
+   * 审计事实来源是 permission_audit(kind='space_archived'),本字段给前端
+   * 显示「归档人 + 归档时间」用。
+   */
+  archivedByUserId?: string
 }
 
 /**

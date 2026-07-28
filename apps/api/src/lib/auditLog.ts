@@ -43,16 +43,21 @@ import { generatePageId } from './ids'
  */
 export type AnyTx = Pick<NodePgTransaction<Record<string, unknown>, TablesRelationalConfig>, 'insert' | 'execute'>
 
-/** 事件类型。schema 里 CHECK 限定 12 个;新增事件同步改 CHECK + migration。
+/** 事件类型。schema 里 CHECK 限定 14 个;新增事件同步改 CHECK + migration。
  *  9 个权限变更(grant add/remove/change/set / restriction add/remove/set / share create/revoke)
- *  + 3 个资源生命周期(space / group / user 删 / 匿名化)。
+ *  + 5 个资源生命周期(space 删 / archive / unarchive / group 删 / user 匿名化)。
  *  资源生命周期事件统一归到 permission_audit,跟权限变更同张表 = 「任何会改可见性 / 访问性的事件」都在一个时间线,审计查询一次搞定。
  *
  *  grant 4 类的语义边界:
  *    - set:全量替换(legacy,保留兼容;新代码已不写)
  *    - add:principal 从无到有
  *    - remove:principal 从有到无
- *    - change:principal 一直在,但 role 改了(v0.7 起 PUT diff 拆出) */
+ *    - change:principal 一直在,但 role 改了(v0.7 起 PUT diff 拆出)
+ *
+ *  资源生命周期补充:
+ *    - space_deleted:DELETE 整个空间(共享空间,personal 拒绝)
+ *    - space_archived / space_unarchived:归档 / 恢复(shared only;personal 由
+ *                                          CHECK spaces_archived_kind_check 拒) */
 export type AuditKind =
   | 'space_grant_set'
   | 'space_grant_add'
@@ -64,6 +69,8 @@ export type AuditKind =
   | 'page_share_create'
   | 'page_share_revoke'
   | 'space_deleted'
+  | 'space_archived'
+  | 'space_unarchived'
   | 'group_deleted'
   | 'user_anonymized'
 

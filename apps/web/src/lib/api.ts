@@ -1149,6 +1149,8 @@ export const api = {
         const params = new URLSearchParams()
         if (q?.limit !== undefined) params.set('limit', String(q.limit))
         if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        // P1-1: kind 维度过滤(shared / personal),让分页跟 tab 对齐。
+        if (q?.kind !== undefined) params.set('kind', q.kind)
         const qs = params.toString() ? `?${params.toString()}` : ''
         return getAdminSpacesPaginated(`/admin/spaces${qs}`)
       },
@@ -1179,6 +1181,18 @@ export const api = {
           method: 'DELETE',
         })
         invalidatePrefix('/admin/spaces')
+      },
+      archive: async (id: string): Promise<Space> => {
+        const s = await request<Space>(`/admin/spaces/${encodeURIComponent(id)}/archive`, { method: 'POST' })
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/spaces')
+        return SpaceSchema.parse(s) as Space
+      },
+      unarchive: async (id: string): Promise<Space> => {
+        const s = await request<Space>(`/admin/spaces/${encodeURIComponent(id)}/unarchive`, { method: 'POST' })
+        invalidatePrefix('/admin/spaces')
+        invalidatePrefix('/spaces')
+        return SpaceSchema.parse(s) as Space
       },
       setAccess: async (id: string, input: SetSpaceAccessInput): Promise<Space> => {
         // @deprecated Phase A.5: use `api.spaces.permissions.set(id, …)` instead.

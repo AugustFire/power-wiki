@@ -18,7 +18,7 @@
  */
 
 import { Hono } from 'hono'
-import { asc, eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray, sql } from 'drizzle-orm'
 import { PaginatedListSchema, SpaceSchema, UpdateSpaceInputSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
 import { spaceGroupAccess, spaces } from '../db/schema'
@@ -89,10 +89,30 @@ async function listVisibleSpaces(
   // Non-admin — restrict to accessible. Narrow the union for inArray's typing.
   if (accessible === '*' || accessible.length === 0) return []
   const ids: string[] = accessible
+  // P1-1: 非 admin list 过滤 archived spaces —— archived 是团队生命周期
+  // 的「下线」状态,普通成员不应再在主列表看到(隐藏)。但 archived space
+  // 的页面仍可读(成员通过直接 page URL 进入),所以这里是 visibility
+  // 而非 read 维度的过滤。
+  // 一次 SQL 拿全 archived_at 状态,避免 N+1;`accessible` 在典型用户规模
+  // 下只有几个 ID,单查 archived_at 列表比 LEFT JOIN 主 SELECT 更清晰。
+  const archivedFlags = new Map<string, boolean>()
+  {
+    const result = await db.execute<{ id: string; archivedAt: number | null }>(sql`
+      SELECT id, archived_at AS "archivedAt" FROM spaces
+       WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+    `)
+    for (const r of result.rows) {
+      archivedFlags.set(
+        r.id,
+        r.archivedAt !== null && r.archivedAt !== undefined,
+      )
+    }
+  }
+  const activeIds = ids.filter((id) => !archivedFlags.get(id))
   let q = db
     .select()
     .from(spaces)
-    .where(inArray(spaces.id, ids))
+    .where(inArray(spaces.id, activeIds))
     .orderBy(asc(spaces.createdAt))
     .$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)

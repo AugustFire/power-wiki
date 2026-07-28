@@ -178,6 +178,17 @@
 .btn.ghost:hover { background: var(--bg-subtle); color: var(--text-1); }
 .btn.danger { background: var(--danger); color: white; }
 .btn.danger:hover { background: var(--danger-hover); }
+/* 危险区域内的次要操作(如归档/恢复):白底 + 灰描边 + 同尺寸,跟 .btn.danger
+   红实色形成"轻/重"对比;比 .btn.ghost 更显眼,有明确边界。 */
+.btn.ghost-secondary {
+  background: var(--bg);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+}
+.btn.ghost-secondary:hover {
+  background: var(--bg-subtle);
+  border-color: var(--text-3);
+}
 
 /* 焦点环:仅键盘聚焦时显示,鼠标点击不出现 */
 .btn:focus-visible,

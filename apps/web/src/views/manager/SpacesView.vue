@@ -45,24 +45,53 @@ const { confirm: askConfirm } = useConfirm()
  * "所有者" column) and are loaded once as full sets because they need
  * to resolve names for every visible space.
  *
+ * P1-1 bug fix:shared / personal 各一个独立 usePaginatedList 实例。
+ * 之前的做法是拉全量 + 前端 filter,会出现「limit=50 拿到 48 个 personal
+ * + 2 个 shared,第 3 个 shared 被切掉」—— kind 维度的分页必须跟 tab 对齐。
+ * 后端 list 支持 `?kind=shared|personal`,前端每次切 tab 触发一次该 kind
+ * 的 reset + 后续 loadMore。
+ *
  * Stage B.3: both auxiliary lists come from `useManagerStats()` —
  * shared with PeopleView / PeopleContextPanel via the module-level
  * singleton + promise-cache. First caller fires the request; subsequent
  * callers (including SpacesView mounted later in the same SPA session)
  * await the in-flight promise instead of starting a second request.
  */
-const {
-  items: spaces,
-  hasMore: spacesHasMore,
-  loading: spacesListLoading,
-  error: spacesListError,
-  offset: spacesOffset,
-  loadMore: loadMoreSpaces,
-  reset: resetSpaces,
-} = usePaginatedList<Space>(
-  async (q) => loadSpacesPage(q),
+type KindTab = 'shared' | 'personal'
+const kindTab = ref<KindTab>('shared')
+
+const sharedList = usePaginatedList<Space>(
+  async (q) => api.admin.spaces.list({ ...q, kind: 'shared' }),
   { pageSize: 50 },
 )
+const personalList = usePaginatedList<Space>(
+  async (q) => api.admin.spaces.list({ ...q, kind: 'personal' }),
+  { pageSize: 50 },
+)
+
+/** Union for template-side access(ownerNameById / accessSummary / 全局空态判断)。
+ * 实际渲染走 visibleSpaces(按当前 tab 过滤的 list items)。 */
+const spaces = computed<Space[]>(() => [...sharedList.items.value, ...personalList.items.value])
+
+const sharedSpaces = sharedList.items
+const personalSpaces = personalList.items
+const sharedSpaceCount = computed(() => sharedSpaces.value.length)
+const personalSpaceCount = computed(() => personalSpaces.value.length)
+
+const currentList = computed(() => (kindTab.value === 'shared' ? sharedList : personalList))
+const visibleSpaces = computed(() => currentList.value.items.value)
+const currentKindHasMore = computed(() => currentList.value.hasMore.value)
+const currentKindLoading = computed(() => currentList.value.loading.value)
+async function loadMoreSpaces() {
+  await currentList.value.loadMore()
+}
+async function resetCurrentKind() {
+  await currentList.value.reset()
+}
+
+// P1-1 bug fix:load() 已并行拉齐 shared + personal,不需要 lazy watch。
+// kindTab 切换纯客户端,数据已在 store 里。
+
 const {
   groups,
   users: statsUsers,
@@ -71,13 +100,7 @@ const {
 } = useManagerStats()
 const loading = ref(false)
 const loadError = ref<string | null>(null)
-const spaceKindCounts = ref<SpaceKindCounts | null>(null)
 
-async function loadSpacesPage(q: PaginatedQuery) {
-  const result = await api.admin.spaces.list(q)
-  spaceKindCounts.value = result.kindCounts
-  return result
-}
 /**
  * `users` here is the legacy reactive view-local alias for the panel — each row in the table needs to look up `ownerName` by ownerId. The
  * composable already serves the data via `statsUsers`, so this view
@@ -85,25 +108,8 @@ async function loadSpacesPage(q: PaginatedQuery) {
  */
 const users = statsUsers
 
-type KindTab = 'shared' | 'personal'
-const kindTab = ref<KindTab>('shared')
-
-// Tab-filtered lists drive both the card grid and the count badges on the
-// tabs themselves (admin gets an at-a-glance sense of how much is on each
-// side without forcing a click).
-const sharedSpaces = computed(() => spaces.value.filter((s) => s.kind === 'shared'))
-const personalSpaces = computed(() => spaces.value.filter((s) => s.kind === 'personal'))
-const visibleSpaces = computed(() =>
-  kindTab.value === 'shared' ? sharedSpaces.value : personalSpaces.value,
-)
-const sharedSpaceCount = computed(() => spaceKindCounts.value?.shared ?? sharedSpaces.value.length)
-const personalSpaceCount = computed(() => spaceKindCounts.value?.personal ?? personalSpaces.value.length)
-const currentKindHasMore = computed(() => {
-  const total = spaceKindCounts.value?.[kindTab.value]
-  return total === undefined ? spacesHasMore.value : visibleSpaces.value.length < total
-})
-
-const { showCreateSpace: showCreate } = useManagerActions()
+const { showCreateSpace: showShowCreate } = useManagerActions()
+const showCreate = showShowCreate
 const createName = ref('')
 const createDesc = ref('')
 const createColor = ref(SPACE_COLOR_PALETTE[0].value as string)
@@ -140,28 +146,25 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    // Phase 1 (parallel): paginated spaces + group set (always needed
-    // for the access-group avatar preview). Per-space stats now come
-    // inside the spaces DTO, so no per-space stat fetch is needed.
-    // `ensureGroupsLoaded` is shared with PeopleView / PeopleContextPanel
-    // — first caller fires the request, subsequent await reuses the
-    // same in-flight promise.
-    const [, ] = await Promise.all([
-      resetSpaces(),
+    // P1-1 bug fix:shared / personal 两个 kind 同时拉,避免默认 tab=shared
+    // 时 personal tab 显示「0」(未加载≠为空),造成 admin 误判。
+    // 两个 list 走独立 SQL(每 kind 一个 usePaginatedList 实例),并行 fetch,
+    // 跟 group set 并行 — 一次往返拿齐,DB 总空间数 ~百级别,代价可接受。
+    // `ensureGroupsLoaded` / `ensureUsersLoaded` 共享 useManagerStats,
+    // 后续 PeopleView 等 caller 复用同一个 in-flight promise。
+    const [, , , ] = await Promise.all([
+      sharedList.reset(),
+      personalList.reset(),
       ensureGroupsLoaded(),
+      ensureUsersLoaded(),
     ])
-    if (spacesListError.value) {
-      throw spacesListError.value
+    if (sharedList.error.value) {
+      throw sharedList.error.value
+    }
+    if (personalList.error.value) {
+      throw personalList.error.value
     }
     groupById.value = Object.fromEntries(groups.value.map((grp) => [grp.id, grp]))
-
-    // Phase 2 (conditional): the user set is only needed when admin
-    // actually views personal-space cards (the "所有者" column needs
-    // owner display names). Skip entirely if no personal spaces exist.
-    // plan §B7.7. Also shared with PeopleView / PeopleContextPanel.
-    if (spaces.value.some((s) => s.kind === 'personal')) {
-      await ensureUsersLoaded()
-    }
   } catch (e) {
     loadError.value = e instanceof ApiError ? e.message : '加载空间失败'
     uiStore.setError(loadError.value)
@@ -195,19 +198,48 @@ async function onSubmitCreate() {
       description: createDesc.value.trim() || undefined,
       color: createColor.value,
     })
-    spaces.value.push(created)
+    sharedList.items.value.push(created)
     // Sync the spaces store so the sidebar switcher reflects the new space
     // immediately if admin switches away from manager.
     spacesStore.upsert(created)
-    // Optimistic push 把「下一轮 server 实际 offset」提前 +1,避免下次
-    // 「加载更多」重复请求到刚 push 的那条。
-    spacesOffset.value += 1
-    if (spaceKindCounts.value) spaceKindCounts.value.shared += 1
     showCreate.value = false
   } catch (e) {
     createError.value = e instanceof ApiError ? e.message : '创建失败'
   } finally {
     creating.value = false
+  }
+}
+
+async function onArchive(s: Space) {
+  const ok = await askConfirm({
+    title: '归档空间',
+    message: `确定要归档空间「${s.name}」吗?归档后该空间将从切换器中隐藏,页面仍可读但禁止新增和编辑。管理员可随时恢复。`,
+    confirmText: '归档',
+    danger: false,
+  })
+  if (!ok) return
+  try {
+    const updated = await api.admin.spaces.archive(s.id)
+    const list = updated.kind === 'personal' ? personalList : sharedList
+    const idx = list.items.value.findIndex((x) => x.id === s.id)
+    if (idx >= 0) list.items.value[idx] = updated
+    // 直接 upsert 到 spacesStore,避免触发 spacesStore.refresh() 重新拉
+    // /api/spaces 全量接口。
+    spacesStore.upsert(updated)
+  } catch (e) {
+    uiStore.setError(e instanceof ApiError ? e.message : '归档失败')
+  }
+}
+
+async function onUnarchive(s: Space) {
+  try {
+    const updated = await api.admin.spaces.unarchive(s.id)
+    const list = updated.kind === 'personal' ? personalList : sharedList
+    const idx = list.items.value.findIndex((x) => x.id === s.id)
+    if (idx >= 0) list.items.value[idx] = updated
+    spacesStore.upsert(updated)
+  } catch (e) {
+    uiStore.setError(e instanceof ApiError ? e.message : '恢复失败')
   }
 }
 
@@ -220,15 +252,9 @@ async function onDelete(s: Space) {
   })
   if (!ok) return
   try {
-    await api.admin.spaces.delete(s.id)
-    spaces.value = spaces.value.filter((x) => x.id !== s.id)
-    spacesOffset.value = Math.max(0, spacesOffset.value - 1)
-    if (spaceKindCounts.value) {
-      spaceKindCounts.value.shared = Math.max(0, spaceKindCounts.value.shared - 1)
-    }
-    // Mirror to the sidebar store — if the deleted space was the active one,
-    // the store already auto-shifts; otherwise just drop it.
-    await spacesStore.refresh()
+    await spacesStore.deleteSpace(s.id)
+    const list = s.kind === 'personal' ? personalList : sharedList
+    list.items.value = list.items.value.filter((x) => x.id !== s.id)
     // Delete cascades to the space's pages; drop them from the in-memory tree.
     void pagesStore.refresh()
   } catch (e) {
@@ -406,6 +432,7 @@ function accessSummary(s: Space): AccessSummary {
         v-for="s in visibleSpaces"
         :key="s.id"
         class="sv-card"
+        :class="{ 'is-archived': s.archivedAt }"
         role="button"
         tabindex="0"
         @click="openSpace(s)"
@@ -433,6 +460,11 @@ function accessSummary(s: Space): AccessSummary {
                 class="sc-kind-badge sc-kind-badge-shared"
                 title="团队空间:授权组成员可见"
               >团队</span>
+              <span
+                v-if="s.archivedAt"
+                class="sc-kind-badge sc-kind-badge-archived"
+                title="已归档:页面可读,禁止新增和编辑"
+              >已归档</span>
             </div>
             <!-- Owner row only meaningful on personal cards — team spaces
                  have no ownerId (it's null in the schema). -->
@@ -515,39 +547,65 @@ function accessSummary(s: Space): AccessSummary {
         </div>
 
         <div class="sc-actions">
-          <!-- Delete is only allowed on team spaces — personal spaces are
-               owned by users and shouldn't be admin-removable. The space
-               is auto-cleaned when the user is disabled via the users API. -->
-          <button
-            v-if="s.kind !== 'personal'"
-            type="button"
-            class="ra-btn"
-            title="删除"
-            @click.stop="onDelete(s)"
-          >
-            <span class="material-symbols-outlined">delete</span>
-          </button>
-          <span v-else class="sc-locked" title="个人空间不可由管理员删除">
-            <span class="material-symbols-outlined">lock</span>
+          <!-- 左侧:归档时间元信息(仅归档卡片显示)。把"什么时候归档的"放在底部动作区,
+               让归档状态一眼可读,不靠颜色滤镜判断。 -->
+          <span v-if="s.archivedAt" class="sc-archived-meta">
+            <span class="material-symbols-outlined">inventory_2</span>
+            <span>归档于 {{ relativeTime(s.archivedAt) }}</span>
           </span>
-          <span class="sc-open">
-            <span class="material-symbols-outlined">arrow_forward</span>
-          </span>
+          <span v-else class="sc-spacer" />
+
+          <!-- 右侧:管理操作组(归档/删除)+ 进入箭头。两块物理分隔:
+               管理操作用 hover 才显色的低调图标,箭头永远可见作为主操作入口。 -->
+          <div class="sc-actions-group">
+            <button
+              v-if="s.kind !== 'personal' && !s.archivedAt"
+              type="button"
+              class="ra-btn"
+              title="归档"
+              @click.stop="onArchive(s)"
+            >
+              <span class="material-symbols-outlined">archive</span>
+            </button>
+            <button
+              v-if="s.kind !== 'personal' && s.archivedAt"
+              type="button"
+              class="ra-btn"
+              title="恢复"
+              @click.stop="onUnarchive(s)"
+            >
+              <span class="material-symbols-outlined">unarchive</span>
+            </button>
+            <button
+              v-if="s.kind !== 'personal'"
+              type="button"
+              class="ra-btn ra-btn-danger"
+              title="删除"
+              @click.stop="onDelete(s)"
+            >
+              <span class="material-symbols-outlined">delete</span>
+            </button>
+            <span v-else class="sc-locked" title="个人空间不可由管理员删除">
+              <span class="material-symbols-outlined">lock</span>
+            </span>
+            <!-- 进入箭头 = 主操作,跟次级管理操作隔一段间距 -->
+            <span class="sc-open" aria-hidden="true">
+              <span class="material-symbols-outlined">arrow_forward</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="visibleSpaces.length > 0 || currentKindHasMore" class="load-more-row">
+    <div v-if="currentKindHasMore" class="load-more-row">
       <button
-        v-if="currentKindHasMore"
         type="button"
         class="btn ghost load-more-btn"
-        :disabled="spacesListLoading"
+        :disabled="currentKindLoading"
         @click="loadMoreSpaces"
       >
-        {{ spacesListLoading ? '加载中…' : '加载更多' }}
+        {{ currentKindLoading ? '加载中…' : '加载更多' }}
       </button>
-      <div v-else class="load-more-end">— 已加载全部 —</div>
     </div>
     </div>
   </div>
@@ -708,6 +766,29 @@ function accessSummary(s: Space): AccessSummary {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+/* P1-1: 归档卡片视觉降级 —— 让 admin 一眼扫到未归档/已归档的边界。
+   - 整卡透明度降低(content 仍可读)
+   - 左侧加一条 3px 暖灰色竖条作 "archived" ribbon
+   - 头像 / 名字 颜色降饱和
+   - 整张卡 hover 不再 translateY(避免给"可操作"暗示) */
+.sv-card.is-archived {
+  background: var(--bg-canvas);
+  border-color: var(--border);
+}
+.sv-card.is-archived:hover {
+  transform: none;
+  box-shadow: none;
+}
+.sv-card.is-archived .sc-avatar {
+  filter: grayscale(0.5);
+  opacity: 0.65;
+}
+.sv-card.is-archived .sc-name {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+  text-decoration-thickness: 1px;
+}
 
 .sc-head { display: flex; gap: 12px; align-items: flex-start; }
 .sc-avatar {
@@ -757,6 +838,12 @@ function accessSummary(s: Space): AccessSummary {
 .sc-kind-badge-shared {
   background: var(--bg-canvas);
   color: var(--text-3);
+}
+.sc-kind-badge-archived {
+  background: #856404;
+  color: #fff;
+  border: 1px solid #6b4f00;
+  box-shadow: 0 0 0 2px rgba(133, 100, 4, 0.08);
 }
 .sc-desc { font-size: 13px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
 .sc-owner {
@@ -838,7 +925,38 @@ function accessSummary(s: Space): AccessSummary {
   font-weight: 600;
 }
 
-.sc-actions { display: flex; align-items: center; justify-content: space-between; }
+.sc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* 顶部加细分隔线,跟 stats 区视觉分组 */
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+/* 占位 spacer:无归档时间时让 actions-group 仍右对齐 */
+.sc-spacer { flex: 1; }
+/* 归档时间元信息 — 跟主操作分两侧,左侧打底色 + 小图标 */
+.sc-archived-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #856404;
+  flex: 1;
+  min-width: 0;
+}
+.sc-archived-meta .material-symbols-outlined { font-size: 14px !important; }
+/* 管理操作 + 进入箭头 —— 物理分隔:管理操作互贴(共同组合),
+   进入箭头独立 margin-left,表达"主操作 vs 次操作"层级 */
+.sc-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.sc-actions-group .sc-open { margin-left: 6px; padding-left: 8px; border-left: 1px solid var(--border); }
 .sc-locked {
   display: inline-flex;
   align-items: center;
@@ -864,8 +982,20 @@ function accessSummary(s: Space): AccessSummary {
 }
 .ra-btn:hover { background: var(--danger-soft); color: var(--danger); }
 .ra-btn .material-symbols-outlined { font-size: 18px; }
-.sc-open { color: var(--text-3); display: inline-flex; }
+/* 进入箭头 = 主操作入口,跟左侧管理按钮(归档/删除)分隔开。
+   hover 时变 accent 色块,跟卡片整体 hover 联动。 */
+.sc-open {
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm, 3px);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
 .sc-open .material-symbols-outlined { font-size: 18px; }
+.sv-card:hover .sc-open { background: var(--accent-soft); color: var(--accent); }
 
 /* "Load more" footer (Stage B.1) — shared with PeopleView. */
 .load-more-row {
@@ -881,10 +1011,5 @@ function accessSummary(s: Space): AccessSummary {
 .load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.load-more-end {
-  font-size: 12px;
-  color: var(--text-3);
-  padding: 24px 0 8px;
 }
 </style>

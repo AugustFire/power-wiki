@@ -264,6 +264,20 @@ export const SpaceSchema = z.object({
    * 现在 list 路径)。UI 用它 gate 空间根的 + 新建页面按钮。
    */
   viewerRole: z.enum(['viewer', 'editor', 'admin']).nullable().optional(),
+  /**
+   * P1-1: 归档时间(Date.now() 毫秒)。null = 未归档(正常状态),
+   * 非 null = 已归档 —— 团队生命周期结束的中间态,保留页面可读但隐藏
+   * 主列表、block 所有写操作,管理员可 unarchive 恢复。
+   * undefined 是为了向前兼容老 cache —— 没这个字段的 space 按未归档处理。
+   */
+  archivedAt: z.number().int().positive().nullable().optional(),
+  /**
+   * 归档操作者 user id。Optional —— 通常仅 admin 路径附带,非 admin 不会
+   * 暴露这个管理者元信息;非归档空间为 undefined。
+   * 真正的审计事实来源是 permission_audit(kind='space_archived'),本字段
+   * 只用于前端显示「归档于 2026-XX-XX by XXX」。
+   */
+  archivedByUserId: z.string().min(1).optional(),
 })
 
 /* ---------- Auth API 输入 schema ---------- */
@@ -866,6 +880,9 @@ export const SnapPageInputSchema = z
 export const PaginatedQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  // P1-1: kind 维度过滤(shared / personal),让分页跟 tab 对齐。
+  // 不传 = 全量。
+  kind: z.enum(['shared', 'personal']).optional(),
 })
 
 /** 列表端点的统一响应包装。`limit`/`offset` 是实际生效值(无参 = items.length / 0)。 */
