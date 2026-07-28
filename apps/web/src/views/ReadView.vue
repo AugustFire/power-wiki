@@ -33,6 +33,7 @@ import { charCount } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { EMPTY_HTML } from '@/lib/constants'
+import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
@@ -537,12 +538,17 @@ const { lightbox, closeLightbox, openFromImg } = useAttachmentLightbox()
 const restrictionsOpen = ref(false)
 /** 启发式 gate:跟 canEdit 对称 —— isAdmin || 非 viewer(=editor / admin) ||
  *  作者本人。后端 `canManageRestrictions` 同样三选一:isAdmin / 作者本人 /
- *  canEditPage(空间 editor / space-admin 都覆盖)。 */
+ *  canEditPage(空间 editor / space-admin 都覆盖)。
+ *
+ *  个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
+ *  supervisor 处理 —— 不能编辑 / 不能改限制 / 不能分享。先用
+ *  canWritePersonalSpace 把 personal 拒掉。 */
 const canManageRestrictions = computed(() => {
   const p = page.value
   if (!p) return false
   const me = authStore.user
   if (!me) return false
+  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
   if (me.id === p.authorId) return true
@@ -558,6 +564,7 @@ const canShare = computed(() => {
   if (!p) return false
   const me = authStore.user
   if (!me) return false
+  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
   if (me.id === p.authorId) return true
@@ -573,6 +580,7 @@ const canEdit = computed(() => {
   if (!p) return false
   const me = authStore.user
   if (!me) return false
+  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
   if (me.id === p.authorId) return true

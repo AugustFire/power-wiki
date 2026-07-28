@@ -25,11 +25,11 @@ import { and, eq, getTableColumns, isNull, sql } from 'drizzle-orm'
 import { PageNodeSchema, PageVersionSchema, PaginatedListSchema } from '@power-wiki/shared/schemas'
 import type { PageVersion } from '@power-wiki/shared'
 import { db } from '../db/client'
-import { pageVersions, pages, users } from '../db/schema'
+import { pageVersions, pages, spaces, users } from '../db/schema'
 import { generatePageId } from '../lib/ids'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { canReadPage, canEditPage, principalFromUser } from '../lib/permissions'
-import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
+import { assertCanWriteToPersonalSpace } from '../lib/personalSpaceGuard'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
 
@@ -138,8 +138,17 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
 
   // Pre-check: page must exist, be accessible, and not be trashed.
   const [existing] = await db
-    .select()
+    .select({
+      id: pages.id,
+      spaceId: pages.spaceId,
+      authorId: pages.authorId,
+      deletedAt: pages.deletedAt,
+      title: pages.title,
+      spaceKind: spaces.kind,
+      spaceOwnerId: spaces.ownerId,
+    })
     .from(pages)
+    .leftJoin(spaces, eq(spaces.id, pages.spaceId))
     .where(eq(pages.id, id))
     .limit(1)
   if (!existing || existing.spaceId === null) {
@@ -152,7 +161,12 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, existing.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    existing.spaceKind ?? null,
+    existing.spaceOwnerId ?? null,
+  )
   if (blocked) return blocked
 
   const [version] = await db

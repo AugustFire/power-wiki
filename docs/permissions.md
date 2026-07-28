@@ -98,11 +98,11 @@ power-wiki 的权限是什么、谁能做什么、为什么这样设计。
 **脚注**
 
 ¹ 页作者在 *自己写的* 所有页上,view / edit 限制都不挡,跟空间角色无关。
-² admin 读 personal space 内容受 `assertAdminNotWritingPersonalSpace` 只挡写不挡读 —— 监督 / 合规查需要。
+² admin 读 personal space 内容受矩阵只挡写不挡读 —— 监督 / 合规查需要。
 ³ 页作者对自己写的页面有完整权限(读、写、share、限制、版本),跟他在哪个 space、有没有角色无关。
-⁴ `assertAdminNotWritingPersonalSpace` 拦 global admin 在 personal space 上的写(403 `personal_space_readonly`)。personal space 只 owner 能写。
+⁴ personal space 写矩阵拦 global admin 在 personal space 上的写(403 `personal_space_readonly`)。详见 [§3.3](#3-personal-space-写矩阵p0-3)。personal space 只 owner 能写,**admin 即使 own 自己的 personal space 也是 supervisor 不是 editor**。
 ⁵ 删他人评论需要 `canEditPage`;这跟空间 admin 角色(space-admin)无关,纯粹是「你能不能编辑这个页面」。
-⁶ space-admin 改空间基本信息**仅限 shared space**(personal space 走 `assertAdminNotWritingPersonalSpace` 写保护,owner-only)。改动通过 `PATCH /api/spaces/:id`,`kind !== 'shared'` 直接 404。
+⁶ space-admin 改空间基本信息**仅限 shared space**(personal space 写矩阵 owner-only)。改动通过 `PATCH /api/spaces/:id`,`kind !== 'shared'` 直接 404。**全局 admin** 改 personal space 元信息走 `PATCH /api/admin/spaces/:id`,同样 404(`adminSpaces.ts` PATCH 在 P0-3 加了 kind 过滤,跟 user-scope 对齐)。
 
 ---
 
@@ -126,9 +126,9 @@ Anonymous            命中 share token 的未登录访客
 
 ### 全局 admin(`users.role = 'admin'`)
 
-- **范围**:整个系统任意 shared space,personal space 受 `assertAdminNotWritingPersonalSpace` 写保护(只读)。
+- **范围**:整个系统任意 shared space,personal space 受个人空间写矩阵(见 [§3.3](#3-personal-space-写矩阵p0-3))写保护(只读)。
 - **来由**:user 行上的 `role` 字段(`admin` / `user`)。**这条不能被任何空间授权动作覆盖** —— 全局身份靠 user row,不是 space_role_grants。
-- **能做什么别人做不了的**:删空间 / 看审计 / 管用户组 / 新建 space / 改 personal space 元信息(personal space 写保护只挡 admin,空间级 metadata 写保护 user 级才挡)。
+- **能做什么别人做不了的**:删空间 / 看审计 / 管用户组 / 新建 space / 改 shared space 元信息。personal space 元信息 admin 也写不了 —— 矩阵 owner-only。
 
 ### space-admin / space-editor / space-viewer
 
@@ -178,12 +178,34 @@ space-admin 是 *空间级* 管理员,对本空间管成员、改权限、**改*
 
 **绕路**:给具体用户授 admin;组天然只能是 viewer / editor(很多空间核心需求都够用)。
 
-### 3. **personal space 是 owner-only**
+### 3. **personal space 写矩阵(P0-3)**
 
-`assertAdminNotWritingPersonalSpace` 拦全局 admin 在 personal space 上的写操作 → 403 `personal_space_readonly`。personal space 的 *写* 只有 owner 本人有,即使全局 admin 也不行。
+`assertAdminNotWritingPersonalSpace` 是历史实现 —— 只挡 admin × personal。P0-3 收成单一事实来源 `assertCanWriteToPersonalSpace(c, me, spaceKind, ownerId)`,把整条矩阵兜在一个 helper 里。**所有写路径**(11 个端点)都过这一道,owner / admin / 其他用户按表分流:
 
-- **读不受限**:全局 admin 永远能 *读* 任何 personal space(监督、合规)。
-- **restore 回收站例外**:回收站治理走 admin-only 路径,绕过 personal 守卫。
+| 操作 | Owner | 全局 Admin | 其他用户 |
+|---|:---:|:---:|:---:|
+| 创建页面 | ✅ | ❌ | ❌ |
+| 编辑 / 软删页面 | ✅ | ❌ | ❌ |
+| 永久删除 (`?purge=true`) | — | ✅ (恢复 / 合规) | — |
+| 上传 / 删附件 | ✅ | ❌ | ❌ |
+| 加 / 删 label | ✅ | ❌ | ❌ |
+| 发 / 改 / 删评论 | ✅ | ❌ | ❌ |
+| 打 snapshot / restore 版本 | ✅ | ❌ | ❌ |
+| Duplicate 页面 | ✅ | ❌ | ❌ |
+| Publish 到团队空间 | ✅ | ❌ | ❌ |
+| 移动到其他空间 | ✅ | ❌ | ❌ |
+| Markdown 导入 | ✅ | ❌ | ❌ |
+| **改空间元信息**(名 / 描述 / 颜色 / 图标) | ✅ | ❌ | ❌ |
+
+**关键规则**:Owner 是 personal 的唯一写入者 —— 即使是 *自己的* personal space,global admin 也按 supervisor 不按 editor 处理(Confluence 风格)。`assertCanWriteToPersonalSpace` 在 `canEditSpace`/`canEditPage` **之后**调用 —— 后两个对 global admin 短路 true,矩阵里的「admin × personal 拒」必须由新 helper 独立兜。
+
+**端点契约**:所有命中矩阵「❌」的写请求 → 403 `personal_space_readonly`(admin 视角)或 404(其他用户视角,leak prevention)。`PATCH /api/admin/spaces/:id` + `kind='personal'` 走 404 not_found(空间元信息禁,与 user-scope 对齐)。
+
+**前端对齐**:`apps/web/src/lib/permissions.ts` 提供 `canWritePersonalSpace` / `canCreateInSpace` / `spaceRefForPage`,所有写 UI gate(EditView / ReadView / PageTree / Sidebar / TopBar / HomeView)在 isAdmin 短路**前**用 `canWritePersonalSpace` 拒 personal,避免 admin 看到 ghost affordance 点了撞 403。
+
+**豁免**:读不受矩阵约束(全局 admin 永远能读任何 personal,监督 / 合规查);`?purge=true` 路径绕过矩阵(admin-only 治理);`assertAdminNotWritingPersonalSpace` 标 `@deprecated` 保留作 fallback(只知 spaceId 的旧路径用)。
+
+旧名 `assertAdminNotWritingPersonalSpace` 描述的是同一规则的子集 —— 看名字就知道只挡 admin;新名字 `assertCanWriteToPersonalSpace` 把整条矩阵表达出来。代码迁移:5 个 route 已迁(commentGuards / attachments / pageLabels / pageVersions / adminSpaces)。
 
 ### 4.(附赠)页作者身份是跟空间角色 *正交* 的
 
@@ -331,16 +353,17 @@ view 限制 *必须* 让管理员能编辑 —— 但 `canEditPage` 已经蕴含
 
 | UI 点 | 位置 | 显示条件 | 后端 gate |
 |---|---|---|---|
-| 「编辑」按钮(subheader) | `ReadView.vue` | admin OR 空间角色 ≥ editor OR 页作者 | `canEditPage` |
+| 「编辑」按钮(subheader) | `ReadView.vue` | (admin OR 空间角色 ≥ editor OR 页作者) AND `canWritePersonalSpace` | `canEditPage` + 个人空间写矩阵 |
 | 「⋯」菜单 | `ReadView.vue` | 永远(只有 items 受权限) | — |
 | 「⋯」→「限制」菜单项 | `ReadView.vue` | 同「编辑」(`canEditPage`) | `canEditPage` |
 | 「⋯」→「分享」菜单项 | `ReadView.vue` | 同「编辑」 + 非 personal + 无 view 限制 | `canEditPage` + `!isPersonal` + `!hasViewRestriction` |
 | 「⋯」→「历史」子菜单 | `ReadView.vue` | 永远(数据本身按权限过滤) | 通过 `canReadPage` 加载 |
-| 编辑器 mount 重定向 | `EditView.vue` | `canEditPage` 不通过 → `router.replace('/p/:id?readonly=1')` | `canEditPage` |
+| 编辑器 mount 重定向 | `EditView.vue` | (`canEditPage` 不通过 OR `!canWritePersonalSpace`) → `router.replace('/p/:id?readonly=1')` | `canEditPage` + 个人空间写矩阵 |
 | 「新建子页面」 | `ReadView.vue` | 同「编辑」 | `canEditPage` |
-| 「+」在 PageTree 子节点上 | `PageTree.vue` | 同「编辑」 | `canEditPage` |
-| HomeView 「新建页面」CTA | `HomeView.vue` | `canCreateInSpace`(`viewerRole` ≥ editor OR 作者) | `canCreateInSpace` |
+| 「+」在 PageTree 子节点上 | `PageTree.vue` | (admin OR 空间角色 ≥ editor OR 作者) AND `canWritePersonalSpace` | `canEditPage` + 个人空间写矩阵 |
+| HomeView 「新建页面」CTA | `HomeView.vue` | `canCreateInSpace`(`viewerRole` ≥ editor OR 作者,且 personal space admin 被拒) | `canCreateInSpace` |
 | Sidebar 底部「创建页面」/「导入 MD」 | `Sidebar.vue` | 同上;不满足显示 `readonly-badge` 占位 | `canCreateInSpace` |
+| TopBar 顶部「+ 新建页面」 | `TopBar.vue` | 同 `canCreateInSpace` | `canCreateInSpace` |
 | 「关注」「点赞」 | `ReadView.vue` | `canReadPage` | `canReadPage` |
 | 「⋯」→「添加评论」 | `ReadView.vue` | `canReadPage` | `canReadPage` |
 | UserMenu 「管理后台」入口 | `UserMenu.vue:202` | `authStore.isAdmin` | `requireAdmin`(`adminXxxRouter`) |
@@ -544,7 +567,7 @@ regular:
 | `users` | `role`: `admin\|user`,`status`: `active\|disabled\|must_reset_password` | — |
 | `user_groups` | `name` | — |
 | `user_group_members` | composite PK | 无 FK |
-| `spaces` | `kind`: `shared\|personal`,`ownerId` 仅 personal | personal space 写由 `assertAdminNotWritingPersonalSpace` 拦 |
+| `spaces` | `kind`: `shared\|personal`,`ownerId` 仅 personal | personal space 写由 `assertCanWriteToPersonalSpace` 拦(P0-3 矩阵事实来源) |
 | `space_role_grants` | `principalKind`: `user\|group`,`role`: `viewer\|editor\|admin` | `UNIQUE (space_id, pk, pid)`;2 B-tree + 1 UNIQUE |
 | `space_group_access`(legacy) | `(space_id, group_id)` | A.5 起写入迁移到 `space_role_grants role='editor'` |
 | `pages` | `space_id`, `parent_id`, `author_id`, `deleted_at` | 树形,软删除 |
@@ -562,8 +585,8 @@ regular:
 
 | Gate | 文件 | 表达式 / 判断 |
 |---|---|---|
-| `canCreateInSpace` | `Sidebar.vue`, `HomeView.vue` | `s.viewerRole in {editor, admin}` OR author |
-| `canEditThisPage` | `ReadView.vue`, `EditView.vue` | 整合 `authStore.isAdmin`, `page.viewerRole`, `me.id === page.authorId` |
+| `canCreateInSpace` | `Sidebar.vue`, `HomeView.vue`, `TopBar.vue`(均走 `lib/permissions.ts`) | 个人空间写矩阵 + `s.viewerRole in {editor, admin}` OR author |
+| `canEditThisPage` | `ReadView.vue`, `EditView.vue` | 个人空间写矩阵 + `authStore.isAdmin`, `page.viewerRole`, `me.id === page.authorId` |
 | ReadView 「⋯」菜单 | `ReadView.vue` | items: `canEditPage`(限制 + 分享 + 编辑)、`canReadPage`(历史 + 关注) |
 | EditView mount 重定向 | `EditView.vue` `onMounted` | 拉详情 → 不通过 → `router.replace('/p/:id?readonly=1')` |
 | 「空间设置」入口 | `TopBar.vue` | `isAdmin OR canAdminSpace(...)` |
@@ -572,7 +595,9 @@ regular:
 | `canManageRestrictions` | `routes/pageRestrictions.ts` | `canEditPage`(`canReadPage` 已蕴含) |
 | `gateShareManage` | `routes/pageShares.ts` | `canEditPage OR canAdminSpace` |
 | `requireSpaceAdmin` | `routes/spacePermissions.ts` | `me.isAdmin OR canAdminSpace(me, spaceId)` |
-| `assertAdminNotWritingPersonalSpace` | `lib/personalSpaceGuard.ts` | `space.kind='personal'` → 403 |
+| `assertCanWriteToPersonalSpace` | `lib/personalSpaceGuard.ts`(后端事实来源) | `space.kind='personal' && (ownerId!==me.id \|\| me.role='admin')` → 403 `personal_space_readonly` |
+| `assertAdminNotWritingPersonalSpace` | `lib/personalSpaceGuard.ts`(`@deprecated`) | `me.role='admin' && space.kind='personal'` → 403,旧路径 fallback |
+| `canWritePersonalSpace` / `canCreateInSpace` / `spaceRefForPage` | `apps/web/src/lib/permissions.ts`(前端镜像) | 矩阵前端表达 —— `isAdmin` 短路前用 `canWritePersonalSpace` 拒 personal |
 | `migrateLegacyGroupGrant(tx, ...)` | `lib/permissions.ts` | POST 时同事务把 legacy group 行迁到新表 |
 
 ---
@@ -620,7 +645,9 @@ regular:
 
 ### admin 写个人空间
 
-不能。`assertAdminNotWritingPersonalSpace` 在路由层拦截,403 `personal_space_readonly`。豁免:**读**(合规 / 监督)+ restore / purge trashed(回收站治理)。
+不能。个人空间写矩阵(见 [§3.3](#3-personal-space-写矩阵p0-3))在路由层拦截:`assertCanWriteToPersonalSpace` → 403 `personal_space_readonly`(11 个写端点统一)。`PATCH /api/admin/spaces/:id` 加 `kind='personal'` 过滤 → 404 not_found(空间元信息禁)。
+
+豁免:**读**(合规 / 监督)+ restore / purge trashed(回收站治理,admin-only 路径绕过矩阵)。**admin 即使 own 自己的 personal space 也是 supervisor 不是 editor**(Confluence 风格)—— 这是矩阵刻意保留的「admin 不能写 personal」分支,跟某些 wiki 系统(管理员 = 超级用户)不同。
 
 ### 作者本人短路
 
@@ -653,7 +680,7 @@ regular:
 | 主题 | 文件 |
 |---|---|
 | 权限 SQL 唯一来源 | `apps/api/src/lib/permissions.ts`(848 行,6 谓词 + 2 list helper + migrateLegacy) |
-| 兼容 shim + admin 写守卫 | `apps/api/src/lib/accessibleSpaceIds.ts`、`apps/api/src/lib/personalSpaceGuard.ts` |
+| 兼容 shim + admin 写守卫 | `apps/api/src/lib/accessibleSpaceIds.ts`、`apps/api/src/lib/personalSpaceGuard.ts`(个人空间写矩阵事实来源,`assertCanWriteToPersonalSpace` 单一入口) |
 | 审计 helper(强制 tx) | `apps/api/src/lib/auditLog.ts` |
 | Share token 工具 | `apps/api/src/lib/shareTokens.ts` |
 | 个人空间自动创建 | `apps/api/src/lib/ensurePersonalSpace.ts` |
@@ -672,6 +699,7 @@ regular:
 | 主题 | 文件 |
 |---|---|
 | 能力矩阵里"读"按钮共享门 | `apps/web/src/components/layout/Sidebar.vue`(`canCreateInSpace`) |
+| 个人空间写矩阵前端镜像 | `apps/web/src/lib/permissions.ts`(`canWritePersonalSpace` / `canCreateInSpace` / `spaceRefForPage`) |
 | HomeView "新建页面" + 只读 badge | `apps/web/src/views/HomeView.vue` |
 | PageTree 「+」子节点 + drag 重排 | `apps/web/src/components/layout/PageTree.vue` |
 | ReadView 「⋯」菜单 + canEditThisPage | `apps/web/src/views/ReadView.vue` |
@@ -696,6 +724,7 @@ regular:
 | `scripts/verify_phase_d_public_shares.py` | 创建 / GET / revoke / 过期 / 坏 token、**DB dump 无明文 token**、purge cascade |
 | `scripts/snap_*.py` | UI 截图 |
 | `scripts/smoke_viewer_gating.py` | 端到端冒烟(devreadonly viewer vs happy editor) |
+| `scripts/verify_personal_space.py` | 个人空间写矩阵端到端:owner 全 200/201/204,admin × personal 全 403/404(P0-3 后置) |
 
 ---
 
@@ -733,5 +762,5 @@ regular:
 | code | 中文 | 触发 |
 |---|---|---|
 | `not_found` | 页面不存在 / 无权限 | 权限拒绝统一 404(防探测) |
-| `personal_space_readonly` | 个人空间禁止写入 | `assertAdminNotWritingPersonalSpace` |
+| `personal_space_readonly` | 个人空间禁止写入 | `assertCanWriteToPersonalSpace`(P0-3 统一入口,见 §3.3);老 `assertAdminNotWritingPersonalSpace` `@deprecated` 保留,命中时同样返该码 |
 | `share_already_revoked` | 该分享链接已被撤销 | DELETE share 时已是 revoked 态 |

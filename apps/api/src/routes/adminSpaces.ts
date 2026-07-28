@@ -220,6 +220,16 @@ adminSpacesRouter.patch('/:id', async (c) => {
   if (Object.keys(parsed.data).length === 0) {
     return c.json({ error: 'invalid_input', message: '至少需要更新一个字段' }, 400)
   }
+  // P0-3: admin 重命名 / 改描述 / 改图标 personal space 等同于改 owner 的
+  // 个人内容,与 personal-space read-only 矩阵冲突。与 user-scope
+  // spaces.ts:198 的 kind !== 'shared' 短路对齐,直接 404 让 admin UI 也走
+  // 「该空间不可编辑」分支,而不是落库后 owner 在自己页面看到名字被改。
+  const existing = (
+    await db.select({ kind: spaces.kind }).from(spaces).where(eq(spaces.id, id)).limit(1)
+  )[0]
+  if (!existing || existing.kind === 'personal') {
+    return c.json({ error: 'not_found' }, 404)
+  }
   const updated = await updateSpaceMetadata(id, parsed.data)
   if (!updated) return c.json({ error: 'not_found' }, 404)
   const accessGroupIds = await getAccessGroupIds(id)

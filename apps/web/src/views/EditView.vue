@@ -23,6 +23,7 @@ import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import type { PageNode } from '@power-wiki/shared'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
+import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -51,10 +52,14 @@ const rightRailEl = inject<Ref<HTMLElement | null>>('appRightRail', ref(null))
  *   处理(创建权限跟空间角色绑定,不挂在 pageId 上)。
  * - `page.viewerRole` 是后端注入的 effective role,跟前端 `useAuthStore.user`
  *   一起算;author bypass 用 user.id 比对 page.authorId。
+ * - 个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
+ *   supervisor 处理 —— 不能编辑。先用 canWritePersonalSpace 把 personal
+ *   拒掉,再叠加原来的 isAdmin / viewerRole / author 短路。
  */
 function canEditPageNode(p: PageNode): boolean {
   const me = authStore.user
   if (!me) return false
+  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
   return me.id === p.authorId

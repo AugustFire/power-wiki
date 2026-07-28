@@ -32,10 +32,10 @@ import {
 import { mimeKind, MIME_TO_EXT, MAX_UPLOAD_BYTES_DEFAULT } from '@power-wiki/shared'
 import type { Attachment, AllowedMimeType } from '@power-wiki/shared'
 import { db } from '../db/client'
-import { attachments, pages, users } from '../db/schema'
+import { attachments, pages, spaces, users } from '../db/schema'
 import type { AttachmentRow } from '../db/schema'
 import { canReadPage, canEditPage, principalFromUser } from '../lib/permissions'
-import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
+import { assertCanWriteToPersonalSpace } from '../lib/personalSpaceGuard'
 import { generateAttachmentId } from '../lib/ids'
 import {
   presignUpload,
@@ -72,20 +72,43 @@ function rowToAttachment(
   }
 }
 
-type PageMeta = { id: string; spaceId: string; deletedAt: number | null; authorId: string }
+type PageMeta = {
+  id: string
+  spaceId: string
+  deletedAt: number | null
+  authorId: string
+  spaceKind: 'personal' | 'shared' | null
+  spaceOwnerId: string | null
+}
 
 /**
- * 读该页的 spaceId / deletedAt。返回 null = 页不存在 / 无 spaceId / 已回收。
- * 用于读写路径统一判 404(不区分不存在 / 已删,防泄漏)。
+ * 读该页的 spaceId / deletedAt / authorId + space.kind / space.ownerId(后者
+ * 给 assertCanWriteToPersonalSpace 用)。返回 null = 页不存在 / 无 spaceId /
+ * 已回收。用于读写路径统一判 404(不区分不存在 / 已删,防泄漏)。
  */
 async function loadLivePage(pageId: string): Promise<PageMeta | null> {
   const [row] = await db
-    .select({ id: pages.id, spaceId: pages.spaceId, deletedAt: pages.deletedAt, authorId: pages.authorId })
+    .select({
+      id: pages.id,
+      spaceId: pages.spaceId,
+      deletedAt: pages.deletedAt,
+      authorId: pages.authorId,
+      spaceKind: spaces.kind,
+      spaceOwnerId: spaces.ownerId,
+    })
     .from(pages)
+    .leftJoin(spaces, eq(spaces.id, pages.spaceId))
     .where(eq(pages.id, pageId))
     .limit(1)
   if (!row || row.spaceId === null || row.deletedAt !== null) return null
-  return { id: row.id, spaceId: row.spaceId, deletedAt: row.deletedAt, authorId: row.authorId }
+  return {
+    id: row.id,
+    spaceId: row.spaceId,
+    deletedAt: row.deletedAt,
+    authorId: row.authorId,
+    spaceKind: row.spaceKind ?? null,
+    spaceOwnerId: row.spaceOwnerId ?? null,
+  }
 }
 
 /* ─── POST /api/attachments/upload-url ────────────────────────────────
@@ -110,7 +133,12 @@ attachmentsRouter.post('/upload-url', async (c) => {
   if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind,
+    page.spaceOwnerId,
+  )
   if (blocked) return blocked
 
   const attachmentId = generateAttachmentId()
@@ -154,7 +182,12 @@ attachmentsRouter.post('/finalize', async (c) => {
   if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind,
+    page.spaceOwnerId,
+  )
   if (blocked) return blocked
 
   // 验证对象真实存在 + size 一致(不信前端上报的 size)。
@@ -303,7 +336,12 @@ attachmentsRouter.delete('/:id', async (c) => {
   if (!(await canEditPage(principalFromUser(me), page.id, page.spaceId, page.authorId))) {
     return c.json({ error: 'not_found' }, 404)
   }
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind,
+    page.spaceOwnerId,
+  )
   if (blocked) return blocked
 
   try {

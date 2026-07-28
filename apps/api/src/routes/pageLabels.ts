@@ -25,14 +25,14 @@ import { Hono } from 'hono'
 import { and, eq, inArray, isNull, like, sql } from 'drizzle-orm'
 import { AddLabelInputSchema } from '@power-wiki/shared/schemas'
 import { db } from '../db/client'
-import { pageLabels, pages } from '../db/schema'
+import { pageLabels, pages, spaces } from '../db/schema'
 import {
   canEditPage,
   pageReadableDirectFilter,
   principalFromUser,
 } from '../lib/permissions'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
-import { assertAdminNotWritingPersonalSpace } from '../lib/personalSpaceGuard'
+import { assertCanWriteToPersonalSpace } from '../lib/personalSpaceGuard'
 import { type Variables } from '../auth/middleware'
 
 export const pageLabelsRouter = new Hono<{ Variables: Variables }>()
@@ -71,8 +71,11 @@ pageLabelsRouter.post('/:id/labels', async (c) => {
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
       authorId: pages.authorId,
+      spaceKind: spaces.kind,
+      spaceOwnerId: spaces.ownerId,
     })
     .from(pages)
+    .leftJoin(spaces, eq(spaces.id, pages.spaceId))
     .where(eq(pages.id, id))
     .limit(1)
   if (!page || page.spaceId === null || page.deletedAt !== null) {
@@ -84,7 +87,12 @@ pageLabelsRouter.post('/:id/labels', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind ?? null,
+    page.spaceOwnerId ?? null,
+  )
   if (blocked) return blocked
 
   await db
@@ -120,8 +128,11 @@ pageLabelsRouter.delete('/:id/labels/:label', async (c) => {
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
       authorId: pages.authorId,
+      spaceKind: spaces.kind,
+      spaceOwnerId: spaces.ownerId,
     })
     .from(pages)
+    .leftJoin(spaces, eq(spaces.id, pages.spaceId))
     .where(eq(pages.id, id))
     .limit(1)
   if (!page || page.spaceId === null || page.deletedAt !== null) {
@@ -131,7 +142,12 @@ pageLabelsRouter.delete('/:id/labels/:label', async (c) => {
     return c.json({ error: 'not_found' }, 404)
   }
 
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind ?? null,
+    page.spaceOwnerId ?? null,
+  )
   if (blocked) return blocked
 
   await db

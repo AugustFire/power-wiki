@@ -26,6 +26,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
+import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -55,14 +56,12 @@ const isPersonalSpace = computed(
 
 /** 空间根「新建页面」按钮 gate:server 在 Space.viewerRole 注入 effective
  *  role(见 spaces.ts getEffectiveSpaceRolesForUser)。editor+ 可见;
- *  viewer 隐藏按钮 + 改成只读 hint。个人空间是 owner 自己的草稿区,
- *  永远可写,不走这个 gate(由 isPersonalSpace 走 MeDashboardView 路径)。 */
-const canCreateInSpace = computed(() => {
-  const s = activeSpace.value
-  if (!s) return false
-  if (authStore.isAdmin) return true
-  return s.viewerRole === 'editor' || s.viewerRole === 'admin'
-})
+ *  viewer 隐藏按钮 + 改成只读 hint。
+ *  个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
+ *  supervisor 处理 —— 不能新建。统一用 lib/permissions.canCreateInSpace。 */
+const canCreateInSpace = computed(() =>
+  canCreateInSpaceOf(authStore.user, activeSpace.value),
+)
 
 const inSpace = computed(() =>
   pagesStore.pages.filter((p) => p.spaceId === activeSpaceId.value),

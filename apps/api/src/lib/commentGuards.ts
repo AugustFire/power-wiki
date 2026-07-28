@@ -20,18 +20,24 @@
 import type { Context } from 'hono'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/client'
-import { comments, pages } from '../db/schema'
+import { comments, pages, spaces } from '../db/schema'
 import {
   canEditPage,
   canReadPage,
   principalFromUser,
 } from './permissions'
-import { assertAdminNotWritingPersonalSpace } from './personalSpaceGuard'
+import { assertCanWriteToPersonalSpace } from './personalSpaceGuard'
 import type { AuthenticatedUser } from '../auth/session'
 
 export interface GuardResult {
   /** The page the comment hangs off — useful in POST to skip a re-fetch. */
-  page: { id: string; spaceId: string | null; deletedAt: number | null }
+  page: {
+    id: string
+    spaceId: string | null
+    deletedAt: number | null
+    spaceKind: 'personal' | 'shared' | null
+    spaceOwnerId: string | null
+  }
   /** The loaded comment row, if `commentId` was provided. */
   comment?: { id: string; pageId: string; authorId: string; deletedAt: number | null }
 }
@@ -54,7 +60,8 @@ interface PostArgs extends BaseArgs {
  *   - page must exist + not be soft-deleted
  *   - page.spaceId must be writable (Phase A.5: canEditPage 替代 canReadPage;
  *     viewer 不能发评论;author 自身可发)
- *   - admin → must not be writing a personal space
+ *   - admin → must not be writing a personal space (矩阵:全局 admin 不能写
+ *     personal space 内容,即便 own;见 lib/personalSpaceGuard.ts 头注释)
  */
 export async function guardCreateComment(args: PostArgs): Promise<GuardOutcome> {
   const { c, me, pageId } = args
@@ -69,7 +76,12 @@ export async function guardCreateComment(args: PostArgs): Promise<GuardOutcome> 
     page.authorId,
   )
   if (!writable) return notFound(c)
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind,
+    page.spaceOwnerId,
+  )
   if (blocked) return { ok: false, response: blocked }
   return { ok: true, data: { page } }
 }
@@ -118,7 +130,12 @@ export async function guardMutateComment(args: MutateArgs): Promise<GuardOutcome
   const accessible = await canReadPage(principalFromUser(me), page.id, page.spaceId)
   if (!accessible) return notFound(c)
 
-  const blocked = await assertAdminNotWritingPersonalSpace(c, me, page.spaceId)
+  const blocked = await assertCanWriteToPersonalSpace(
+    c,
+    me,
+    page.spaceKind,
+    page.spaceOwnerId,
+  )
   if (blocked) return { ok: false, response: blocked }
 
   if (op === 'edit' && row.deletedAt !== null) return notFound(c)
@@ -176,6 +193,10 @@ export async function guardReadPage(args: ListArgs): Promise<GuardOutcome> {
 
 /* ── helpers ────────────────────────────────────────────────────── */
 
+/**
+ * 加载 page 元数据 + 所在 space 的 kind / ownerId(为 assertCanWriteToPersonalSpace
+ * 提供矩阵所需参数)。一次 JOIN 拿全,避免 canEditPage 之外再多一次 SELECT。
+ */
 async function loadPageRow(pageId: string) {
   const rows = await db
     .select({
@@ -183,11 +204,23 @@ async function loadPageRow(pageId: string) {
       spaceId: pages.spaceId,
       deletedAt: pages.deletedAt,
       authorId: pages.authorId,
+      spaceKind: spaces.kind,
+      spaceOwnerId: spaces.ownerId,
     })
     .from(pages)
+    .leftJoin(spaces, eq(spaces.id, pages.spaceId))
     .where(eq(pages.id, pageId))
     .limit(1)
-  return rows[0]
+  const r = rows[0]
+  if (!r) return undefined
+  return {
+    id: r.id,
+    spaceId: r.spaceId,
+    deletedAt: r.deletedAt,
+    authorId: r.authorId,
+    spaceKind: r.spaceKind ?? null,
+    spaceOwnerId: r.spaceOwnerId ?? null,
+  }
 }
 
 function notFound(c: Context): { ok: false; response: Response } {

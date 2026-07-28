@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { usePageTreeDrag, type DropHint } from '@/composables/usePageTreeDrag'
 import PublishToSpaceMenu from './PublishToSpaceMenu.vue'
+import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
 import type { PageNode, TreeNode } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -574,21 +575,26 @@ const hasLiveChildren = computed(() => props.node.liveDescendantCount > 0)
  *  - canDrag       : 拖拽 = 移动 = 写,等同 canEditPage(移动只能在本
  *                    space 内 drag,跨 space 走 movePageToSpace 走另外
  *                    路径;这里简化为 page 级 canEdit)。
+ *  - 个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
+ *    supervisor 处理。先用 canWritePersonalSpace 拒掉 personal,再叠加
+ *    原有的 isAdmin / viewerRole / author 短路。
  */
 const canEditSpace = computed(() => {
   const me = authStore.user
   if (!me) return false
-  if (authStore.isAdmin) return true
   const page = pagesStore.getPage(props.node.id)
+  if (!canWritePersonalSpace(me, spaceRefForPage(page ?? null))) return false
+  if (authStore.isAdmin) return true
   if (!page) return false
   return page.viewerRole === 'editor' || page.viewerRole === 'admin'
 })
 const canEditPage = computed(() => {
   const me = authStore.user
   if (!me) return false
+  const page = pagesStore.getPage(props.node.id)
+  if (!canWritePersonalSpace(me, spaceRefForPage(page ?? null))) return false
   if (authStore.isAdmin) return true
   if (canEditSpace.value) return true
-  const page = pagesStore.getPage(props.node.id)
   if (!page) return false
   // viewer + 作者本人 = author bypass
   return me.id === page.authorId
@@ -618,16 +624,18 @@ function closePublishTo() {
 /**
  * 源 page 必须是 current user's personal space — 后端在 POST /:id/publish
  * 里校验 `space.kind === 'personal' && space.ownerId === me.id`。前端在
- * 可见性这一层就过滤掉"team space 页"和"别人 personal space 页"(personal
- * space 的 ownerId 不是 me.id 在 SpaceEditView 才看得到,这里简化处理)。
+ * 可见性这一层就过滤掉"team space 页"和"别人 personal space 页"。
  *
  * 目标:至少一个团队空间,且不等于源 space(同一空间再"发布"无意义)。
  */
 const canPublish = computed(() => {
   const page = pagesStore.getPage(props.node.id)
   if (!page) return false
+  const me = authStore.user
+  if (!me) return false
   const sourceSpace = spacesStore.spaces.value.find((s) => s.id === page.spaceId)
   if (!sourceSpace || sourceSpace.kind !== 'personal') return false
+  if (sourceSpace.ownerId !== me.id) return false
   return spacesStore.spaces.value.some(
     (s) => s.kind !== 'personal' && s.id !== page.spaceId,
   )

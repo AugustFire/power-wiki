@@ -12,6 +12,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
 import WatchedSidebar from './WatchedSidebar.vue'
+import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -68,14 +69,11 @@ const showMySpaceShortcut = computed(
 
 // 与 HomeView.canCreateInSpace 对齐:viewer 在团队空间里看不到创建入口,
 // 否则他们点了会撞后端 404。让 UI 提前表达"这里只读"。
-// 个人空间 owner 始终可写(admin 也可写),不挂这个 gate。
-const canCreateInSpace = computed(() => {
-  const s = active.value
-  if (!s) return false
-  if (authStore.isAdmin) return true
-  if (s.kind === 'personal') return true
-  return s.viewerRole === 'editor' || s.viewerRole === 'admin'
-})
+// 个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
+// supervisor 处理 —— 不能新建。统一用 lib/permissions.canCreateInSpace。
+const canCreateInSpace = computed(() =>
+  canCreateInSpaceOf(authStore.user, active.value),
+)
 
 /**
  * v0.7: 当前 active space 是否可由本用户管理(全局 admin OR 该 space 是
