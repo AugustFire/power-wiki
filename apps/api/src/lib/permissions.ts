@@ -37,6 +37,7 @@
  */
 import { and, eq, sql, type SQL } from 'drizzle-orm'
 import { db } from '../db/client'
+import type { AnyTx } from './auditLog'
 import {
   pageRestrictions,
   pages,
@@ -339,10 +340,18 @@ export interface SpaceGrants {
  *
  * 排序:grantedAt ASC(同主体多次 grant 调整时,最新的最后;在 UI 上
  * 自然按时间序列展示)。
+ *
+ * 第二参数可选:tx(drizzle transaction 句柄)。传入 tx 时所有 SQL 走
+ * 事务连接,看到的是 in-tx 状态;不传默认走 `db.execute` 全局连接,
+ * 只能看到已 committed 状态。PUT /permissions 的 diff 算法需要在事务内
+ * 拍「写完之后的快照」,必须用 tx 避免「拿不到本事务写入」的脏读。
  */
-export async function loadGrantsForSpace(spaceId: string): Promise<SpaceGrants> {
+export async function loadGrantsForSpace(
+  spaceId: string,
+  executor: typeof db | AnyTx = db,
+): Promise<SpaceGrants> {
   // 1) space_role_grants 全部行
-  const newRows = await db.execute<{
+  const newRows = await executor.execute<{
     principalKind: 'user' | 'group'
     principalId: string
     role: SpaceRole
@@ -359,7 +368,7 @@ export async function loadGrantsForSpace(spaceId: string): Promise<SpaceGrants> 
   `)
 
   // 2) legacy space_group_access 补 'editor' role
-  const legacyRows = await db.execute<{ groupId: string }>(sql`
+  const legacyRows = await executor.execute<{ groupId: string }>(sql`
     SELECT sga.group_id AS "groupId"
       FROM space_group_access sga
      WHERE sga.space_id = ${spaceId}

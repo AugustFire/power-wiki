@@ -36,6 +36,7 @@ const KIND_OPTIONS: { value: '' | AuditKind; label: string }[] = [
   { value: 'space_grant_set', label: '空间角色 - 全量更新' },
   { value: 'space_grant_add', label: '空间角色 - 授予' },
   { value: 'space_grant_remove', label: '空间角色 - 移除' },
+  { value: 'space_grant_change', label: '空间角色 - 角色变更' },
   { value: 'page_restriction_set', label: '页面限制 - 全量更新' },
   { value: 'page_restriction_add', label: '页面限制 - 添加' },
   { value: 'page_restriction_remove', label: '页面限制 - 移除' },
@@ -59,6 +60,7 @@ const EVENT_TARGET_KIND: Record<AuditKind, AuditTargetKind> = {
   space_grant_set: 'space',
   space_grant_add: 'space',
   space_grant_remove: 'space',
+  space_grant_change: 'space',
   page_restriction_set: 'page',
   page_restriction_add: 'page',
   page_restriction_remove: 'page',
@@ -203,9 +205,9 @@ function roleLabel(value: unknown): string {
   return displayValue(value)
 }
 
-function principalLabel(payload: AuditPayload): string {
+function principalLabel(payload: AuditPayload, name?: string | null): string {
   const kind = payload.principalKind === 'group' ? '用户组' : '用户'
-  return `${kind} ${shortId(displayValue(payload.principalId))}`
+  return name ? `${kind}「${name}」` : `${kind} ${shortId(displayValue(payload.principalId))}`
 }
 
 function restrictionLabel(value: unknown): string {
@@ -220,7 +222,7 @@ function targetLabel(entry: AuditEntry): string {
   if (entry.kind === 'group_deleted' && before.name) return `用户组「${displayValue(before.name)}」`
   if (entry.kind === 'user_anonymized' && before.name) return `用户「${displayValue(before.name)}」`
   switch (entry.targetKind) {
-    case 'space': return `空间 ${short}`
+    case 'space': return `空间「${entry.targetName ?? short}」`
     case 'page': return `页面 ${short}`
     case 'page_share': return `公开链接 ${short}`
     case 'group': return `用户组 ${short}`
@@ -244,8 +246,9 @@ function auditSummary(entry: AuditEntry): string {
   const after = asRecord(payload.after)
   switch (entry.kind) {
     case 'space_grant_set': return '全量更新了空间成员角色'
-    case 'space_grant_add': return `向${principalLabel(after)}授予了「${roleLabel(after.role)}」角色`
-    case 'space_grant_remove': return `移除了${principalLabel(before)}的「${roleLabel(before.role)}」角色`
+    case 'space_grant_add': return `在空间「${entry.targetName ?? shortId(entry.targetId)}」向${principalLabel(after, entry.subjectName)}授予了「${roleLabel(after.role)}」角色`
+    case 'space_grant_remove': return `在空间「${entry.targetName ?? shortId(entry.targetId)}」移除了${principalLabel(before, entry.subjectName)}的「${roleLabel(before.role)}」角色`
+    case 'space_grant_change': return `在空间「${entry.targetName ?? shortId(entry.targetId)}」把${principalLabel(before, entry.subjectName)}的「${roleLabel(before.role)}」改成了「${roleLabel(after.role)}」`
     case 'page_restriction_set': return '全量更新了页面访问限制'
     case 'page_restriction_add': return `将${principalLabel(after)}加入了${restrictionLabel(after.kind)}`
     case 'page_restriction_remove': return `将${principalLabel(before)}移出了${restrictionLabel(before.kind)}`
@@ -276,13 +279,22 @@ function auditDetails(entry: AuditEntry): DetailRow[] {
       return [{ label: '条目数量', before: String(collectionCount(before)), after: String(collectionCount(after)) }]
     case 'space_grant_add':
       return [
-        { label: '授权对象', value: principalLabel(after) },
+        { label: '空间', value: entry.targetName ?? shortId(entry.targetId) },
+        { label: '授权对象', value: principalLabel(after, entry.subjectName) },
         { label: '空间角色', value: roleLabel(after.role) },
       ]
     case 'space_grant_remove':
       return [
-        { label: '授权对象', value: principalLabel(before) },
+        { label: '空间', value: entry.targetName ?? shortId(entry.targetId) },
+        { label: '授权对象', value: principalLabel(before, entry.subjectName) },
         { label: '原空间角色', value: roleLabel(before.role) },
+      ]
+    case 'space_grant_change':
+      return [
+        { label: '空间', value: entry.targetName ?? shortId(entry.targetId) },
+        { label: '授权对象', value: principalLabel(before, entry.subjectName) },
+        { label: '原空间角色', value: roleLabel(before.role) },
+        { label: '新空间角色', value: roleLabel(after.role) },
       ]
     case 'page_restriction_add':
       return [

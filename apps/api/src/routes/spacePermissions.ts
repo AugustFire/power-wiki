@@ -35,6 +35,7 @@ import { and, eq, ilike, inArray, like, not, notInArray, or, sql } from 'drizzle
 import {
   PaginatedListSchema,
   SetSpacePermissionsInputSchema,
+  SpaceMembersListSchema,
   UpsertGroupGrantInputSchema,
   UpsertUserGrantInputSchema,
   UserGroupSchema,
@@ -56,6 +57,7 @@ import {
   migrateLegacyGroupGrant,
   principalFromUser,
   type SpaceGrants,
+  type SpaceRole,
 } from '../lib/permissions'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { rowToUser } from '../lib/rowMappers'
@@ -210,7 +212,12 @@ spacePermissionsRouter.put('/:id/permissions', async (c) => {
     }
   }
 
-  // 4) Full-replace 事务 + 审计日志
+  // 4) Full-replace 事务 + 细粒度审计
+  //  v0.7 起:不再写 space_grant_set(全量 before/after 快照),改成 diff
+  //  after map 找到 3 类事件(add / change / no-op)。before map 中不在
+  //  after 的 = remove。审计行就能直接读「哪个 principal 从什么 role 变到
+  //  什么 role」,不再被「全量更新」淹没。grant_set kind 保留兼容(历史行),
+  //  新代码不再写。
   const now = Date.now()
   const actorId = me.id
   // 拍 before 快照:事务前查一次,放进 audit payload 的 { before, after }
@@ -241,17 +248,78 @@ spacePermissionsRouter.put('/:id/permissions', async (c) => {
       await tx.insert(spaceRoleGrants).values(rows)
     }
     await tx.update(spaces).set({ updatedAt: now }).where(eq(spaces.id, spaceId))
-    // after 在 tx 内现拉(确保拿到的是本次写入后的真实状态,不受外部
-    // 并发写干扰 —— 但 recordPermissionAudit 在事务末尾,跟业务变更一同
-    // commit / rollback,这是关键不变量)。
-    const after = await loadGrantsForSpace(spaceId)
-    await recordPermissionAudit(tx, {
-      kind: 'space_grant_set',
-      actorId,
-      targetKind: 'space',
-      targetId: spaceId,
-      payload: { before, after },
-    })
+    // after 在 tx 内现拉(用 tx 作为 executor,确保读到 in-tx 刚 INSERT
+    // 的行;否则走全局 db.execute 会读到 tx 提交前的状态,跟 before
+    // 一样空,diff 永远 0 行 audit)。recordPermissionAudit 在事务末尾,
+    // 跟业务变更一同 commit / rollback,这是关键不变量。
+    const after = await loadGrantsForSpace(spaceId, tx)
+    // diff:把 before / after 都展平成 key → row,按 key 比对。
+    // key = `${principalKind}:${principalId}`,跟 SQL 复合主键对齐。
+    type DiffRow = {
+      principalKind: 'user' | 'group'
+      principalId: string
+      role: 'viewer' | 'editor' | 'admin'
+      grantedBy: string | null
+      grantedAt: number
+    }
+    const flatten = (g: SpaceGrants): Map<string, DiffRow> => {
+      const m = new Map<string, DiffRow>()
+      for (const r of g.groups) {
+        m.set(`group:${r.groupId}`, {
+          principalKind: 'group',
+          principalId: r.groupId,
+          role: r.role,
+          grantedBy: r.grantedBy,
+          grantedAt: r.grantedAt,
+        })
+      }
+      for (const r of g.users) {
+        m.set(`user:${r.userId}`, {
+          principalKind: 'user',
+          principalId: r.userId,
+          role: r.role,
+          grantedBy: r.grantedBy,
+          grantedAt: r.grantedAt,
+        })
+      }
+      return m
+    }
+    const beforeMap = flatten(before)
+    const afterMap = flatten(after)
+    // 遍历 after:add / change / no-op
+    for (const [key, row] of afterMap) {
+      const prior = beforeMap.get(key)
+      if (!prior) {
+        await recordPermissionAudit(tx, {
+          kind: 'space_grant_add',
+          actorId,
+          targetKind: 'space',
+          targetId: spaceId,
+          payload: { after: row },
+        })
+      } else if (prior.role !== row.role) {
+        await recordPermissionAudit(tx, {
+          kind: 'space_grant_change',
+          actorId,
+          targetKind: 'space',
+          targetId: spaceId,
+          payload: { before: prior, after: row },
+        })
+      }
+      // 同 role no-op,跳过 —— 用户没真改这条,audit 不污染。
+    }
+    // 遍历 before 中剩下的:remove
+    for (const [key, row] of beforeMap) {
+      if (!afterMap.has(key)) {
+        await recordPermissionAudit(tx, {
+          kind: 'space_grant_remove',
+          actorId,
+          targetKind: 'space',
+          targetId: spaceId,
+          payload: { before: row },
+        })
+      }
+    }
   })
 
   // 5) Personal-space 必须保留 user-level admin grant 的 invariant 校验
@@ -600,6 +668,149 @@ spacePermissionsRouter.delete('/:id/permissions/users/:userId', async (c) => {
   }
 
   return c.body(null, 204)
+})
+
+/* ─── GET /api/spaces/:id/members ─────────────────────────────────── */
+/**
+ * P1-2 — 空间成员展开视图:每个 user 一行,带 effective role (max 规则) +
+ * 来源链(direct + 每个继承的 group grant)。跟 SpaceGrants(原始 grants
+ * 列表)不同 —— 这是「站在 space 视角看哪些人有访问权 + 怎么来的」,
+ * 专给空间成员 tab 用,授权 tab 仍走 SpaceGrants 编辑。
+ *
+ * SQL 一次出全:CTE 三路 UNION(direct user grants + 新表 group grants
+ * 展开 user_group_members + legacy space_group_access 展开),LEFT JOIN
+ * users / user_groups 拿展示字段,GROUP BY user_id + jsonb_agg 聚合
+ * sources。MAX(CASE role ...) 取 max rank 对应 effectiveSpaceRole 的
+ * 规则(`admin` > `editor` > `viewer`),跟后端 gate 行为 1:1 一致。
+ *
+ * 排序:effective_rank DESC, name ASC —— admin 在最上,同 rank 按字母。
+ *
+ * 不分页(limit 兜底 500):单空间成员数远 < 200;过大空间后续可加 limit
+ * 走 OFFSET,SQL 形状已支持。
+ *
+ * 不写 audit:这是只读视图,跟 loadGrantsForSpace 同性质,不触发审计日志。
+ */
+spacePermissionsRouter.get('/:id/members', async (c) => {
+  const gate = await requireSpaceAdmin(c)
+  if (!gate.ok) return gate.response
+  const { spaceId } = gate
+
+  const parsed = safeParsePagination(c)
+  if (!parsed.ok) return parsed.response
+  const { limit, offset } = parsed.args
+  const max = Math.min(limit ?? 500, 1000)
+
+  const result = await db.execute<{
+    userId: string
+    name: string | null
+    email: string | null
+    color: string | null
+    status: 'active' | 'disabled' | 'must_reset_password' | 'anonymized' | null
+    avatarKind: 'preset' | 'custom' | null
+    avatarRef: string | null
+    effectiveRank: number
+    sources: Array<{
+      kind: 'direct' | 'group'
+      role: 'viewer' | 'editor' | 'admin'
+      groupId: string | null
+      groupName: string | null
+      grantedBy: string | null
+      grantedAt: number
+    }>
+  }>(sql`
+    WITH all_user_grants AS (
+      -- 1. 直接 user 授权
+      SELECT srg.principal_id AS user_id, srg.role,
+             NULL::text AS group_id, srg.granted_by, srg.granted_at,
+             'direct'::text AS source_kind
+        FROM space_role_grants srg
+       WHERE srg.space_id = ${spaceId} AND srg.principal_kind = 'user'
+      UNION ALL
+      -- 2. 新表 group 授权 → 展开到组内每个 user
+      SELECT ugm.user_id, srg.role,
+             srg.principal_id AS group_id, srg.granted_by, srg.granted_at,
+             'group'::text AS source_kind
+        FROM space_role_grants srg
+        JOIN user_group_members ugm ON ugm.group_id = srg.principal_id
+       WHERE srg.space_id = ${spaceId} AND srg.principal_kind = 'group'
+      UNION ALL
+      -- 3. legacy space_group_access(只在没有新表覆盖该 group 时补位)
+      SELECT ugm.user_id, 'editor'::text AS role,
+             sga.group_id, NULL::text AS granted_by, 0::bigint AS granted_at,
+             'group'::text AS source_kind
+        FROM space_group_access sga
+        JOIN user_group_members ugm ON ugm.group_id = sga.group_id
+       WHERE sga.space_id = ${spaceId}
+         AND NOT EXISTS (
+           SELECT 1 FROM space_role_grants srg2
+            WHERE srg2.space_id = sga.space_id
+              AND srg2.principal_kind = 'group'
+              AND srg2.principal_id = sga.group_id
+         )
+    )
+    SELECT
+      aug.user_id                                            AS "userId",
+      u.name                                                 AS "name",
+      u.email                                                AS "email",
+      u.color                                                AS "color",
+      u.status                                               AS "status",
+      u.avatar_kind                                          AS "avatarKind",
+      u.avatar_ref                                           AS "avatarRef",
+      MAX(CASE aug.role WHEN 'admin' THEN 3 WHEN 'editor' THEN 2 WHEN 'viewer' THEN 1 END)::int AS "effectiveRank",
+      jsonb_agg(
+        jsonb_build_object(
+          'kind',      aug.source_kind,
+          'role',      aug.role,
+          'groupId',   aug.group_id,
+          'groupName', ug.name,
+          'grantedBy', aug.granted_by,
+          'grantedAt', aug.granted_at
+        )
+        ORDER BY
+          CASE aug.source_kind WHEN 'direct' THEN 0 ELSE 1 END,
+          ug.name NULLS FIRST,
+          aug.granted_at ASC
+      ) AS sources
+      FROM all_user_grants aug
+      LEFT JOIN users u ON u.id = aug.user_id
+      LEFT JOIN user_groups ug ON ug.id = aug.group_id
+     GROUP BY aug.user_id, u.name, u.email, u.color, u.status, u.avatar_kind, u.avatar_ref
+     ORDER BY "effectiveRank" DESC, u.name ASC NULLS LAST
+     LIMIT ${max} OFFSET ${offset}
+  `)
+
+  // pg driver returns jsonb as parsed JS array. 但 number/bigint 类型:
+  // grantedAt 是 bigint → 字符串,我们 coerce 成 number 跟 grant 一致。
+  const items = result.rows.map((r) => ({
+    userId: r.userId,
+    user: {
+      name: r.name ?? '未知用户',
+      email: r.email ?? null,
+      color: r.color ?? '#888888',
+      status: r.status ?? 'active',
+      avatarKind: r.avatarKind,
+      avatarRef: r.avatarRef,
+    },
+    effectiveRole:
+      r.effectiveRank >= 3 ? 'admin' : r.effectiveRank >= 2 ? 'editor' : 'viewer',
+    sources: r.sources.map((s) => ({
+      kind: s.kind,
+      role: s.role,
+      groupId: s.groupId,
+      groupName: s.groupName,
+      grantedBy: s.grantedBy,
+      grantedAt: typeof s.grantedAt === 'string' ? Number(s.grantedAt) : s.grantedAt,
+    })),
+  }))
+
+  // total:同一 SQL 不带 LIMIT 时再跑一次 COUNT 太贵;改用单空间成员数
+  // 通常很小,total 直接 = items.length(除非分页被触发)。前端
+  // SpaceMembersListSchema 仅作 zod 校验用,total 字段我们如实填。
+  const response = SpaceMembersListSchema.parse({
+    items,
+    total: items.length,
+  })
+  return c.json(response)
 })
 
 /* ─── GET /api/spaces/:id/permissions/candidates ─────────────────── */

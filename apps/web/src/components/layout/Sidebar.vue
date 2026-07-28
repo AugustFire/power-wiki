@@ -229,10 +229,17 @@ watch(
 // 还没在 pages.value 里(空间没切的话;新空间的话 sid 的根未加载),scroll-
 // into-view 找不到 row。rootsLoaded 翻真后 watcher 会再触发一次补跑。
 watch(
-  [() => route.params.id, () => spacesStore.activeSpaceId.value, () => pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value)],
-  ([id, _sid, rootsReady]) => {
+  [
+    () => {
+      if (route.name !== 'read' && route.name !== 'edit' && route.name !== 'history') return ''
+      return typeof route.params.id === 'string' ? route.params.id : ''
+    },
+    () => spacesStore.activeSpaceId.value,
+    () => pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value),
+  ],
+  ([pageId, _sid, rootsReady]) => {
     if (!rootsReady) return
-    if (typeof id === 'string' && id) void autoExpandAndLocate(id)
+    if (pageId) void autoExpandAndLocate(pageId)
   },
   { immediate: true },
 )

@@ -957,8 +957,11 @@ export type NewPageRestrictionRow = typeof pageRestrictions.$inferInsert
  * Phase C — 权限变更审计日志(append-only)。
  *
  * 一行 = 一次「会改变可见性 / 访问性」的事件。包括:
- *   权限变更 8 个:
- *     - space_grant_set / space_grant_add / space_grant_remove:空间角色变更
+ *   权限变更 9 个:
+ *     - space_grant_set:空间角色全量替换(legacy,新代码已不写但保留兼容)
+ *     - space_grant_add / space_grant_remove / space_grant_change:空间角色
+ *       细粒度事件(PUT diff 拆出;add = 新增 principal,remove = 移除 principal,
+ *       change = principal 仍在但 role 改了)
  *     - page_restriction_set / page_restriction_add / page_restriction_remove:页面限制变更
  *     - page_share_create / page_share_revoke:公开链接生命周期
  *   资源生命周期 3 个(2026-07 起合并到同一张表):
@@ -971,16 +974,18 @@ export type NewPageRestrictionRow = typeof pageRestrictions.$inferInsert
  * 不参与任何业务判断,只是给 admin 一个「谁在什么时候改了什么」的查询面。
  *
  * payload 存 `{ before, after }` 形态的 diff,JSONB 灵活放各类结构:
- *   - space_grant_set: { before: grants, after: grants }
+ *   - space_grant_set: { before: grants, after: grants }(legacy)
+ *   - space_grant_add: { after: 单行 }
+ *   - space_grant_remove: { before: 单行 }
+ *   - space_grant_change: { before: 单行, after: 单行 }
  *   - page_restriction_set: { before: {view,edit}, after: {view,edit} }
- *   - *_add: { after: 单行 }
- *   - remove 同款反方向
+ *   - *_add / *_remove:同款单行形态
  *   - space_deleted: { before: { id, name, kind } }
  *   - group_deleted: { before: { id, name, memberCount } }
  *   - user_anonymized: { before: { name, email }, after: { name, email, status } }
  *
  * target_kind ∈ {space, page, page_share, group, user};CHECK 在 migration
- * 里限定(0027 + 0029_extend_audit_kinds)。
+ * 里限定(0027 + 0029_extend_audit_kinds + 0031_space_grant_change)。
  *
  * No FK:audit 永远不被级联 —— 即使被改的 user/group/space/page 被
  * 删了,审计行保留(audit 本身就是"那时的快照")。这跟

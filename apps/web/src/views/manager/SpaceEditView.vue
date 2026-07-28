@@ -32,6 +32,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import SpaceMembersTab from '@/views/manager/SpaceMembersTab.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useEscape } from '@/composables/useEscape'
 import { useUiStore } from '@/stores/ui'
@@ -105,6 +106,83 @@ const userSearchDebounced = makeDebounced(userSearch)
 const groupAddSearchDebounced = makeDebounced(groupAddSearch)
 const userAddSearchDebounced = makeDebounced(userAddSearch)
 
+/* ─── Tab 状态(信息 / 成员 / 授权)────────────────────────────── */
+/**
+ * Tab 通过 URL `?tab=` 同步 — 直接书签 / 前进后退 / 从成员 tab「调整授权」
+ * 跳过来都走同一份代码,刷新也能落回原 tab。enum 之外的取值当 'info' 处理。
+ */
+type SpaceTab = 'info' | 'members' | 'grants'
+const TABS: Array<{ value: SpaceTab; label: string; icon: string }> = [
+  { value: 'info',    label: '信息', icon: 'info' },
+  { value: 'members', label: '成员', icon: 'group' },
+  { value: 'grants',  label: '授权', icon: 'shield_person' },
+]
+const activeTab = computed<SpaceTab>(() => {
+  const raw = route.query.tab
+  if (raw === 'members' || raw === 'grants') return raw
+  return 'info'
+})
+/** 个人空间只暴露 'info' tab — 没有「成员」/「授权」概念(owner-only)。 */
+const visibleTabs = computed(() => {
+  if (space.value?.kind === 'personal') return TABS.filter((t) => t.value === 'info')
+  return TABS
+})
+
+function switchTab(tab: SpaceTab) {
+  void router.replace({ path: route.path, query: { ...route.query, tab } })
+}
+
+/* ─── Cross-tab highlight(成员 tab → 授权 tab 行高亮)─────────────── */
+/**
+ * 成员 tab 「调整授权」 跳授权 tab 时,通过 `?highlight=grant:user:<id>` 或
+ * `grant:group:<id>` 携带目标 grant。被指向的 row 加 1.5s 高亮动画然后自动
+ * 清除;tab 切换时也立即清掉,避免残留错位。匹配失败(grant 已被删 / 不存在)
+ * 时 silent — 视觉上「没高亮」就行,没必要弹错误。 */
+const highlightedGrant = ref<{ kind: 'user' | 'group'; id: string } | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+function applyHighlightFromQuery() {
+  const raw = route.query.highlight
+  if (typeof raw !== 'string') {
+    highlightedGrant.value = null
+    return
+  }
+  const m = raw.match(/^grant:(user|group):(.+)$/)
+  if (!m) {
+    highlightedGrant.value = null
+    return
+  }
+  highlightedGrant.value = { kind: m[1] as 'user' | 'group', id: m[2]! }
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    highlightedGrant.value = null
+    // 同步清掉 query,避免下次进同路由复活高亮
+    const { highlight: _drop, ...rest } = route.query
+    void _drop
+    void router.replace({
+      name: route.name as string | undefined,
+      params: route.params,
+      query: rest,
+    }).catch(() => { /* ignore navigation duplicate */ })
+  }, 1800)
+}
+
+watch(
+  () => [route.query.tab, route.query.highlight],
+  ([tab]) => {
+    if (tab !== 'grants' && highlightedGrant.value) {
+      highlightedGrant.value = null
+      if (highlightTimer) clearTimeout(highlightTimer)
+    }
+    if (tab === 'grants') applyHighlightFromQuery()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (highlightTimer) clearTimeout(highlightTimer)
+})
+
 /* ─── Popover 关闭交互 ────────────────────────────────────────── */
 const groupPopoverEl = ref<HTMLElement | null>(null)
 const groupAddBtnEl = ref<HTMLElement | null>(null)
@@ -114,6 +192,13 @@ const matrixHelpEl = ref<HTMLElement | null>(null)
 const matrixHelpBtnEl = ref<HTMLElement | null>(null)
 /** 默认关闭:点「访问控制」标题旁的帮助按钮弹出角色权限对照 popover。 */
 const matrixHelpOpen = ref(false)
+type RoleMenuTarget =
+  | { kind: 'group'; id: string }
+  | { kind: 'user'; id: string }
+const roleMenuTarget = ref<RoleMenuTarget | null>(null)
+const roleMenuEl = ref<HTMLElement | null>(null)
+const roleMenuTriggerEl = ref<HTMLElement | null>(null)
+const roleMenuPosition = ref({ top: 0, left: 0, width: 232 })
 function closeGroupAdd() {
   groupAddOpen.value = false
   groupAddSearch.value = ''
@@ -127,16 +212,80 @@ function closeUserAdd() {
 function closeMatrixHelp() {
   matrixHelpOpen.value = false
 }
+function closeRoleMenu() {
+  roleMenuTarget.value = null
+  roleMenuTriggerEl.value = null
+}
+function isRoleMenuOpen(kind: RoleMenuTarget['kind'], id: string): boolean {
+  return roleMenuTarget.value?.kind === kind && roleMenuTarget.value.id === id
+}
+function toggleRoleMenu(kind: RoleMenuTarget['kind'], id: string, event: MouseEvent) {
+  if (isRoleMenuOpen(kind, id)) {
+    closeRoleMenu()
+    return
+  }
+  closeGroupAdd()
+  closeUserAdd()
+  const trigger = event.currentTarget as HTMLElement
+  const rect = trigger.getBoundingClientRect()
+  const width = 232
+  const optionCount = kind === 'group' ? GROUP_ROLE_OPTIONS.length : ROLE_OPTIONS.length
+  const menuHeight = optionCount * 52 + 8
+  const below = rect.bottom + 6
+  const top = below + menuHeight <= window.innerHeight - 8
+    ? below
+    : rect.top - menuHeight - 6
+  roleMenuPosition.value = {
+    top,
+    left: Math.min(
+      Math.max(8, rect.right - width),
+      window.innerWidth - width - 8,
+    ),
+    width,
+  }
+  roleMenuTriggerEl.value = trigger
+  roleMenuTarget.value = { kind, id } as RoleMenuTarget
+}
+const roleMenuOptions = computed(() =>
+  roleMenuTarget.value?.kind === 'group' ? GROUP_ROLE_OPTIONS : ROLE_OPTIONS,
+)
+const roleMenuRole = computed<SpaceRole | null>(() => {
+  const target = roleMenuTarget.value
+  if (!target) return null
+  return target.kind === 'group'
+    ? grants.value.groups.find((grant) => grant.groupId === target.id)!.role
+    : grants.value.users.find((grant) => grant.userId === target.id)!.role
+})
+function chooseRole(role: SpaceRole) {
+  const target = roleMenuTarget.value!
+  if (target.kind === 'group') {
+    const index = grants.value.groups.findIndex((grant) => grant.groupId === target.id)
+    setGroupRole(index, role)
+  } else {
+    const index = grants.value.users.findIndex((grant) => grant.userId === target.id)
+    setUserRole(index, role)
+  }
+  closeRoleMenu()
+}
 // Esc 关闭 — useEscape 内部处理 add/removeEventListener 生命周期
 useEscape(() => groupAddOpen.value, closeGroupAdd)
 useEscape(() => userAddOpen.value, closeUserAdd)
 useEscape(() => matrixHelpOpen.value, closeMatrixHelp)
+useEscape(() => roleMenuTarget.value !== null, closeRoleMenu)
 // click-outside 关闭 — 用 mousedown 而不是 click,这样 toggle button 的
 // click 仍能正常切换(否则 mousedown 先关、click 再开 = 永远打不开)。
 // matrixHelp 不在这里处理:它现在升级为居中模态,背景遮罩 + 自 .self
 // 点击直接关,不再依赖 document 级监听。
 function onDocMouseDown(e: MouseEvent) {
   const t = e.target as Node
+  // role menu 是 Teleport 到 body,菜单节点不在 row 树里 — 单独判定:
+  // 点击在 menu 内 / 在 trigger 上都不关,其他位置一律关。
+  if (roleMenuTarget.value) {
+    if (roleMenuEl.value?.contains(t)) return
+    if (roleMenuTriggerEl.value?.contains(t)) return
+    closeRoleMenu()
+    return
+  }
   if (groupAddOpen.value) {
     if (groupPopoverEl.value?.contains(t)) return
     if (groupAddBtnEl.value?.contains(t)) return
@@ -149,14 +298,29 @@ function onDocMouseDown(e: MouseEvent) {
     closeUserAdd()
   }
 }
-watch([groupAddOpen, userAddOpen], (vals) => {
+/* scroll / resize 关闭 — role menu 用 fixed 定位,父容器滚动或窗口
+   resize 时 trigger 位置变了,菜单会飘走。直接关掉是最干净的处理。 */
+function onScrollOrResize() {
+  if (roleMenuTarget.value) closeRoleMenu()
+}
+watch([groupAddOpen, userAddOpen, roleMenuTarget], (vals) => {
   if (vals.some(Boolean)) {
-    void nextTick(() => document.addEventListener('mousedown', onDocMouseDown))
+    void nextTick(() => {
+      document.addEventListener('mousedown', onDocMouseDown)
+      window.addEventListener('scroll', onScrollOrResize, true)
+      window.addEventListener('resize', onScrollOrResize)
+    })
   } else {
     document.removeEventListener('mousedown', onDocMouseDown)
+    window.removeEventListener('scroll', onScrollOrResize, true)
+    window.removeEventListener('resize', onScrollOrResize)
   }
 })
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMouseDown))
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocMouseDown)
+  window.removeEventListener('scroll', onScrollOrResize, true)
+  window.removeEventListener('resize', onScrollOrResize)
+})
 
 useDocumentTitle(() => (space.value ? `编辑空间: ${space.value.name}` : null))
 
@@ -445,6 +609,9 @@ function userNameOf(id: string): string {
 function userEmailOf(id: string): string | undefined {
   return allUsers.value.find((u) => u.id === id)?.email
 }
+function roleOption(role: SpaceRole) {
+  return ROLE_OPTIONS.find((option) => option.value === role)!
+}
 
 function setGroupRole(idx: number, role: SpaceRole) {
   const next = [...grants.value.groups]
@@ -619,6 +786,29 @@ function formatDate(ts: number): string {
       </div>
     </header>
 
+    <!-- ─── Tab bar (仅 non-personal space) ────────────────────────────── -->
+    <nav
+      v-if="space && visibleTabs.length > 1"
+      class="se-tabs"
+      role="tablist"
+      aria-label="空间设置分区"
+    >
+      <button
+        v-for="t in visibleTabs"
+        :key="t.value"
+        type="button"
+        role="tab"
+        class="se-tab"
+        :class="{ 'se-tab-active': activeTab === t.value }"
+        :aria-selected="activeTab === t.value"
+        :aria-current="activeTab === t.value ? 'page' : undefined"
+        @click="switchTab(t.value)"
+      >
+        <span class="material-symbols-outlined se-tab-icon">{{ t.icon }}</span>
+        <span>{{ t.label }}</span>
+      </button>
+    </nav>
+
     <div v-if="loadError" class="se-error">
       <p>{{ loadError }}</p>
       <button
@@ -672,6 +862,8 @@ function formatDate(ts: number): string {
         </span>
       </div>
 
+      <!-- ─── 信息 tab:基本信息 + 危险操作 ─── -->
+      <template v-if="activeTab === 'info'">
       <!-- ─── 基本信息(全局 admin 或 space-admin) ─── -->
       <section v-if="canEditMetadata" class="se-card">
         <h2 class="se-card-title">基本信息</h2>
@@ -739,8 +931,16 @@ function formatDate(ts: number): string {
           </button>
         </div>
       </section>
+      </template>
 
-      <!-- ─── 访问控制:用户组 + 个人 两栏(admin 或 space-admin) ─── -->
+      <!-- ─── 成员 tab ─── -->
+      <SpaceMembersTab
+        v-if="activeTab === 'members' && space.kind !== 'personal'"
+        :space-id="space.id"
+      />
+
+      <!-- ─── 授权 tab:访问控制:用户组 + 个人 两栏(admin 或 space-admin) ─── -->
+      <template v-if="activeTab === 'grants'">
       <section class="se-card se-perms-card">
         <div class="se-perms-header">
           <div class="se-perms-title-wrap">
@@ -785,27 +985,33 @@ function formatDate(ts: number): string {
             </div>
 
             <ul v-if="filteredGroups.length > 0" class="se-list">
-              <li v-for="(g, idx) in filteredGroups" :key="g.groupId" class="se-row">
+              <li
+                v-for="(g, idx) in filteredGroups"
+                :key="g.groupId"
+                class="se-row"
+                :class="{ 'se-row-highlight': highlightedGrant?.kind === 'group' && highlightedGrant.id === g.groupId }"
+              >
                 <span class="material-symbols-outlined se-row-icon">workspaces</span>
                 <div class="se-row-text">
                   <div class="se-row-name">{{ groupNameOf(g.groupId) }}</div>
                   <div v-if="groupDescOf(g.groupId)" class="se-row-desc">{{ groupDescOf(g.groupId) }}</div>
                 </div>
-                <div class="se-role" role="radiogroup">
-                  <button
-                    v-for="opt in GROUP_ROLE_OPTIONS"
-                    :key="opt.value"
-                    type="button"
-                    class="se-role-btn"
-                    :class="{ 'is-active': g.role === opt.value }"
-                    :aria-pressed="g.role === opt.value"
-                    :title="opt.hint"
-                    @click="setGroupRole(idx, opt.value)"
-                  >
-                    <span class="material-symbols-outlined se-role-icon">{{ opt.icon }}</span>
-                    <span>{{ opt.label }}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  class="se-role-trigger"
+                  :class="[`se-role-${g.role}`, { 'se-role-trigger-open': isRoleMenuOpen('group', g.groupId) }]"
+                  :data-role="g.role"
+                  :aria-haspopup="'menu'"
+                  :aria-expanded="isRoleMenuOpen('group', g.groupId)"
+                  :title="roleOption(g.role).hint"
+                  @click="toggleRoleMenu('group', g.groupId, $event)"
+                >
+                  <span class="material-symbols-outlined se-role-trigger-icon">
+                    {{ roleOption(g.role).icon }}
+                  </span>
+                  <span class="se-role-trigger-label">{{ roleOption(g.role).label }}</span>
+                  <span class="material-symbols-outlined se-role-trigger-caret">expand_more</span>
+                </button>
                 <button
                   type="button"
                   class="se-remove"
@@ -894,7 +1100,12 @@ function formatDate(ts: number): string {
             </div>
 
             <ul v-if="filteredUsers.length > 0" class="se-list">
-              <li v-for="(u, idx) in filteredUsers" :key="u.userId" class="se-row">
+              <li
+                v-for="(u, idx) in filteredUsers"
+                :key="u.userId"
+                class="se-row"
+                :class="{ 'se-row-highlight': highlightedGrant?.kind === 'user' && highlightedGrant.id === u.userId }"
+              >
                 <span
                   class="se-row-avatar"
                   :style="{ background: allUsers.find((x) => x.id === u.userId)?.color || '#888' }"
@@ -904,21 +1115,22 @@ function formatDate(ts: number): string {
                   <div class="se-row-name">{{ userNameOf(u.userId) }}</div>
                   <div v-if="userEmailOf(u.userId)" class="se-row-desc">{{ userEmailOf(u.userId) }}</div>
                 </div>
-                <div class="se-role" role="radiogroup">
-                  <button
-                    v-for="opt in ROLE_OPTIONS"
-                    :key="opt.value"
-                    type="button"
-                    class="se-role-btn"
-                    :class="{ 'is-active': u.role === opt.value }"
-                    :aria-pressed="u.role === opt.value"
-                    :title="opt.hint"
-                    @click="setUserRole(idx, opt.value)"
-                  >
-                    <span class="material-symbols-outlined se-role-icon">{{ opt.icon }}</span>
-                    <span>{{ opt.label }}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  class="se-role-trigger"
+                  :class="[`se-role-${u.role}`, { 'se-role-trigger-open': isRoleMenuOpen('user', u.userId) }]"
+                  :data-role="u.role"
+                  :aria-haspopup="'menu'"
+                  :aria-expanded="isRoleMenuOpen('user', u.userId)"
+                  :title="roleOption(u.role).hint"
+                  @click="toggleRoleMenu('user', u.userId, $event)"
+                >
+                  <span class="material-symbols-outlined se-role-trigger-icon">
+                    {{ roleOption(u.role).icon }}
+                  </span>
+                  <span class="se-role-trigger-label">{{ roleOption(u.role).label }}</span>
+                  <span class="material-symbols-outlined se-role-trigger-caret">expand_more</span>
+                </button>
                 <button
                   type="button"
                   class="se-remove"
@@ -1011,6 +1223,7 @@ function formatDate(ts: number): string {
           </div>
         </div>
       </section>
+      </template>
     </div>
 
     <!-- 居中模态对话框,矩阵权限对照表。Teleport 到 body 避开 stacking
@@ -1089,6 +1302,46 @@ function formatDate(ts: number): string {
               </span>
             </footer>
           </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- 自定义角色下拉菜单。Teleport 到 body 避开 row 内 stacking
+         context;固定定位坐标由 toggleRoleMenu 在 trigger.getBoundingClientRect()
+         时算好,随窗口滚动 / resize 自动关(见 onScrollOrResize)。 -->
+    <Teleport to="body">
+      <Transition name="se-role-menu">
+        <div
+          v-if="roleMenuTarget"
+          ref="roleMenuEl"
+          class="se-role-menu"
+          role="menu"
+          :style="{
+            position: 'fixed',
+            top: roleMenuPosition.top + 'px',
+            left: roleMenuPosition.left + 'px',
+            width: roleMenuPosition.width + 'px',
+          }"
+        >
+          <button
+            v-for="opt in roleMenuOptions"
+            :key="opt.value"
+            type="button"
+            class="se-role-menu-option"
+            :class="[`se-role-${opt.value}`, { 'se-role-menu-option-active': roleMenuRole === opt.value }]"
+            :data-role="opt.value"
+            role="menuitemradio"
+            :aria-checked="roleMenuRole === opt.value"
+            :title="opt.hint"
+            @click="chooseRole(opt.value)"
+          >
+            <span class="material-symbols-outlined se-role-menu-icon">{{ opt.icon }}</span>
+            <span class="se-role-menu-label">{{ opt.label }}</span>
+            <span
+              v-if="roleMenuRole === opt.value"
+              class="material-symbols-outlined se-role-menu-check"
+            >check</span>
+          </button>
         </div>
       </Transition>
     </Teleport>
@@ -1466,6 +1719,47 @@ function formatDate(ts: number): string {
   border-radius: 3px;
 }
 
+/* ─── Tab bar ─── */
+/* 三 tab 等宽左对齐:模仿 Confluence 空间设置顶部 tab;hover 浅底,
+   active 用底部 2px accent 下划线 + 加粗文字。不用大块背景填充避免跟
+   segmented control / primary button 撞视觉。 */
+.se-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.se-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+  position: relative;
+}
+.se-tab:hover:not(.se-tab-active) {
+  color: var(--text-1);
+  background: var(--bg-canvas);
+}
+.se-tab-icon { font-size: 16px; line-height: 1; }
+.se-tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
 /* ─── Card ─── */
 .se-card {
   background: var(--bg);
@@ -1650,6 +1944,31 @@ function formatDate(ts: number): string {
 }
 .se-row:last-child { border-bottom: 0; }
 .se-row:hover { background: var(--bg-canvas); }
+/* 跨 tab 跳转高亮:成员 tab「调整授权」→ 授权 tab 时,目标 grant row
+   闪一下 accent 底,1.8s 渐隐;同步 clear ?highlight= query(见 script)。 */
+.se-row-highlight {
+  animation: se-row-flash 1.8s var(--ease-out) both;
+  position: relative;
+}
+.se-row-highlight::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent);
+  border-radius: inherit;
+  pointer-events: none;
+  animation: se-row-flash-border 1.8s var(--ease-out) both;
+}
+@keyframes se-row-flash {
+  0%   { background: var(--accent-soft); }
+  60%  { background: var(--accent-soft); }
+  100% { background: transparent; }
+}
+@keyframes se-row-flash-border {
+  0%   { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { opacity: 0; }
+}
 .se-row-icon { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .se-row-avatar {
   width: 28px; height: 28px; font-size: 11px; border-radius: 50%;
@@ -1660,57 +1979,142 @@ function formatDate(ts: number): string {
 .se-row-name { font-size: 14px; font-weight: 500; color: var(--text-1); }
 .se-row-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 
-/* 三档角色选择(segmented control)。容器是 bg-canvas 浅底框,
-   按钮之间没有间隔。Active 用 accent 大块填充 + 白字 —— 视觉重,
-   容易跟旁边的「删除」主按钮混淆。改成「outline + icon + 加粗」:
-   active 态只换底色到 bg + 加 1px accent ring + 文字加粗 + 图标着色,
-   不再用大块 accent 填充,跟页面其他 primary button 拉开。 */
-.se-role {
-  display: inline-flex;
-  background: var(--bg-canvas);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 4px);
-  padding: 2px;
-  flex-shrink: 0;
-}
-.se-role-btn {
+/* 角色值跟成员 tab 使用同一套图标 + 文字语言(无背景、无描边),让「只读」
+   跟「可改」语义不混。trigger 自带 caret + hover 轻提示,点开是 Teleport
+   出来的自定义菜单 —— 避开原生 <select> 默认外观丑的问题。 */
+.se-role-trigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 500;
-  font-family: var(--font-sans, inherit);
+  min-width: 92px;
+  height: 30px;
+  padding: 0 22px 0 4px;
   color: var(--text-2);
   background: transparent;
   border: 0;
-  border-radius: 3px;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out),
-              color var(--duration-fast) var(--ease-out),
-              box-shadow var(--duration-fast) var(--ease-out);
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
 }
-.se-role-icon {
-  font-size: 15px;
+.se-role-trigger:hover {
+  border-bottom-color: var(--border-strong);
+  color: var(--text-1);
+}
+.se-role-trigger:focus-visible {
+  outline: 0;
+  border-bottom-color: var(--accent);
+}
+.se-role-trigger-open {
+  border-bottom-color: var(--accent);
+  color: var(--text-1);
+}
+.se-role-admin { color: var(--accent); }
+.se-role-editor { color: var(--text-2); }
+.se-role-viewer { color: var(--text-3); }
+
+.se-role-trigger-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.se-role-trigger-label {
+  pointer-events: none;
+  font-weight: 500;
+}
+.se-role-trigger-caret {
+  position: absolute;
+  right: 2px;
+  font-size: 16px;
+  line-height: 1;
   color: var(--text-3);
-  transition: color var(--duration-fast) var(--ease-out);
+  pointer-events: none;
 }
-.se-role-btn:hover:not(.is-active) {
+
+/* 自定义角色菜单:Teleport 到 body 配合 fixed 定位,卡片浮起带轻
+   阴影。item 行高 36px 跟 se-row 一致,左侧 icon 与 trigger 同色,
+   右侧 check 标记当前选中项。 */
+.se-role-menu {
   background: var(--bg);
-  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  box-shadow: 0 6px 20px rgba(9, 30, 66, 0.16),
+              0 2px 6px rgba(9, 30, 66, 0.08);
+  padding: 4px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.se-role-btn:hover:not(.is-active) .se-role-icon { color: var(--text-2); }
-/* Active:不放大块填充色,用 outline + 加粗 + 图标着 accent 色 —— 跟
-   "已选中的 segmented control" 一致(类似 Tabs / 切换器的视觉语法),
-   不会跟 primary button 抢眼。 */
-.se-role-btn.is-active {
-  background: var(--bg);
+.se-role-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm, 3px);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-1);
-  font-weight: 600;
-  box-shadow: 0 0 0 1px var(--accent);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
 }
-.se-role-btn.is-active .se-role-icon { color: var(--accent); }
+.se-role-menu-option:hover {
+  background: var(--bg-canvas);
+}
+.se-role-menu-option:focus-visible {
+  outline: 0;
+  background: var(--bg-canvas);
+}
+.se-role-menu-option-active {
+  background: var(--accent-soft);
+}
+.se-role-menu-option-active:hover {
+  background: var(--accent-soft);
+}
+.se-role-menu-icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.se-role-menu-label {
+  flex: 1;
+  min-width: 0;
+}
+.se-role-menu-check {
+  font-size: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* 菜单进入退场:fade + 轻微下移。enter-from 定义起点(opacity 0),
+   元素自然样式即终点(opacity 1),transition rule 接管过渡。 */
+.se-role-menu-enter-active {
+  transition: opacity 120ms var(--ease-out),
+              transform 120ms var(--ease-out);
+}
+.se-role-menu-leave-active {
+  transition: opacity 80ms var(--ease-out);
+}
+.se-role-menu-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.se-role-menu-leave-to {
+  opacity: 0;
+}
 
 .se-remove {
   background: transparent;

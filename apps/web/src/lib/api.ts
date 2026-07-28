@@ -53,6 +53,7 @@ import {
   ShareListResponseSchema,
   ResetPasswordResponseSchema,
   SignInInputSchema,
+  SpaceMembersListSchema,
   SpaceSchema,
   ToggleLikeResponseSchema,
   ToggleWatchResponseSchema,
@@ -110,6 +111,7 @@ import type {
   SetSpacePermissionsInput,
   SetPageRestrictionsInput,
   SpaceGrants,
+  SpaceMember,
   SpaceRole,
   UpsertGroupGrantInput,
   UpsertUserGrantInput,
@@ -686,6 +688,19 @@ export const api = {
         return request<SpaceGrants>(
           `/spaces/${encodeURIComponent(spaceId)}/permissions`,
         )
+      },
+      /**
+       * P1-2: 空间成员展开视图。每个 user 一行,带 effective role (max
+       * 规则) + 来源链(direct + 每个继承的 group grant)。专给空间成员
+       * tab 用 —— 授权 tab 仍走上面的 `get` 拿原始 grants 编辑。
+       * Mutation 后无需主动 invalidate:成员视图是 derived data,跟
+       * grants 同时改写;前端在 grants 写完后 reload members 即可。
+       */
+      members: async (spaceId: string): Promise<{ items: SpaceMember[]; total: number }> => {
+        const raw = await request<{ items: SpaceMember[]; total: number }>(
+          `/spaces/${encodeURIComponent(spaceId)}/members`,
+        )
+        return SpaceMembersListSchema.parse(raw)
       },
       /**
        * 列出"可被授权进本空间的候选 group + user"。由 SpaceEditView 的

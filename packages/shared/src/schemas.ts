@@ -456,6 +456,59 @@ export const UpsertUserGrantInputSchema = z.object({
   role: SpaceRoleSchema,
 })
 
+/* ---------- P1-2: 空间成员展开视图 ----------
+ * 与 SpaceGrants(原始 grants 列表)不同,这里返回的是「每个 user 一行」
+ * 的展开视图 —— effective role(max 规则) + 来源链(直接 / N 个组)。
+ * 字段设计与 docs/product-gap-analysis.md §P1-2 一致:
+ *   - 用户名 / 头像 / 状态跟 User DTO 对齐
+ *   - sources 数组显示该 user 是怎么拿到 access 的
+ *     (直接授权 + 每个继承的组授权各一条)
+ *   - 直接授权 vs 组授权语义区别:直接授权 = 可单独调整/移除;
+ *     组授权 = 必须在授权 tab 改 group grant。
+ */
+export const SpaceMemberSourceSchema = z.object({
+  kind: z.enum(['direct', 'group']),
+  role: SpaceRoleSchema,
+  /** 仅 kind='group' 时有值,组授权才有 groupId + groupName。 */
+  groupId: z.string().nullable().optional(),
+  groupName: z.string().nullable().optional(),
+  grantedBy: z.string().nullable(),
+  grantedAt: z.number().int().nonnegative(),
+})
+export type SpaceMemberSource = z.infer<typeof SpaceMemberSourceSchema>
+
+export const SpaceMemberSchema = z.object({
+  userId: z.string().min(1).max(64),
+  /** User 精简 DTO:头像 / 名字 / 状态必填,email / lastLoginAt 选填。
+   *  这里不直接复用 UserSchema(那个带了 role / createdAt 等跟成员视图
+   *  无关的字段),而是手写一份贴合「人」的形状,前端渲染不依赖 User 全
+   *  量元信息。 */
+  user: z.object({
+    name: z.string(),
+    email: z.string().nullable().optional(),
+    color: z.string(),
+    status: z.enum(['active', 'disabled', 'must_reset_password', 'anonymized']),
+    avatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+    avatarRef: z.string().nullable().optional(),
+  }),
+  /** effective role —— max(direct, all group roles) 规则,
+   *  跟后端 lib/permissions.effectiveSpaceRole 完全一致。
+   *  UI 只读展示;写操作走授权 tab。 */
+  effectiveRole: SpaceRoleSchema,
+  /** 0 / 1 / 2 个以上;第一个元素总是 max role 的来源(可能是 direct 也
+   *  可能是 group),后续按 kind / groupName 升序稳定。 */
+  sources: z.array(SpaceMemberSourceSchema),
+})
+export type SpaceMember = z.infer<typeof SpaceMemberSchema>
+
+/** GET /api/spaces/:id/members 响应包装。整体 list 排序:effective_role
+ *  rank DESC → name ASC,后端 SQL 一把出。limit / offset 兜底大空间,默认
+ * 全量(单空间成员数远 < 200,不分页也够)。 */
+export const SpaceMembersListSchema = z.object({
+  items: z.array(SpaceMemberSchema),
+  total: z.number().int().nonnegative(),
+})
+
 /* ---------- Phase B: page-level restrictions (Confluence 风格) ----------
  *  页面级 view / edit 限制。整组替换走 PUT /api/pages/:id/restrictions,
  *  单行 UPSERT 走 POST .../restrictions/{view|edit}/{users|groups}/:id。
@@ -1172,11 +1225,12 @@ export type UpdateAdminSettingInput = z.infer<typeof UpdateAdminSettingInputSche
 
 /* ─── Phase C 审计日志 ──────────────────────────────────────────────── */
 
-/** 11 个事件类型白名单 —— 与 DB CHECK 约束 + auditLog.ts 的 AuditKind 同步。 */
+/** 12 个事件类型白名单 —— 与 DB CHECK 约束 + auditLog.ts 的 AuditKind 同步。 */
 export const AuditKindSchema = z.enum([
   'space_grant_set',
   'space_grant_add',
   'space_grant_remove',
+  'space_grant_change',
   'page_restriction_set',
   'page_restriction_add',
   'page_restriction_remove',
@@ -1220,6 +1274,10 @@ export const AuditEntrySchema = z.object({
   actorAvatarRef: z.string().nullable(),
   targetKind: AuditTargetKindSchema,
   targetId: z.string(),
+  /** 目标资源的当前名称;已删除资源可为 null。 */
+  targetName: z.string().nullable(),
+  /** 空间授权事件中被操作用户或用户组的当前名称。 */
+  subjectName: z.string().nullable(),
   createdAt: z.number().int().nonnegative(),
   payload: z.unknown().nullable(),
 })

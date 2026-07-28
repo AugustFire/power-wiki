@@ -39,7 +39,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
-import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
@@ -47,7 +46,6 @@ import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
-const authStore = useAuthStore()
 const uiStore = useUiStore()
 const router = useRouter()
 
@@ -105,11 +103,6 @@ async function pick(id: string) {
   }
 }
 
-function goManager() {
-  open.value = false
-  void router.push('/manager/spaces')
-}
-
 function onDocClick(e: MouseEvent) {
   if (!open.value) return
   if (rootEl.value && !rootEl.value.contains(e.target as Node)) {
@@ -164,14 +157,6 @@ onBeforeUnmount(() => {
     <div v-else class="ss-empty">
       <span class="material-symbols-outlined ss-empty-icon">folder_off</span>
       <span class="ss-empty-text">还没有可访问的空间</span>
-      <button
-        v-if="authStore.isAdmin"
-        type="button"
-        class="ss-empty-cta"
-        @click="goManager"
-      >
-        去管理后台创建
-      </button>
     </div>
 
     <div v-if="open && spacesList.length > 0" class="ss-menu" role="listbox">
@@ -283,18 +268,6 @@ onBeforeUnmount(() => {
   font-size: var(--icon-xl, 20px) !important;
   color: var(--text-3);
 }
-.ss-empty-cta {
-  padding: 2px 8px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 0;
-  border-radius: var(--radius-sm, 3px);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.ss-empty-cta:hover { background: var(--accent); color: white; }
 
 /* ─── Dropdown ─── */
 .ss-menu {

@@ -6,39 +6,37 @@
  *   1. Brand mark + space switcher (current scope indicator)
  *   2. Global search trigger (opens TopSearch via uiStore; ⌘K is handled
  *      globally in App.vue's keydown listener)
- *   3. Right rail: Help / Activity / SpaceAdmin / Bell / UserMenu
+ *   3. Right rail: Help / Activity / ManagementMenu / Bell / UserMenu
  *
  * Lives at the top of the authed app shell. The error banner and page
  * content sit below — those stay in App.vue since they're driven by
  * other stores.
+ *
+ * P1-8: 「管理」入口从单个图标按钮升级为 dropdown(`ManagementMenu`)。
+ * 原因见该组件 doc — 主要解决「全局 admin + space-admin 同时存在时」
+ * 的语义分裂问题,让两条入口各自有清晰的标题段。
  */
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { useSpacesStore } from '@/stores/spaces'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
 import SpaceSwitcher from '@/components/layout/SpaceSwitcher.vue'
 import UserMenu from '@/components/ui/UserMenu.vue'
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import HelpButton from '@/components/layout/HelpButton.vue'
+import ManagementMenu from '@/components/layout/ManagementMenu.vue'
 import { useUiStore } from '@/stores/ui'
-import { useAuthStore } from '@/stores/auth'
-import { useSpacesStore } from '@/stores/spaces'
 import { MOD_KEY } from '@/lib/platform'
 
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 const spacesStore = useSpacesStore()
-const router = useRouter()
-const route = useRoute()
 
 /**
- * v0.7 → v0.7.1: 管理空间入口从 sidebar 移到 TopBar 右侧栏。原因:
- *  - sidebar-bottom 跟「创建页面 / 导入 markdown」内容操作混在一起违和
- *  - active space header 右侧放 chip 又跟 [count] 抢视觉重量
- *  - TopBar 右侧栏是「控制 / 入口」语义位,跟 Activity / Help 同档,
- *    跟 Bell / UserMenu 形成清晰的「contextual → personal」梯度
- * 仅在 active space 是 shared(团队空间)且本用户能管理(全局 admin OR
- * viewerRole='admin')时显示。**个人空间永远是 owner-only,不存在
- * 「管理」页面** — kind='personal' 直接 false。
+ * 「管理」trigger 是否渲染 —— 至少一段菜单不为空时显示:
+ *  - isAdmin(全局管理)
+ *  - canAdminActiveSpace(当前 shared 空间是 admin)
+ * 两段的具体可见性由 ManagementMenu 内部判断,这里只决定 trigger。
  */
 const canAdminActiveSpace = computed(() => {
   const s = spacesStore.activeSpace.value
@@ -48,17 +46,8 @@ const canAdminActiveSpace = computed(() => {
   return s.viewerRole === 'admin'
 })
 
-function goAdminSpace() {
-  const s = spacesStore.activeSpace.value
-  if (!s) return
-  void router.push({
-    name: authStore.isAdmin ? 'manager-space-edit' : 'space-edit',
-    params: { id: s.id },
-  })
-}
-
-const isManagingSpace = computed(
-  () => route.name === 'space-edit' || route.name === 'manager-space-edit',
+const showManagement = computed(
+  () => authStore.isAdmin || canAdminActiveSpace.value,
 )
 </script>
 
@@ -92,20 +81,11 @@ const isManagingSpace = computed(
       >
         <span class="material-symbols-outlined">history_toggle_off</span>
       </RouterLink>
-      <!-- 当前空间的「管理」入口,放在 Activity 跟 Bell 之间。
-           仅 space-admin / 全局 admin 可见。全局 admin 进入 manager layout,
-           space-admin 进入顶层 /spaces/:id;两个路由都保持 active 高亮。 -->
-      <button
-        v-if="canAdminActiveSpace"
-        type="button"
-        class="space-admin-btn"
-        title="管理当前空间(成员授权、基本信息)"
-        aria-label="管理当前空间"
-        :class="{ 'is-current': isManagingSpace }"
-        @click="goAdminSpace"
-      >
-        <span class="material-symbols-outlined">shield_person</span>
-      </button>
+      <!-- P1-8: 管理入口 dropdown(ManagementMenu)。trigger 在两段菜单
+           都不为空时才显示(全局 admin / space-admin)。dropdown 内部
+           按需渲染:仅全局 admin 时只出「全局管理」段,仅 space-admin
+           时只出「当前空间管理」段,两者兼具则两段都出。 -->
+      <ManagementMenu v-if="showManagement" />
       <NotificationBell />
       <UserMenu />
     </div>
@@ -138,30 +118,6 @@ const isManagingSpace = computed(
 .activity-btn .material-symbols-outlined {
   font-size: 18px;
 }
-/* 当前空间管理页高亮同时覆盖全局 admin 的 manager 子路由与
-   space-admin 的顶层路由。 */
-.space-admin-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  transition: background var(--duration-fast);
-}
-.space-admin-btn:hover {
-  background: var(--bg-canvas);
-  color: var(--text-1);
-}
-.space-admin-btn.is-current {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.space-admin-btn .material-symbols-outlined {
-  font-size: 18px;
-}
+/* ManagementMenu 自带样式 — 见 components/layout/ManagementMenu.vue。
+   当前空间管理页 active 高亮覆盖在 popover 项里(.mm-item-active)。 */
 </style>

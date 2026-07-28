@@ -11,8 +11,11 @@
  *   - 我的空间  → setActiveSpace(personal) + replace('/'),在个人空间上下文里
  *                落地为 M2 Dashboard。详情见 `goMySpace` 注释。
  *   - 设置     → SettingsDrawer
- *   - 管理后台 (admin only — gated by authStore.isAdmin) → /manager/people
  *   - 登出     (clears session, authStore.logout() + redirect to /login)
+ *
+ * P1-8: 「管理后台」从这里挪到 TopBar 的 `ManagementMenu` dropdown —
+ * 跟「当前空间管理」同段对照,避免单个 UserMenu 里塞两条作用域不同的
+ * admin 入口(global vs. space)。
  *
  * 命名 / 落地策略 (2026-07-11 三段式演化):
  *   v1: 「我的空间」 跳 /p/<personalSpaceId> —— personalSpaceId 是 space ID
@@ -73,11 +76,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocClick)
   document.removeEventListener('keydown', onKey)
 })
-
-function goManager() {
-  close()
-  void router.push('/manager/people')
-}
 
 /**
  * 「我的空间」 → `/` 路由,前提是 active space 已是 personal。
@@ -196,17 +194,6 @@ async function onLogout() {
         >
           <span class="material-symbols-outlined um-icon">settings</span>
           <span>设置</span>
-        </button>
-
-        <button
-          v-if="authStore.isAdmin"
-          type="button"
-          class="um-item"
-          role="menuitem"
-          @click="goManager"
-        >
-          <span class="material-symbols-outlined um-icon">admin_panel_settings</span>
-          <span>管理后台</span>
         </button>
 
         <button type="button" class="um-item danger" role="menuitem" @click="onLogout">

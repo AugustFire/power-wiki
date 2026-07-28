@@ -41,15 +41,23 @@ import { generatePageId } from './ids'
  * 实用上:任何 `db.transaction(tx => …)` 里那个 tx 都满足这个约束(因为
  * permissionAudit 在 schema.ts 里),所以直接传进来即可。
  */
-type AnyTx = Pick<NodePgTransaction<Record<string, unknown>, TablesRelationalConfig>, 'insert'>
+export type AnyTx = Pick<NodePgTransaction<Record<string, unknown>, TablesRelationalConfig>, 'insert' | 'execute'>
 
-/** 事件类型。schema 里 CHECK 限定 11 个;新增事件同步改 CHECK + migration。
- *  8 个权限变更(grant / restriction / share)+ 3 个资源生命周期(space / group / user 删 / 匿名化)。
- *  资源生命周期事件统一归到 permission_audit,跟权限变更同张表 = 「任何会改可见性 / 访问性的事件」都在一个时间线,审计查询一次搞定。 */
+/** 事件类型。schema 里 CHECK 限定 12 个;新增事件同步改 CHECK + migration。
+ *  9 个权限变更(grant add/remove/change/set / restriction add/remove/set / share create/revoke)
+ *  + 3 个资源生命周期(space / group / user 删 / 匿名化)。
+ *  资源生命周期事件统一归到 permission_audit,跟权限变更同张表 = 「任何会改可见性 / 访问性的事件」都在一个时间线,审计查询一次搞定。
+ *
+ *  grant 4 类的语义边界:
+ *    - set:全量替换(legacy,保留兼容;新代码已不写)
+ *    - add:principal 从无到有
+ *    - remove:principal 从有到无
+ *    - change:principal 一直在,但 role 改了(v0.7 起 PUT diff 拆出) */
 export type AuditKind =
   | 'space_grant_set'
   | 'space_grant_add'
   | 'space_grant_remove'
+  | 'space_grant_change'
   | 'page_restriction_set'
   | 'page_restriction_add'
   | 'page_restriction_remove'
@@ -73,6 +81,7 @@ export interface AuditEntry {
    *   - *_set: {before, after} 都填完整对象
    *   - *_add: {after: 单行限制}
    *   - *_remove: {before: 单行限制}
+   *   - *_change: {before: 单行, after: 单行}(v0.7 起 PUT diff 拆出)
    * null = 该事件无 diff 信息(保留列兼容,极少用)。
    */
   payload: unknown

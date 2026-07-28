@@ -357,6 +357,9 @@ export type {
   SetSpacePermissionsInput,
   UpsertGroupGrantInput,
   UpsertUserGrantInput,
+  // P1-2 — 空间成员展开视图(effective role + 来源链)
+  SpaceMember,
+  SpaceMemberSource,
   // Phase B — page-level restrictions (Confluence 风格页面级 view/edit 限制)
   PageRestrictionKind,
   PageRestriction,
