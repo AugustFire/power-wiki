@@ -6,7 +6,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecentPages } from '@/composables/useRecentPages'
-import { usePinnedPages } from '@/composables/usePinnedPages'
 import TocPanel from '@/components/layout/TocPanel.vue'
 import ScrollProgress from '@/components/layout/ScrollProgress.vue'
 import LabelPills from '@/components/page/LabelPills.vue'
@@ -44,7 +43,6 @@ const uiStore = useUiStore()
 const router = useRouter()
 const route = useRoute()
 const { recordVisit } = useRecentPages()
-const { isPinned, togglePin } = usePinnedPages()
 
 /**
  * AppShell provide 的右栏 DOM 引用 —— 直接给 Teleport 喂 HTMLElement,
@@ -223,18 +221,6 @@ const isPersonalSpace = computed(() => {
   if (page.value?.spaceId === pid) return true
   return spacesStore.activeSpaceId.value === pid
 })
-const pageIsPinned = computed(() => page.value ? isPinned(page.value.id) : false)
-
-function toggleCurrentPin(): void {
-  const current = page.value
-  if (!current?.spaceId) return
-  togglePin({
-    id: current.id,
-    title: current.title,
-    spaceId: current.spaceId,
-  })
-}
-
 /** 浏览器 tab 标题:页面名 + "· power-wiki";page 还没解析出时退回 BASE。
  * watchEffect 自动响应 page.value 的 reactive 变化。 */
 useDocumentTitle(() => page.value?.title)
@@ -693,16 +679,6 @@ watch(
           <span class="material-symbols-outlined icon-md">history</span>
           页面历史
         </RouterLink>
-        <button
-          v-if="page"
-          class="btn"
-          type="button"
-          :title="pageIsPinned ? `取消固定 ${page.title}` : `固定 ${page.title} 到侧栏`"
-          @click="toggleCurrentPin"
-        >
-          <span class="material-symbols-outlined icon-md">{{ pageIsPinned ? 'keep_off' : 'push_pin' }}</span>
-          {{ pageIsPinned ? '取消固定' : '固定' }}
-        </button>
         <!-- M13 👁 关注按钮 —— 位置贴 design/wiki-read.html:311 的 subheader
              page-actions 行,跟「页面历史 / 编辑」同款 `.btn`,表达「订阅此页
              通知」。个人空间无 watch 语义,直接不渲染。 -->

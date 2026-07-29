@@ -11,7 +11,6 @@ import { usePagesStore } from '@/stores/pages'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useUiStore } from '@/stores/ui'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
-import { usePinnedPages } from '@/composables/usePinnedPages'
 import { useRecentPages } from '@/composables/useRecentPages'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { newId } from '@/lib/id'
@@ -25,7 +24,6 @@ const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const notifications = useNotificationsStore()
 const uiStore = useUiStore()
-const { list: pinnedList } = usePinnedPages()
 const { list: recentList } = useRecentPages()
 
 useDocumentTitle(() => '我的工作台')
@@ -51,24 +49,9 @@ const profileSummary = computed(() => {
   const mentions = payload.value?.mentions.length ?? 0
   const created = payload.value?.created.length ?? 0
   if (mentions > 0) return `有 ${mentions} 条未读提到等待处理,最近创建了 ${created} 个页面。`
-  if (created > 0) return '集中查看你跨空间创建、固定和最近访问的内容。'
+  if (created > 0) return '集中查看你跨空间创建和最近访问的内容。'
   return '这是你跨空间的个人工作台,从这里开始记录和整理知识。'
 })
-const pinnedItems = computed(() => pinnedList.value.map((entry) => {
-  // P1-9: 死 row = page 已被 soft-delete。pagesStore.getPage 走内部 pages
-  // map,soft-delete 后的页不在那里(API 列表过滤 deletedAt)→ getPage 返
-  // 回 undefined。`alive` 必须显式区分「找到且未删」与「找不到」两种情况,
-  // 否则 undefined?.deletedAt === undefined 让 `!undefined` = true,死 row
-  // 被误判为 alive,stored-row-dead + disabled 视觉降级不生效。
-  const page = pagesStore.getPage(entry.id)
-  return {
-    id: entry.id,
-    title: page?.title || entry.title,
-    spaceId: entry.spaceId,
-    timestamp: entry.pinnedAt,
-    alive: !!page && !page.deletedAt,
-  }
-}))
 const recentItems = computed(() => recentList.value.map((entry) => {
   const page = pagesStore.getPage(entry.id)
   return {
@@ -76,7 +59,11 @@ const recentItems = computed(() => recentList.value.map((entry) => {
     title: page?.title || entry.title,
     spaceId: page?.spaceId ?? null,
     timestamp: entry.visitedAt,
-    // 同上 — 见 pinnedItems 注释
+    // 死 row = page 已被 soft-delete。pagesStore.getPage 走内部 pages map,
+    // soft-delete 后的页不在那里(API 列表过滤 deletedAt)→ getPage 返回
+    // undefined。`alive` 必须显式区分「找到且未删」与「找不到」两种情况,
+    // 否则 undefined?.deletedAt === undefined 让 `!undefined` = true,死
+    // row 被误判为 alive,stored-row-dead + disabled 视觉降级不生效。
     alive: !!page && !page.deletedAt,
   }
 }))
@@ -319,38 +306,6 @@ function relativeTime(timestamp: number): string {
             icon="article"
             title="还没有创建过页面"
             hint="去任意空间创建你的第一页,会出现在这里。"
-            size="sm"
-          />
-        </section>
-
-        <section class="personal-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon">push_pin</span>
-              已固定
-            </h2>
-            <span class="section-meta">{{ pinnedItems.length }} 个</span>
-          </header>
-          <ul v-if="pinnedItems.length > 0" class="stored-list">
-            <li v-for="item in pinnedItems" :key="item.id">
-              <button
-                type="button"
-                class="stored-row"
-                :class="{ 'stored-row-dead': !item.alive }"
-                :disabled="!item.alive"
-                @click="openStoredPage(item)"
-              >
-                <span class="material-symbols-outlined stored-icon">description</span>
-                <span class="stored-title">{{ item.title }}</span>
-                <span class="stored-meta">{{ relativeTime(item.timestamp) }}</span>
-              </button>
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="push_pin"
-            title="还没有固定页面"
-            hint="在页面操作中固定常用内容,它们会出现在这里。"
             size="sm"
           />
         </section>
