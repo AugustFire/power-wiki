@@ -16,6 +16,8 @@ export const PERSIST_KEYS = {
   TREE_SCROLL: 'power-wiki:tree-scroll',
   /** TOC 折叠态 — 刷新后保留用户偏好 */
   TOC_COLLAPSED: 'power-wiki:toc-collapsed',
+  /** 侧栏各 section 折叠态 — `{ [sectionKey]: collapsed }`,刷新后保留 */
+  SIDEBAR_SECTIONS: 'power-wiki:sidebar-sections',
 } as const
 
 export type PersistKey = (typeof PERSIST_KEYS)[keyof typeof PERSIST_KEYS]

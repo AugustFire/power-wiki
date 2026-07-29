@@ -13,6 +13,7 @@ import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
 import WatchedSidebar from './WatchedSidebar.vue'
 import SidebarTopSection from './SidebarTopSection.vue'
+import SidebarSectionHeader from './SidebarSectionHeader.vue'
 import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
 
 const pagesStore = usePagesStore()
@@ -54,6 +55,18 @@ const treeLoading = computed(() => {
 })
 
 const totalPages = computed(() => pagesStore.pages.length)
+
+/**
+ * 「此空间的页面」折叠态 —— 跟「此空间的关注」共用 uiStore 的 section 折叠
+ * 机制(持久化到 localStorage)。默认**展开**:页面树是侧栏主导航,关注
+ * 只是辅助列表,两者默认态不同是有意的。
+ */
+const PAGES_SECTION_KEY = 'pages'
+const pagesCollapsed = computed(() => uiStore.isSectionCollapsed(PAGES_SECTION_KEY, false))
+
+function togglePagesSection(): void {
+  uiStore.toggleSection(PAGES_SECTION_KEY, false)
+}
 
 // Active-space quick-nav. Mirrors the topbar's SpaceSwitcher trigger but
 // stays inside the sidebar so users get a "where am I" anchor that scrolls
@@ -321,13 +334,14 @@ watch(
     <WatchedSidebar v-if="!isActivePersonal" />
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">
-        <span class="section-label">
-          <span class="material-symbols-outlined section-icon">layers</span>
-          此空间的页面
-        </span>
-        <span class="count">{{ activePageCount }}</span>
-      </div>
+      <SidebarSectionHeader
+        icon="layers"
+        label="此空间的页面"
+        :count="activePageCount"
+        :collapsed="pagesCollapsed"
+        @toggle="togglePagesSection"
+      />
+      <template v-if="!pagesCollapsed">
       <EmptyState
         v-if="tree.length === 0 && !treeLoading"
         class="tree-empty"
@@ -356,6 +370,7 @@ watch(
           :node="root"
         />
       </div>
+      </template>
     </div>
 
     <div class="sidebar-bottom">
@@ -511,16 +526,10 @@ watch(
   opacity: 0.6;
 }
 
-.sidebar-section-title .count {
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg-subtle);
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-}
+/* 2026-07-29:section title 的 `.count` chip 样式不再在此 scoped 声明 ——
+   标题栏搬进 SidebarSectionHeader.vue 后,scoped 选择器打不到子组件内部;
+   chip 视觉由 styles/components.css 的全局 `.sidebar-section-title .count`
+   提供(两块 section 共用同一份)。 */
 
 /* Sidebar 三个 section 之间用 sticky top 自身的 border-bottom 做分隔 —
    见 SidebarTopSection.vue。WatchedSidebar / page-tree section 跟 sticky 顶

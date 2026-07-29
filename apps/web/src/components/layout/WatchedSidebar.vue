@@ -31,22 +31,29 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/lib/api'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
+import { useUiStore } from '@/stores/ui'
+import SidebarSectionHeader from './SidebarSectionHeader.vue'
 import type { PageNode } from '@power-wiki/shared'
 
 const router = useRouter()
 const route = useRoute()
 const spaces = useSpacesStore()
 const pagesStore = usePagesStore()
+const uiStore = useUiStore()
 
 const activeSpaceId = computed(() => spaces.activeSpaceId.value)
 
 /** 默认折叠 —— sticky 顶部 + 此空间的关注三块(section 自带 chrome)视觉统一
  *  但默认收起,只有「我的工作台」常驻入口。其余按用户兴趣展开,避免
- *  sidebar 顶部 + 底部出现多个始终展开的辅助列表互相争屏。 */
-const expanded = ref(false)
+ *  sidebar 顶部 + 底部出现多个始终展开的辅助列表互相争屏。
+ *  2026-07-29:折叠态挪进 uiStore 持久化 —— 刷新后保留用户偏好,跟
+ *  「此空间的页面」共用同一套 section 折叠机制。 */
+const SECTION_KEY = 'watched'
+const collapsed = computed(() => uiStore.isSectionCollapsed(SECTION_KEY, true))
+const expanded = computed(() => !collapsed.value)
 
 function toggle(): void {
-  expanded.value = !expanded.value
+  uiStore.toggleSection(SECTION_KEY, true)
 }
 
 const items = ref<PageNode[]>([])
@@ -101,30 +108,22 @@ function goPage(pageId: string) {
 
 <template>
   <div class="sidebar-section watched-section">
-    <button
-      type="button"
-      class="sidebar-section-title watched-section-title"
-      @click="toggle"
-    >
-      <span class="section-label st-left">
-        <span class="material-symbols-outlined section-icon">visibility</span>
-        <!-- 2026-07-29:「我的关注」→「此空间的关注」。
-             数据来源 GET /api/users/me/watched?space=<activeSpaceId>,是按
-             active space 过滤的子集(不在当前空间内被 watch 的页不显示),
-             跟「此空间的页面」共享同一 scope 语言,改前缀后语义更准:
-             - 「此空间的页面」= 当前空间所有可见页(全局)
-             - 「此空间的关注」= 当前空间里我 watch 过的页(子集)
-             底部「查看全部」继续跳 /me/watched(全空间汇总),从子集 → 全集
-             形成清晰的二级跳转。两个 section 都带「此空间的」前缀,sidebar
-             视觉语言统一。 -->
-        此空间的关注
-        <span v-if="hasItems" class="count">{{ items.length }}</span>
-      </span>
-      <span
-        class="material-symbols-outlined expand-icon"
-        :class="{ 'expand-icon-collapsed': !expanded }"
-      >expand_more</span>
-    </button>
+    <!-- 2026-07-29:「我的关注」→「此空间的关注」。
+         数据来源 GET /api/users/me/watched?space=<activeSpaceId>,是按
+         active space 过滤的子集(不在当前空间内被 watch 的页不显示),
+         跟「此空间的页面」共享同一 scope 语言:
+         - 「此空间的页面」= 当前空间所有可见页(全局)
+         - 「此空间的关注」= 当前空间里我 watch 过的页(子集)
+         底部「查看全部」继续跳 /me/watched(全空间汇总),从子集 → 全集
+         形成清晰的二级跳转。标题栏走共用的 SidebarSectionHeader,跟
+        「此空间的页面」同一份结构 + 样式。 -->
+    <SidebarSectionHeader
+      icon="visibility"
+      label="此空间的关注"
+      :count="hasItems ? items.length : null"
+      :collapsed="collapsed"
+      @toggle="toggle"
+    />
 
     <template v-if="expanded">
       <div v-if="loading && !hasItems" class="watched-empty">加载中…</div>
@@ -156,43 +155,8 @@ function goPage(pageId: string) {
 </template>
 
 <style scoped>
-/* 2026-07-29 sidebar polish 第二轮:watched-section-title 不再覆写
-   .sidebar-section-title 的 13px / 600 / text-3 label 视觉 —— 让 Watched-
-   Sidebar 的「此空间的关注」跟「此空间的页面」共用同一套 label 风格,不再出现
-   一个 label 一个 row 的割裂。仅补 button 必填属性 + chevron 折叠交互。 */
-.watched-section-title {
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-  width: 100%;
-  text-align: left;
-  font-family: inherit;
-}
-.watched-section-title:hover {
-  /* label hover 只加深底色,字色不变(保持 label 的 muted 重量,不让它
-     jitter 到更亮的 text-1,跟 .sidebar-section-title 不带 :hover 时行为
-     一致 —— label 的 hover 是"找得到" 的静态反馈,不是 "激活" 颜色升级)。 */
-  background: var(--bg-subtle);
-}
-.st-left {
-  display: flex;
-  align-items: center;
-  /* 2026-07-29:不要 gap —— .section-icon 自带 margin-right 4px,再加 flex
-     gap 8px 会让「此空间的关注」的 icon-text 间距叠加到 12px,跟「此空间的页面」
-     的纯 inline 渲染(只有 .section-icon 的 4px margin)不一致。删 gap 让
-     icon / 文字 / count 各自靠自己的 margin 提供间距,跟 sidebar-section-
-     title 视觉同源。 */
-}
-.expand-icon {
-  font-size: 18px !important;
-  color: var(--text-3);
-  transition: transform var(--duration-fast) var(--ease-out);
-  margin-left: 4px;
-  flex-shrink: 0;
-}
-.expand-icon-collapsed {
-  transform: rotate(-90deg);
-}
+/* 标题栏样式全部搬进 SidebarSectionHeader.vue —— 两块 section 共用一份,
+   不再在这里覆写 .sidebar-section-title。 */
 
 /* Empty state —— padding 0 8px 0 20px 让"暂无关注"跟 watched-row 文字
    起点对齐(2026-07-29:跟 tree-row 缩进一起右移,确保 empty state 跟 row

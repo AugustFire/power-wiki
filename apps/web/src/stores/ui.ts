@@ -6,6 +6,7 @@ import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
 const KEY_SCROLL = PERSIST_KEYS.TREE_SCROLL
 const KEY_TOC_COLLAPSED = PERSIST_KEYS.TOC_COLLAPSED
+const KEY_SIDEBAR_SECTIONS = PERSIST_KEYS.SIDEBAR_SECTIONS
 const LEGACY_KEY = '__legacy__'
 
 /**
@@ -98,6 +99,30 @@ export const useUiStore = defineStore('ui', () => {
   }
   function toggleTocCollapsed(): void {
     tocCollapsed.value = !tocCollapsed.value
+  }
+
+  /**
+   * 侧栏 section 折叠态 —— `{ [sectionKey]: collapsed }`。key 是稳定字面量
+   * (`'watched'` / `'pages'`),不按 space 分,折叠是「我想不想看这块」的
+   * 全局偏好,跟具体空间无关(跟 tree 展开态不同,后者是 per-space)。
+   * 未记录的 key 由调用方给默认值 —— 关注默认收起、页面默认展开。
+   */
+  function readSidebarSectionsInitial(): Record<string, boolean> {
+    const raw = readJSON<unknown>(KEY_SIDEBAR_SECTIONS, {})
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return raw as Record<string, boolean>
+    }
+    return {}
+  }
+  const sidebarSections = ref<Record<string, boolean>>(readSidebarSectionsInitial())
+  watch(sidebarSections, (val) => writeJSON(KEY_SIDEBAR_SECTIONS, val), { deep: true })
+
+  function isSectionCollapsed(key: string, defaultCollapsed: boolean): boolean {
+    return sidebarSections.value[key] ?? defaultCollapsed
+  }
+  function toggleSection(key: string, defaultCollapsed: boolean): void {
+    const next = !isSectionCollapsed(key, defaultCollapsed)
+    sidebarSections.value = { ...sidebarSections.value, [key]: next }
   }
 
   // 树节点 ⋯ 菜单状态(全树共享,同一时刻只有一个菜单打开)
@@ -330,6 +355,9 @@ export const useUiStore = defineStore('ui', () => {
     tocCollapsed,
     setTocCollapsed,
     toggleTocCollapsed,
+    sidebarSections,
+    isSectionCollapsed,
+    toggleSection,
     error,
     isExpanded,
     hasRecord,
