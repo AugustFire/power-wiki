@@ -704,10 +704,15 @@
        起的"页面上滑"。注意:必须作用在真正的滚动容器上 */
     overflow-anchor: none;
 }
-/* AppShell:右栏(Teleport 入口)按三栏平衡列占位,无内容时仅留出列宽。 */
+/* AppShell:右栏是 Teleport 入口通道,自身不应有 background / padding。
+   历史曾设 `background: var(--bg); padding: 0 16px 24px;` —— 把它当独立外壳,
+   但 toc-panel 自身已有完整背景 + padding(跟 sidebar 同色),rail 再包一层
+   就把 toc-panel 收窄 32px,并在 content(右 32px padding)与 toc 之间挤
+   出 16px 视觉间隔,跟 sidebar 与 content 的无缝衔接不对称。
+   这里只保留 min-width: 0(grid item 可塌缩)+ height: 100%(让 sticky
+   子元素有定位锚点)+ overflow: hidden(toc-collapsed 时裁掉溢出 cell)。
+   :empty 时 padding 仍 0(原本就这样),保持。 */
 .app-shell .layout > .app-right-rail {
-    background: var(--bg);
-    padding: 0 16px 24px;
     min-width: 0;
     height: 100%;
     overflow: hidden;
@@ -1103,6 +1108,10 @@
     top: calc(var(--topbar-h) + var(--sub-h));
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
     overflow-y: auto;
+    /* 跟左侧 sidebar 同色(--bg-sidebar),让左右两栏视觉对齐、主体内容列
+     * 居中凸出在 --bg-canvas 上。原本跟 body(--bg-canvas)同色时,TOC 与
+     * 内容列无视觉边界,跟 sidebar 三栏分不清主次。 */
+    background: var(--bg-sidebar);
     /* grid item 默认 min-width: auto ≈ min-content,会让列宽收到 ~240px
      * 时无法真正到 0。折叠态需要 cell 能塌缩为 0 width。 */
     min-width: 0;
