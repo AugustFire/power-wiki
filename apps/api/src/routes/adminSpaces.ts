@@ -384,7 +384,7 @@ adminSpacesRouter.post('/:id/archive', async (c) => {
       actorId: me.id,
       targetKind: 'space',
       targetId: id,
-      payload: { after: { archivedAt: now, archivedByUserId: me.id } },
+      payload: { after: { name: existing.name, archivedAt: now, archivedByUserId: me.id } },
     })
     return row
   })
@@ -434,6 +434,7 @@ adminSpacesRouter.post('/:id/unarchive', async (c) => {
   }
 
   const before = {
+    name: existing.name,
     archivedAt:
       typeof existing.archivedAt === 'string'
         ? Number(existing.archivedAt)

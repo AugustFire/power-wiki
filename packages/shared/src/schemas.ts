@@ -1242,7 +1242,7 @@ export type UpdateAdminSettingInput = z.infer<typeof UpdateAdminSettingInputSche
 
 /* ─── Phase C 审计日志 ──────────────────────────────────────────────── */
 
-/** 12 个事件类型白名单 —— 与 DB CHECK 约束 + auditLog.ts 的 AuditKind 同步。 */
+/** 14 个事件类型白名单 —— 与 DB CHECK 约束 + auditLog.ts 的 AuditKind 同步。 */
 export const AuditKindSchema = z.enum([
   'space_grant_set',
   'space_grant_add',
@@ -1254,6 +1254,8 @@ export const AuditKindSchema = z.enum([
   'page_share_create',
   'page_share_revoke',
   'space_deleted',
+  'space_archived',
+  'space_unarchived',
   'group_deleted',
   'user_anonymized',
 ])
