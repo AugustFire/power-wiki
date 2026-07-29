@@ -11,8 +11,8 @@ const props = withDefaults(
      * literal label is shown — keeps backwards compat with the old "ME" prop.
      */
     label?: string
-    /** 20 / 24 / 28 / 32 / 36 / 40 / 48 / 56 */
-    size?: 20 | 24 | 28 | 32 | 36 | 40 | 48 | 56
+    /** 20 / 24 / 28 / 32 / 36 / 40 / 48 / 56 / 80 */
+    size?: 20 | 24 | 28 | 32 | 36 | 40 | 48 | 56 | 80
     /** tooltip */
     title?: string
     /** Background colour. Defaults to the brand accent. */
@@ -135,4 +135,5 @@ function onImgError() {
 .size-40 { width: 40px; height: 40px; font-size: 14px; letter-spacing: 0.05em; }
 .size-48 { width: 48px; height: 48px; font-size: 16px; letter-spacing: 0.05em; }
 .size-56 { width: 56px; height: 56px; font-size: 18px; letter-spacing: 0.05em; }
+.size-80 { width: 80px; height: 80px; font-size: 26px; letter-spacing: 0.05em; }
 </style>

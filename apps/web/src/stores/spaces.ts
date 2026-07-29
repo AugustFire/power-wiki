@@ -52,6 +52,15 @@ export function useSpacesStore() {
   /** Space list filtered to team spaces (kind='shared' or missing kind). */
   const sharedSpaces = computed(() => spaces.value.filter((s) => s.kind !== 'personal'))
 
+  /** P1-9: 派生 isArchived(spaceId) —— Sidebar quick-nav chip / 任何渲染
+   *  归档空间标识的入口共用这一个事实来源。后端字段 `archivedAt` 是
+   *  timestamp(归档时刻)或 null(未归档)。 */
+  function isArchived(spaceId: string | null | undefined): boolean {
+    if (!spaceId) return false
+    const s = spaces.value.find((sp) => sp.id === spaceId)
+    return !!s?.archivedAt
+  }
+
   /** Persist activeSpaceId whenever it changes. */
   watch(
     activeSpaceId,
@@ -205,6 +214,8 @@ export function useSpacesStore() {
     loading,
     loaded,
     loadError,
+    // helpers
+    isArchived,
     // actions
     init,
     refresh,

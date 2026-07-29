@@ -536,7 +536,7 @@ export const api = {
     /**
      * M13 👁 关注(visibility)—— 显式 REST 风格:POST 订阅,DELETE 取消。
      * 响应是最小回执 { watched, watchersCount },与 ToggleLike 同构。
-     * Sidebar「我的关注」section 和 PageTree node indicator 都消费这个。
+     * Sidebar「此空间的关注」section 和 PageTree node indicator 都消费这个。
      */
     watch: async (id: string): Promise<ToggleWatchResponse> => {
       const raw = await request<ToggleWatchResponse>(
@@ -915,7 +915,7 @@ export const api = {
         invalidatePrefix('/users/me')
       },
       /**
-       * M13 当前用户的关注页面列表 —— Sidebar「我的关注」section 传
+       * M13 当前用户的关注页面列表 —— Sidebar「此空间的关注」section 传
        * `spaceId: activeSpaceId` 走空间过滤;Dashboard Watching tab 不传
        * 拿全部。30s GET 缓存 + toggle 后 invalidatePrefix 配套。
        */

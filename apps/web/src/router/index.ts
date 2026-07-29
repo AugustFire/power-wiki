@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSpacesStore } from '@/stores/spaces'
 
 declare module 'vue-router' {
   // Augment route meta so we can declare public / requiresAdmin / requiresAuth
@@ -51,21 +52,15 @@ const routes: RouteRecordRaw[] = [
 
   // ─── Authed app ─────────────────────────────────────────────────────
   {
-    // M2: /me is now the personal Dashboard ("Your Work") — cross-space
-    // personal awareness, NOT the user's personal space page tree. The
-    // personal space is still accessible via SpaceSwitcher / direct nav.
-    //
-    // Registered before `/` so /me always matches this route, not the
-    // catch-all.
     path: '/me',
     name: 'me-dashboard',
-    component: () => import('@/views/MeDashboardView.vue'),
+    component: () => import('@/views/PersonalHomeView.vue'),
     meta: { requiresAuth: true },
   },
   {
     path: '/',
     name: 'home',
-    component: () => import('@/views/HomeView.vue'),
+    component: () => import('@/views/SpaceHomeView.vue'),
     meta: { requiresAuth: true },
   },
   {
@@ -112,7 +107,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
-  // M13: 全量关注页面。Sidebar「我的关注」section 的「查看全部」跳到这里。
+  // M13: 全量关注页面。Sidebar「此空间的关注」section 的「查看全部」跳到这里。
   // 独立成 /me/watched 而不是挂在 /me 下面 —— M2 的真 Dashboard 来之前不引入
   // /me?tab=xxx 模式;Phase 7 给出最简可访问页,M2 时再考虑迁到 /me/watched。
   {
@@ -356,6 +351,16 @@ router.beforeEach(async (to) => {
   // 6. auth gate — most routes require a session
   if (!authStore.isAuthed) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (to.name === 'home') {
+    // SpaceHomeView 同一个组件处理 team + personal — 不再 redirect 到 /me。
+    // 之前这条 guard 是给拆分前的 HomeView(只渲染 team-home)准备的;P1-7
+    // 把 SpaceHomeView 改成 both-handling 后,SpaceSwitcher 切到 personal、
+    // UserMenu「我的空间」、PersonalHomeView cover「进入个人空间 →」 都依赖
+    // 这里能正常落到 SpaceHomeView 而不是被弹回 /me。
+    const spacesStore = useSpacesStore()
+    if (!spacesStore.loaded.value) await spacesStore.init()
   }
 
   return true

@@ -8,25 +8,13 @@
  *
  * Items (top → bottom):
  *   - Header: avatar + name + email
- *   - 我的空间  → setActiveSpace(personal) + replace('/'),在个人空间上下文里
- *                落地为 M2 Dashboard。详情见 `goMySpace` 注释。
+ *   - 我的空间 → /me 全局个人工作台
  *   - 设置     → SettingsDrawer
  *   - 登出     (clears session, authStore.logout() + redirect to /login)
  *
  * P1-8: 「管理后台」从这里挪到 TopBar 的 `ManagementMenu` dropdown —
  * 跟「当前空间管理」同段对照,避免单个 UserMenu 里塞两条作用域不同的
  * admin 入口(global vs. space)。
- *
- * 命名 / 落地策略 (2026-07-11 三段式演化):
- *   v1: 「我的空间」 跳 /p/<personalSpaceId> —— personalSpaceId 是 space ID
- *       不是 page ID,直接 404。
- *   v2: 拆为 「我的工作」(/me) + 「我的空间」(setActive + /) 两项。用户反馈
- *       「我的工作」 有钉钉味,合并为 「我的空间」(/me)。
- *   v3 (当前): 「我的空间」 跳 /,前提是 active=personal。`/` HomeView 在
- *       personal context 下渲染 MeDashboardView,team 空间下渲染 page tree。
- *       — 字面意义「我的空间」 = 个人空间首页 = 视觉上是 awareness 视图。
- *       — 深链 /me 仍可用(直接挂 MeDashboardView,无 active 切换),但不是
- *         主要入口。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -77,29 +65,23 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
 })
 
-/**
- * 「我的空间」 → `/` 路由,前提是 active space 已是 personal。
- *
- * 落地策略(2026-07-11 决定):
- *   `/` 路由是 HomeView,该 view 在 `activeSpace.kind === 'personal'` 时
- *   渲染 MeDashboardView(M2 awareness 视图)而不是团队空间的 page tree。
- *   这样「我的空间」的字面语义与落地统一:
- *     - URL 是 `/`(个人空间首页,跟其他空间同档位)
- *     - 视觉是 awareness dashboard(被 @ / 草稿 / 我创建 / 关注 / 最近)
- *
- *   `personalSpaceId` 是 space ID 不是 page ID,不能用 `/p/<id>`。我们走
- *   「切 active space → 跳 /」,跟登录后默认落地的同一条路径 —— 但用
- *   `replace` 避免从个人空间外的页面跳进来时 history 多塞一条,以及从
- *   Dashboard 内点自身时无意义滚动。
- */
-function goMySpace() {
+async function goMySpace() {
   close()
-  const id = authStore.personalSpaceId
-  if (!id) return
-  if (spacesStore.activeSpaceId.value !== id) {
-    spacesStore.setActiveSpace(id)
+  // P1-7: 「我的空间」 = 进入个人空间容器视图(跟 SpaceSwitcher 选中
+  // personal 是同一动作:切 activeSpace → 跳到该空间的 home)。这跟
+  // 「我的工作台」(/me)是两个产品:
+  //   - 我的工作台:跨空间个人 dashboard(pinned / recents / @mention)
+  //   - 我的空间:个人空间的 page tree 容器(可看可编辑私人页面)
+  // 之前把两条合并成 `push('/me')`,让用户失去了进入个人空间容器视图
+  // 的入口 —— 现在分开:
+  //   - Sidebar 顶部「我的工作台」 → /me (PersonalHomeView)
+  //   - UserMenu「我的空间」 → / (SpaceHomeView, active=personal)
+  if (personalSpace.value) {
+    spacesStore.setActiveSpace(personalSpace.value.id)
+    if (router.currentRoute.value.path !== '/') {
+      void router.push('/')
+    }
   }
-  void router.replace('/')
 }
 
 /**

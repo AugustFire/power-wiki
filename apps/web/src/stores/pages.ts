@@ -36,7 +36,7 @@ export const usePagesStore = defineStore('pages', () => {
   const trashLoaded = ref(false)
 
   /** Bumped on every successful watch/unwatch (or cache-less first toggle).
-   * Sidebar 的「我的关注」section 和右 TOC 的「页面关注者」都 watch 这个
+   * Sidebar 的「此空间的关注」section 和右 TOC 的「页面关注者」都 watch 这个
    * counter —— 单凭 page.watchedByMe / watchersCount 变化驱动不到跨组件
    * 列表拉取(它们各自维护独立的 local state),需要一个稳定的 trigger 让
    * 任何 watch 操作都触发两边重新 fetch。counter 比 timestamp 更可测,

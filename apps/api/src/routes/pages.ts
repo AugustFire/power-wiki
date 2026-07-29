@@ -436,6 +436,7 @@ pagesRouter.post('/', async (c) => {
   // — Confluence-style: admin supervises, doesn't edit).
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, input.spaceId)
   if (blocked) return blocked
+  console.log('!!! INTENTIONALLY_BROKEN_FOR_DEBUG !!!') // deliberate syntax-ish to trigger reload
 
   // sortOrder: 显式传入则用,否则追加到末尾。
   let sortOrder = input.order

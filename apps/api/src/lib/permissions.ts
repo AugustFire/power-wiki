@@ -100,9 +100,10 @@ function rankToRole(rank: number): SpaceRole | null {
  *   - null:无任何授权(默认拒绝)
  *
  * 行为细节:
- *   - admin:返回 'admin'(包括 personal space)。**写 personal space
- *     的 403 由路由层的 `assertAdminNotWritingPersonalSpace` 拦截,
- *     不在这个文件里**。
+ *   - admin:返回 'admin'(包括 personal space)。**写「他人」personal
+ *     space 的 403 由路由层的 `assertCanWriteToPersonalSpace` /
+ *     `assertAdminNotWritingPersonalSpace` 拦截,不在这个文件里**(admin
+ *     写「own」personal 是允许的,2026-07-29 起)。
  *   - anonymous:返回 null(匿名用户只能走公开分享链接,Phase D
  *     在 `canReadPage` 里 token 命中后短路放行,不走本函数)。
  *   - regular user:UNION space_role_grants(direct user grant + group
@@ -177,9 +178,11 @@ export async function isSpaceArchived(spaceId: string): Promise<boolean> {
 /**
  * 主体能否编辑该空间的内容(创建/修改/删除页面、附件、评论)。
  *
- *  - admin:永远 true。**personal space 的 403 拦截由
+ *  - admin:永远 true。**「他人」personal space 的 403 拦截由
+ *    `assertCanWriteToPersonalSpace`(优先)或
  *    `assertAdminNotWritingPersonalSpace` 在调用 canEditSpace
- *    之后独立完成**,不在这层做(保留个人空间 owner-only 语义)。
+ *    之后独立完成**,不在这层做。admin 写 own personal 走个人空间 owner-id
+ *    矩阵(2026-07-29 起 P0-3 放宽)。
  *  - viewer:false。editor / admin:true。
  *  - **archived(P1-1)**:永远 false —— 归档后 team space 默认禁止新增
  *    和编辑,包含 admin(spec: admin 想改先 unarchive)。personal space
@@ -223,8 +226,8 @@ export type ListReadableSpaceIdsResult = '*' | string[]
  *
  * 语义对齐 `effectiveSpaceRole`:
  *   - admin:返回 map 全 'admin'。**personal space 也算 'admin'**;
- *     写 personal space 的拦截在路由层 assertAdminNotWritingPersonalSpace,
- *     不影响 role 计算。
+ *     写「他人」personal space 的拦截在路由层 assertCanWriteToPersonalSpace,
+ *     不影响 role 计算。admin 写 own personal 走矩阵允许(2026-07-29 起)。
  *   - anonymous:返回空 map(无访问)。
  *   - regular user:一次 SQL,UNION space_role_grants(直 user grant ∪
  *     group grant)+ space_group_access(legacy,视为 editor),按 space_id
@@ -698,8 +701,9 @@ export async function effectivePageReadAccess(
   pageId: string,
   spaceId: string,
 ): Promise<boolean> {
-  // global admin 始终 true(覆盖 personal space;个人空间 read-only 写入
-  // 仍由 assertAdminNotWritingPersonalSpace 在路由层挡)。
+  // global admin 始终 true(覆盖 personal space;个人空间「他人」写仍由
+  // assertCanWriteToPersonalSpace / assertAdminNotWritingPersonalSpace 在
+  // 路由层挡 —— admin 写 own personal 自 2026-07-29 起放行)。
   if (me.isAdmin) return true
   // anonymous 永远走 /api/public/pages/:token 那条独立路由(挂在
   // requireAuth 之前,自管 share 校验);这里不接,确保「匿名读」只能

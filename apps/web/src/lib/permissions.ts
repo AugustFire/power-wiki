@@ -1,5 +1,6 @@
 /**
- * Frontend mirror of the personal-space write matrix (P0-3).
+ * Frontend mirror of the personal-space write matrix (P0-3 + 2026-07-29
+ * relaxation: admin can write OWN personal space).
  *
  * The backend `lib/personalSpaceGuard.ts` is the single source of truth for
  * who can write — but the frontend has its own short-circuit predicates
@@ -10,20 +11,26 @@
  *
  * 矩阵 (与 apps/api/src/lib/personalSpaceGuard.ts 头注释同步):
  *
- *   | 操作        | Owner | 全局 Admin | 其他用户 |
- *   |-------------|:-----:|:----------:|:--------:|
- *   | 写个人空间  | ✅    | ❌         | ❌       |
+ *   | 操作        | Owner=me | Admin × owner≠me | Member × owner≠me |
+ *   |-------------|:--------:|:-----------------:|:-----------------:|
+ *   | 写个人空间  | ✅       | ❌ (supervisor)   | ❌                |
  *
- * Admin 即使是自己的 personal space 也按 supervisor 不按 editor 处理
- * (Confluence 风格)。`viewerRole === 'editor'` 之类的空间角色不进
- * personal space —— personal 永远只有 owner 一个 effective admin。
+ * Admin 可以写自己 own 的 personal space(原本 P0-3 一刀切 block,admin
+ * 即便 own 自己的 personal 也按 supervisor 处理;2026-07-29 改成"admin
+ * 可以给自己写私人笔记",但 admin 不能动他人的 personal,继续走 supervisor
+ * 语义 — 这是 Confluence 风格的「不对私人笔记越界」保护,不是「admin 不能
+ * 写 personal」)。
+ *
+ * `viewerRole === 'editor'` 之类的空间角色不进 personal space —— personal
+ * 永远只有 owner 一个 effective admin。
  *
  * 调用约定:
  *   - `resolvePersonalSpace(page.spaceId)` 先用 page.spaceId 在 spacesStore
  *     里查 kind + ownerId。查不到时返回 null —— 表示空间已被删/未加载,
  *     这种情况默认放行(backend 404 会兜底)。
  *   - `canWritePersonalSpace(me, space)` 返回 false 当且仅当:
- *       space.kind === 'personal' && (space.ownerId !== me.id || me.role === 'admin')
+ *       space.kind === 'personal' && space.ownerId !== me.id && me.role === 'admin'
+ *     (即:目标 personal space 既不是我 own、我又是 admin → 拦截)
  *   - 调用方先算 canWritePersonalSpace,再叠加原来的 isAdmin / viewerRole /
  *     authorId 短路。
  */
@@ -60,9 +67,9 @@ export function resolvePersonalSpace(spaceId: string | null | undefined): SpaceR
  * 「在当前 space 里能创建新页面 / 子页 / 同级页」的统一 gate,合并三处
  * 老 helper(Sidebar / TopBar / HomeView)各自的 isAdmin + viewerRole 短路。
  *
- * 矩阵(P0-3):
- *   - personal space:仅 owner,且 owner 不能是 admin(管理员按 supervisor
- *     处理 —— 不能创建自己 personal 的内容)。
+ * 矩阵(P0-3 + 2026-07-29 relaxation):
+ *   - personal space:owner 可以创建(包含 owner 是 admin 的情形);
+ *     admin × owner ≠ me → 不能(继续走 supervisor 语义)。
  *   - shared space:global admin / 空间 editor / 空间 admin 都行;viewer 隐藏。
  *
  * 配合 `canWritePersonalSpace` 使用,语义直接对齐后端 `canEditSpace` +
@@ -71,8 +78,10 @@ export function resolvePersonalSpace(spaceId: string | null | undefined): SpaceR
 export function canCreateInSpace(me: User | null, space: SpaceRef | null | undefined): boolean {
   if (!me || !space) return false
   if ((space.kind ?? 'shared') === 'personal') {
-    if (me.role === 'admin') return false
-    return space.ownerId === me.id
+    // Owner(无论 admin 或 member)都可以在 own personal 里建页;
+    // admin × owner ≠ me → 拦。其它(non-admin × non-owner)→ 拦。
+    if (space.ownerId === me.id) return true
+    return me.role !== 'admin'
   }
   if (me.role === 'admin') return true
   return space.viewerRole === 'editor' || space.viewerRole === 'admin'
@@ -89,8 +98,9 @@ export function canWritePersonalSpace(me: User | null, space: SpaceRef | null): 
   if (!space) return true
   if ((space.kind ?? 'shared') !== 'personal') return true
   if (!me) return false
-  if (me.role === 'admin') return false
-  return space.ownerId === me.id
+  // owner(包含 admin)可以写 own personal;admin × owner ≠ me → 拦。
+  if (space.ownerId === me.id) return true
+  return me.role !== 'admin'
 }
 
 /**

@@ -6,30 +6,28 @@
  * the active space name + an expand_more caret. No avatar, no page count in
  * the trigger — those only show inside the dropdown for each candidate.
  *
- * Personal spaces are intentionally hidden from this dropdown — the active
- * space may still be the user's personal space (showing its name in the
- * trigger is fine), but the only way to *enter* a personal space is via
- * the sidebar's "我的空间" entry. Switching within the dropdown stays
- * scoped to team spaces, which keeps the mental model clean: switcher
- * = team context, sidebar = personal space.
+ * P1-7 refinement: personal space is a first-class entry in the dropdown
+ * (sits at the top, above team spaces, with a divider). Previously personal
+ * space was only reachable via the sidebar's "我的空间" anchor — that
+ * proved too hidden for users who wanted to browse their private pages
+ * the way they browse team spaces. Now Confluence/Notion parity: every
+ * space the user has access to, in one dropdown.
+ *
+ * The trigger still reflects whatever the active space is, including
+ * personal space (which renders with a lock_person badge in the chip).
  *
  * Behaviour:
- *   - Zero team spaces → trigger renders as an empty-state chip with admin
- *     CTA (links to /manager/spaces); the button itself isn't shown.
- *   - One team space AND active is that team space → trigger renders as a
- *     plain label (no caret, click is a no-op) — nowhere meaningful to go.
- *   - One team space AND active is personal → trigger shows the
- *     "选择团队空间" placeholder + caret; click opens the dropdown so the
- *     user can enter the team space.
- *   - Multiple team spaces → caret + dropdown listing every team space
- *     visible to the user, with avatar / name / active check.
+ *   - Zero spaces (no personal + no team) → trigger renders as an
+ *     empty-state chip; the button itself isn't shown.
+ *   - One option AND active is that option → trigger renders as a plain
+ *     label (no caret, click is a no-op) — nowhere meaningful to go.
+ *   - Multiple options → caret + dropdown listing personal space first
+ *     (with "仅自己可见" desc), then team spaces, then archived (admin).
  *
  * Picking a space:
  *   1. setActiveSpace(id) — flips the activeSpaceId store value (persisted).
  *   2. pagesStore.ensureRootsLoaded(id) — space-scoped lazy root fetch for
- *      the new space. (Previously `pagesStore.refresh()` re-fetched roots
- *      for ALL visible spaces — Admin would've re-pulled every personal
- *      space too. ensureRootsLoaded is scoped to the target space.)
+ *      the new space.
  *   3. router.push('/') — always jump to the new space's home, even if the
  *      user was already there. This guarantees we never strand the user on
  *      a stale page that doesn't exist in the new space (e.g. reading /p/X
@@ -54,11 +52,13 @@ const router = useRouter()
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
-// Personal spaces are intentionally filtered out — see the file-level doc.
-// The trigger still reflects whatever the active space is, which may itself
-// be the user's personal space; only the dropdown list is restricted.
-// P1-1: archived spaces are also filtered from the main list.
+// P1-7 (refinement): personal space is now an explicit dropdown entry —
+// Confluence/Notion-style "your private space sits alongside team spaces".
+// The trigger still reflects whatever the active space is; the dropdown
+// shows personal first (with a divider), then team spaces.
+// P1-1: archived spaces are filtered from the main list.
 const spacesList = computed(() => spacesStore.sharedSpaces.value.filter((s) => !s.archivedAt))
+const personalSpace = computed(() => spacesStore.personalSpace.value)
 // P1-1: archived spaces shown in a separate section for admins only.
 const archivedSpaces = computed(() => spacesStore.sharedSpaces.value.filter((s) => !!s.archivedAt))
 const isAdmin = computed(() => authStore.user?.role === 'admin')
@@ -66,14 +66,17 @@ const active = computed(() => spacesStore.activeSpace.value)
 const activeId = computed(() => spacesStore.activeSpaceId.value)
 
 // True when clicking the trigger should actually open the dropdown.
-//   - 0 team spaces → nothing to switch to (trigger renders as a no-op)
-//   - 1 team space AND active is that team space → no other option to pick
+//   - 0 spaces (no personal + no team) → nothing to switch to (trigger
+//     renders as a no-op empty state).
+//   - Only 1 option AND active is that option → no other option to pick.
 //   - All other cases → open menu (lets the user enter a team space from
-//     a personal-space active state, or pick a different team space)
+//     a personal-space active state, or pick a different team space, or
+//     jump back to personal space from a team space).
+const totalOptions = computed(() => (personalSpace.value ? 1 : 0) + spacesList.value.length)
 const canOpen = computed(
   () =>
-    spacesList.value.length > 0 &&
-    !(spacesList.value.length === 1 && isActiveShared.value),
+    totalOptions.value > 0 &&
+    !(totalOptions.value === 1 && isActiveShared.value),
 )
 
 const isActiveShared = computed(() => active.value?.kind === 'shared')
@@ -165,7 +168,31 @@ onBeforeUnmount(() => {
       <span class="ss-empty-text">还没有可访问的空间</span>
     </div>
 
-    <div v-if="open && (spacesList.length > 0 || (isAdmin && archivedSpaces.length > 0))" class="ss-menu" role="listbox">
+    <div v-if="open && (spacesList.length > 0 || personalSpace || (isAdmin && archivedSpaces.length > 0))" class="ss-menu" role="listbox">
+      <button
+        v-if="personalSpace"
+        type="button"
+        class="ss-menu-item ss-menu-item-personal"
+        :class="{ 'ss-menu-item-active': personalSpace.id === active?.id }"
+        role="option"
+        :aria-selected="personalSpace.id === active?.id"
+        @click="pick(personalSpace.id)"
+      >
+        <SpaceAvatar :space="personalSpace" :size="28" />
+        <span class="ss-menu-text">
+          <span class="ss-menu-name">{{ personalSpace.name }}</span>
+          <span class="ss-menu-desc ss-menu-desc-personal">
+            <span class="material-symbols-outlined ss-personal-lock">lock_person</span>
+            仅自己可见
+          </span>
+        </span>
+        <span
+          v-if="personalSpace.id === active?.id"
+          class="material-symbols-outlined ss-check"
+          aria-hidden="true"
+        >check</span>
+      </button>
+      <div v-if="personalSpace && spacesList.length > 0" class="ss-section-divider"></div>
       <button
         v-for="s in spacesList"
         :key="s.id"
@@ -375,6 +402,30 @@ onBeforeUnmount(() => {
   letter-spacing: 0.04em;
   border-top: 1px solid var(--border);
   margin-top: 4px;
+}
+
+/* 分隔线 — personal space 跟团队空间之间,代替原来的"个人空间是
+ * 独立概念"的隐式分组。视觉上跟 .ss-archived-divider 共享同一思路:
+ * 上边线 + 留白,但这里不写文字(语义靠位置已经清楚)。 */
+.ss-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* 个人空间行 — desc 区域把"仅自己可见"用 lock_person + 文字同款视觉,
+ * 跟 trigger 上的 ss-private-badge 复用 icon,降低初次见到的认知成本。
+ * 颜色用 text-3,跟 team space 的 description 同色,不抢名字的视觉权重。 */
+.ss-menu-desc-personal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+.ss-personal-lock {
+  font-size: 13px !important;
+  color: var(--text-3);
+  line-height: 1;
 }
 .ss-menu-item-archived { opacity: 0.65; }
 </style>
