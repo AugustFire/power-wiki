@@ -189,7 +189,7 @@ function excerpt(html: string): string {
         </div>
       </Teleport>
 
-      <div class="content-inner home-page">
+      <div class="content-inner home-page content-wide">
           <!-- 空状态 -->
           <div v-if="rootPages.length === 0" class="empty">
             <div class="empty-illustration">

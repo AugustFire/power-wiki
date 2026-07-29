@@ -115,8 +115,9 @@
     --sub-h:        48px;
     --sidebar-w:    280px;
     --toc-w:        240px;
-    --context-w:    300px;
+    --context-w:    320px;
     --content-max:  1100px;
+    --content-max-wide: 2400px;
 
     /* Code highlight — 配 --bg-code 深底,Material 暗主题调色板 */
     --hljs-keyword:  #C792EA;

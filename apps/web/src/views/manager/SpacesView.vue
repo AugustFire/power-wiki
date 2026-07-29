@@ -613,14 +613,10 @@ function accessSummary(s: Space): AccessSummary {
 
 <style scoped>
 .spaces-view { width: 100%; }
-/* Centered (`margin: 0 auto`) and max-width: 1680 to match the
-   editor's `.content-inner` so the manager content area is at the same
-   X and width as the editor's content area. The card grid auto-fills
-   the available width — 2K shows 4-5 columns, small viewports 1-2. */
-.view-content-wide {
-  max-width: 1680px;
-  margin: 0 auto;
-}
+/* The card grid below auto-fills the available width — 2K shows
+   4-5 columns, small viewports 1-2. No global max-width so manager
+   lists can use the full main column. */
+.view-content-wide { width: 100%; }
 
 .sv-header {
   display: flex;

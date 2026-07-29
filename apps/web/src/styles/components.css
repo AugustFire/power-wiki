@@ -650,6 +650,10 @@
     padding: 48px 16px 96px;
 }
 
+.content-inner.content-wide {
+    max-width: var(--content-max-wide);
+}
+
 .page-title {
     font-size: 36px;
     font-weight: 700;
@@ -2047,7 +2051,7 @@ body:not(.editor-hover) .drag-handle {
 /* 根页面网格 */
 .page-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
     gap: 12px;
 }
 .page-card {

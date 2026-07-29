@@ -547,9 +547,9 @@ watch(activeTab, (t) => {
           <thead>
             <tr>
               <th class="col-user">用户</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>最后登录</th>
+              <th class="col-roles">角色</th>
+              <th class="col-status">状态</th>
+              <th class="col-last-login">最后登录</th>
               <th class="col-actions">操作</th>
             </tr>
           </thead>
@@ -702,18 +702,12 @@ watch(activeTab, (t) => {
 </template>
 
 <style scoped>
-/* Self-constraining container. `margin: 0 auto` centers it in the
-   main column — same pattern as the editor's `.content-inner` in
-   components.css:431-435. With subnav=280 (matches --sidebar-w) and
-   view-content max-width=1680 (matches .content-inner), the manager
-   content area is at the same X and width as the editor's content
-   area, modulo the difference in the right column width (320 vs
-   the editor's ToC 240) which shifts the centering by ~40px on 2K. */
+/* Manager list view fills the available .manager-main column.
+   Per-list views cap themselves internally where needed (e.g. a
+   long filter toolbar), but the page itself uses the full main
+   width so 2K screens don't waste horizontal space on right gutter. */
 .people-view { width: 100%; }
-.view-content {
-  max-width: 1680px;
-  margin: 0 auto;
-}
+.view-content { width: 100%; }
 
 .pv-header { margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .pv-header-text { min-width: 0; }
@@ -925,7 +919,10 @@ watch(activeTab, (t) => {
 }
 .users-table tr:last-child td { border-bottom: 0; }
 .users-table tr.is-disabled td { opacity: 0.55; }
-.col-user { min-width: 240px; }
+.col-user { min-width: 280px; }
+.col-roles { width: 120px; }
+.col-status { width: 120px; }
+.col-last-login { width: 180px; }
 .col-actions { width: 1%; white-space: nowrap; text-align: right; }
 
 .user-cell { display: flex; align-items: center; gap: 12px; }

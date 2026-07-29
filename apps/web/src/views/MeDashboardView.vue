@@ -281,7 +281,7 @@ const heroSubtitle = computed(() => {
       </div>
     </Teleport>
 
-    <div class="content-inner dash-page">
+    <div class="content-inner dash-page content-wide">
           <!-- Hero —— 纯排版页面标题 + 右侧 live clock 配重。
                上一版左文右空,headline 偏左像浮岛。这里用 flex 两列:
                  左:text column(meta eyebrow + 大 H1 + lead 段落)
@@ -321,6 +321,7 @@ const heroSubtitle = computed(() => {
       </div>
 
       <!-- ====================== @提到我 ====================== -->
+      <div class="dash-sections">
       <section id="section-mentions" class="dash-section">
         <header class="section-head">
           <h2 class="section-title">
@@ -444,6 +445,7 @@ const heroSubtitle = computed(() => {
           size="sm"
         />
       </section>
+      </div>
 
     </div>
   </div>
@@ -457,15 +459,22 @@ const heroSubtitle = computed(() => {
  * 在同一条 column 上,这是「版心位置一致」的硬约束(切换视图时 sidebar
  * 不跳)。
  *
- * 但 .content-inner 默认 max-width: 1680px 把内容居中,2K 宽下会留出
- * 196px 左边距 + 240px toc 预留 = 436px 空白,内容像被压在左半边。dashboard
- * 是密集 list-style view,3 个 section 卡片列需要更多 horizontal 呼吸空间,
- * 这里 override 把 max-width 拿掉,让 .dash-page 铺满整个 .content column。
- * 2560 下内容从 1648 → 2008,真正"用满"中间 column。 */
+ * dashboard 是密集 list-style view,3 个 section 需要更多 horizontal
+ * 呼吸空间,这里通过 .content-wide 让其铺满 .content column;
+ * .dash-sections 再把三个 section 收成 1-2-3 列自适应,小屏仍单列。 */
 .dash-page {
   padding-top: 32px;
   padding-bottom: 64px;
-  max-width: none;  /* override .content-inner 的 1680 cap */
+}
+
+.dash-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.dash-sections .dash-section {
+  margin-bottom: 0;
 }
 
 /* ====================== Subheader refresh button ====================== */

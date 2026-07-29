@@ -535,13 +535,8 @@ async function onPurge(id: string, title: string) {
 
 <style scoped>
 .trash-view { width: 100%; }
-/* `margin: 0 auto` + max-width: 1680 matches the editor's
-   `.content-inner` (components.css:431-435) so the manager content
-   area is at the same X and width as the editor's content area. */
-.view-content {
-  max-width: 1680px;
-  margin: 0 auto;
-}
+/* Fills the available .manager-main column on 2K. */
+.view-content { width: 100%; }
 
 .trash-header {
   display: flex;
@@ -838,10 +833,10 @@ async function onPurge(id: string, title: string) {
 .trash-table tr:last-child td { border-bottom: none; }
 .trash-table tr.busy { opacity: 0.6; }
 
-.col-title { width: 48%; }
-.col-by { width: 20%; color: var(--text-2); }
-.col-when { width: 14%; color: var(--text-2); }
-.col-actions { width: 18%; text-align: right; white-space: nowrap; }
+.col-title { width: auto; }
+.col-by { width: 200px; color: var(--text-2); }
+.col-when { width: 160px; color: var(--text-2); }
+.col-actions { width: 200px; text-align: right; white-space: nowrap; }
 
 .title-cell {
   display: flex;

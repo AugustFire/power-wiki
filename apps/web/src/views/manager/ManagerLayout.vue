@@ -108,7 +108,7 @@ const section = computed(() => {
      column inside the main area starts at the same X as the editor's
      `.content-inner` — i.e. the manager page's content area is the
      same width AND position as ReadView/EditView's content area. */
-  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--context-w);
   height: calc(100vh - var(--topbar-h) - var(--sub-h));
   background: var(--bg-canvas);
 }

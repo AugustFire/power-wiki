@@ -43,6 +43,8 @@ const KIND_OPTIONS: { value: '' | AuditKind; label: string }[] = [
   { value: 'page_share_create', label: '公开链接 - 创建' },
   { value: 'page_share_revoke', label: '公开链接 - 撤销' },
   { value: 'space_deleted', label: '空间 - 删除' },
+  { value: 'space_archived', label: '空间 - 归档' },
+  { value: 'space_unarchived', label: '空间 - 恢复' },
   { value: 'group_deleted', label: '用户组 - 删除' },
   { value: 'user_anonymized', label: '用户 - 注销' },
 ]
@@ -67,6 +69,8 @@ const EVENT_TARGET_KIND: Record<AuditKind, AuditTargetKind> = {
   page_share_create: 'page_share',
   page_share_revoke: 'page_share',
   space_deleted: 'space',
+  space_archived: 'space',
+  space_unarchived: 'space',
   group_deleted: 'group',
   user_anonymized: 'user',
 }
@@ -255,6 +259,8 @@ function auditSummary(entry: AuditEntry): string {
     case 'page_share_create': return after.expiresAt == null ? '创建了永久公开链接' : '创建了限时公开链接'
     case 'page_share_revoke': return '撤销了公开链接'
     case 'space_deleted': return `删除了空间「${displayValue(before.name)}」`
+    case 'space_archived': return `归档了空间「${displayValue(after.name ?? before.name ?? entry.targetName)}」`
+    case 'space_unarchived': return `恢复了空间「${displayValue(after.name ?? before.name ?? entry.targetName)}」`
     case 'group_deleted': return `删除了用户组「${displayValue(before.name)}」`
     case 'user_anonymized': return `注销了用户「${displayValue(before.name)}」`
   }
@@ -318,6 +324,16 @@ function auditDetails(entry: AuditEntry): DetailRow[] {
       ]
     case 'space_deleted':
       return [{ label: '空间类型', value: before.kind === 'shared' ? '团队空间' : displayValue(before.kind) }]
+    case 'space_archived':
+      return [
+        { label: '归档时间', value: displayValue(after.archivedAt) },
+        { label: '操作人 ID', value: displayValue(after.archivedByUserId) },
+      ]
+    case 'space_unarchived':
+      return [
+        { label: '原归档时间', value: displayValue(before.archivedAt) },
+        { label: '原归档操作人', value: displayValue(before.archivedByUserId) },
+      ]
     case 'group_deleted':
       return []
     case 'user_anonymized':
@@ -515,10 +531,6 @@ function formatPayload(p: unknown): string {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* max-width: 1680 + margin auto 对齐 .content-inner(components.css:485)
-     —— 2K 屏下表格列宽自然撑开,小屏也不强行居中挤压。 */
-  max-width: 1680px;
-  margin: 0 auto;
   width: 100%;
 }
 
