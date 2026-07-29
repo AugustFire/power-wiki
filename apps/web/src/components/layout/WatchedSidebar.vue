@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Sidebar "我的关注" section —— M13。
+ * Sidebar "此空间的关注" section —— M13。
  *
  * 设计参考 design/wiki-read.html:317 (sidebar 「已加星标」section):
  *   - plain 标题 + icon(visibility)
@@ -40,6 +40,15 @@ const pagesStore = usePagesStore()
 
 const activeSpaceId = computed(() => spaces.activeSpaceId.value)
 
+/** 默认折叠 —— sticky 顶部 + 此空间的关注三块(section 自带 chrome)视觉统一
+ *  但默认收起,只有「我的工作台」常驻入口。其余按用户兴趣展开,避免
+ *  sidebar 顶部 + 底部出现多个始终展开的辅助列表互相争屏。 */
+const expanded = ref(false)
+
+function toggle(): void {
+  expanded.value = !expanded.value
+}
+
 const items = ref<PageNode[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -66,8 +75,14 @@ async function load() {
       limit: 5,
       offset: 0,
     })
-    items.value = r.items
-    total.value = r.hasMore ? r.items.length + 1 : r.items.length
+    // P1-9: 后端 /users/me/watched 偶发返回 soft-deleted pages(PIN 过的页
+    // 被删后,watch 记录还在)。这里过滤 deletedAt,跟 sidebar 顶部其它
+    // 两块(pinned / recents)同款:trashed 不该出现在 sidebar 关注列表。
+    // 改用服务端彻底过滤是后续优化项(GET 时 JOIN pages 的 deletedAt);
+    // 当前已是 5 条 limit,前端 filter 不会让 UI 短于 5 条显著变空(分页
+    // 兜底)。
+    items.value = r.items.filter((p) => p.deletedAt == null)
+    total.value = r.hasMore ? items.value.length + 1 : items.value.length
   } finally {
     loading.value = false
   }
@@ -86,50 +101,106 @@ function goPage(pageId: string) {
 
 <template>
   <div class="sidebar-section watched-section">
-    <div class="sidebar-section-title">
-      <span>
+    <button
+      type="button"
+      class="sidebar-section-title watched-section-title"
+      @click="toggle"
+    >
+      <span class="section-label st-left">
         <span class="material-symbols-outlined section-icon">visibility</span>
-        我的关注
+        <!-- 2026-07-29:「我的关注」→「此空间的关注」。
+             数据来源 GET /api/users/me/watched?space=<activeSpaceId>,是按
+             active space 过滤的子集(不在当前空间内被 watch 的页不显示),
+             跟「此空间的页面」共享同一 scope 语言,改前缀后语义更准:
+             - 「此空间的页面」= 当前空间所有可见页(全局)
+             - 「此空间的关注」= 当前空间里我 watch 过的页(子集)
+             底部「查看全部」继续跳 /me/watched(全空间汇总),从子集 → 全集
+             形成清晰的二级跳转。两个 section 都带「此空间的」前缀,sidebar
+             视觉语言统一。 -->
+        此空间的关注
+        <span v-if="hasItems" class="count">{{ items.length }}</span>
       </span>
-    </div>
+      <span
+        class="material-symbols-outlined expand-icon"
+        :class="{ 'expand-icon-collapsed': !expanded }"
+      >expand_more</span>
+    </button>
 
-    <div v-if="loading && !hasItems" class="watched-empty">加载中…</div>
-    <div v-else-if="!hasItems" class="watched-empty">暂无关注</div>
+    <template v-if="expanded">
+      <div v-if="loading && !hasItems" class="watched-empty">加载中…</div>
+      <div v-else-if="!hasItems" class="watched-empty">暂无关注</div>
 
-    <div v-else class="watched-list">
-      <button
-        v-for="p in items"
-        :key="p.id"
-        type="button"
-        class="watched-row"
-        :class="{ active: p.id === currentPageId }"
-        :title="p.title"
-        @click="goPage(p.id)"
-      >
-        <span class="material-symbols-outlined watched-icon">description</span>
-        <span class="watched-title">{{ p.title }}</span>
-      </button>
-      <RouterLink
-        v-if="showAll"
-        to="/me/watched"
-        class="watched-all"
-      >
-        查看全部
-      </RouterLink>
-    </div>
+      <div v-else class="watched-list">
+        <button
+          v-for="p in items"
+          :key="p.id"
+          type="button"
+          class="watched-row"
+          :class="{ active: p.id === currentPageId }"
+          :title="p.title"
+          @click="goPage(p.id)"
+        >
+          <span class="material-symbols-outlined watched-icon">description</span>
+          <span class="watched-title">{{ p.title }}</span>
+        </button>
+        <RouterLink
+          v-if="showAll"
+          to="/me/watched"
+          class="watched-all"
+        >
+          查看全部
+        </RouterLink>
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
-/* 跟 PageTree .tree-row 视觉对齐(components.css:294 起):
-   height 28 / padding 0 8px 0 4px / font-size 14。
-   icon 用 18px(doc-icon 同款),title 14px(.label 同款)。
-   空态也用同 padding + 28px min-height,保证 "暂无关注" 跟 row 起点 X 对齐。 */
+/* 2026-07-29 sidebar polish 第二轮:watched-section-title 不再覆写
+   .sidebar-section-title 的 13px / 600 / text-3 label 视觉 —— 让 Watched-
+   Sidebar 的「此空间的关注」跟「此空间的页面」共用同一套 label 风格,不再出现
+   一个 label 一个 row 的割裂。仅补 button 必填属性 + chevron 折叠交互。 */
+.watched-section-title {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+.watched-section-title:hover {
+  /* label hover 只加深底色,字色不变(保持 label 的 muted 重量,不让它
+     jitter 到更亮的 text-1,跟 .sidebar-section-title 不带 :hover 时行为
+     一致 —— label 的 hover 是"找得到" 的静态反馈,不是 "激活" 颜色升级)。 */
+  background: var(--bg-subtle);
+}
+.st-left {
+  display: flex;
+  align-items: center;
+  /* 2026-07-29:不要 gap —— .section-icon 自带 margin-right 4px,再加 flex
+     gap 8px 会让「此空间的关注」的 icon-text 间距叠加到 12px,跟「此空间的页面」
+     的纯 inline 渲染(只有 .section-icon 的 4px margin)不一致。删 gap 让
+     icon / 文字 / count 各自靠自己的 margin 提供间距,跟 sidebar-section-
+     title 视觉同源。 */
+}
+.expand-icon {
+  font-size: 18px !important;
+  color: var(--text-3);
+  transition: transform var(--duration-fast) var(--ease-out);
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.expand-icon-collapsed {
+  transform: rotate(-90deg);
+}
 
+/* Empty state —— padding 0 8px 0 20px 让"暂无关注"跟 watched-row 文字
+   起点对齐(2026-07-29:跟 tree-row 缩进一起右移,确保 empty state 跟 row
+   同 X 起点)。 */
 .watched-empty {
   min-height: 28px;
   line-height: 28px;
-  padding: 0 8px 0 12px;
+  padding: 0 8px 0 20px;
   font-size: 12px;
   color: var(--text-3);
 }
@@ -143,7 +214,12 @@ function goPage(pageId: string) {
   display: flex;
   align-items: center;
   height: 28px;
-  padding: 0 8px 0 4px;
+  /* 2026-07-29:padding-left 20px(原 8px) —— 跟 .tree-row 缩进对齐。
+     tree-row 在 P1-9 修完 accent-bar / caret 间距后整体右移 12px,doc-
+     icon 起点落在 sidebar-x=32;watched-row 没跟上,doc-icon 还在老的
+     sidebar-x=20,两个 list 在视觉上错开 12px。统一到 sidebar-x=32 让
+     「此空间的页面」跟「此空间的关注」下面的 row 起点 X 完全对齐。 */
+  padding: 0 8px 0 20px;
   border-radius: var(--radius);
   background: transparent;
   border: 0;

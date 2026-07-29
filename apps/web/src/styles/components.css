@@ -270,7 +270,10 @@
 .sidebar {
     background: var(--bg-sidebar);
     border-right: 1px solid var(--border);
-    padding: 24px 12px;
+    /* 16px top/bottom 让 sticky 顶部「我的工作台」不溢出无效垂直空间;
+       sticky 顶部区自身还有 padding: 4px 0 12px 做内间距,叠加后视觉
+       密度仍正常。 */
+    padding: 16px 12px;
     position: sticky;
     top: calc(var(--topbar-h) + var(--sub-h));
     height: calc(100vh - var(--topbar-h) - var(--sub-h));
@@ -334,33 +337,86 @@
 }
 
 .sidebar-section { margin-bottom: 16px; }
+/* Section title:12px / 0.04em tracking / 600 / text-3,从原 11px uppercase
+   收紧(letter-spacing 0.04em 不变,但 12px 字号 + 不加 uppercase 也是
+   Atlassian Atlas 风格)。此空间的页面 + 主区小标题仍共用这套样式 —
+   collapsible 标题 (.watched-section-title) 在组件里 override 成 14px /
+   500,让它视觉重量跟 SidebarHomeItem.sh-item 对齐。
+
+   P1-9: 2026-07-29 删除 SidebarPinnedSection / SidebarRecentsSection
+   (用户意图:sidebar 顶部 Pinned/Recents 跟 /me 重复,「我的工作台」
+   已经能访问到完整列表)。`.pinned-section-title` /
+   `.recents-section-title` 不再有元素命中,本注释保留历史设计说明
+   供未来重做参考。 */
 .sidebar-section-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-3);
+    /* 2026-07-29 sidebar polish 第二轮 (用户反馈):恢复「section title 跟
+       下面 row 的视觉区分」—— 第一轮跟其它 row 完全同款 14px / 500 / text-2
+       之后用户反馈「看不出是 section 标题」,因为 14px / text-2 / 28px 高
+       跟 tree-row / watched-row 完全一样,字阶层级消失。
+       区分策略:用「字号 + 字色 + 字重」形成 label vs row 的层级对比,不用
+       uppercase + letter-spacing(那两种装饰把它跟 row 割得太开,是之前
+       用户反馈割裂的元凶)。13px + 600 + text-3 中性 muted —— 一眼能看
+       出是 label,但不再大写小标签的强装饰感。 */
+    font-size: 13px;
     font-weight: 600;
-    padding: 6px 8px 6px 4px;
-    margin-bottom: 2px;
+    color: var(--text-3);
+    letter-spacing: normal;
+    text-transform: none;
+    /* line-height:1 — 关掉 UA 默认的差异:<button>(WatchedSidebar 用的
+       label)UA line-height = normal,~17.5px;<div>(Sidebar 用的 label)继
+       承 body 默认 1.6 = 20.8px。两者 line-box 不等 → flex align-items:center
+       后,内含的中文「此」baseline 会差 ~1px —— 两个 label 的「此」 不垂直对齐。
+       锁 1 后 line-box = 13px 固定,两个元素都在 26px box 中同等居中,
+       「此」/「此」y 坐标完全一致。 */
+    line-height: 1;
+    /* height 26px(比 row 小 2px) + padding 6px 8px + 下边距 4px,跟下面
+       28px row 通过微小的高度差形成「label → 行」节奏,而不是上一轮的
+       等高连续段落。label 不再是 row —— 它是 label。 */
+    height: 26px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 .sidebar-section-title button {
     color: var(--text-3);
-    font-size: 12px;
-    padding: 2px 4px;
+    font-size: 13px;
+    padding: 0 4px;
     border-radius: var(--radius);
 }
 .sidebar-section-title button:hover { background: var(--bg-subtle); color: var(--text-1); }
 
+/* Section title 内部 icon+文字 容器 —— 全局。
+   2026-07-29:把 Sidebar.vue 的内层 `<span>`(默认 inline)和 WatchedSidebar 的
+   `.st-left`(display:flex)统一到同一形态。两者若不等效,inline span 里
+   </span> + 紧跟文字 的换行会被浏览器解析成一个约 2.27px 的空白文字节点
+   (Plus Jakarta Sans 13px 下约一个空格宽度),导致「此空间的页面」的 此 比
+   「此空间的关注」的 此 偏右 2.27px —— 用户反馈红框右沿先碰第一行的 此
+   就是这个漂移。统一 display:flex 后,flex item 之间不留空白,两个 section
+   title 的「此」x 完全一致。 */
+.section-label {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
 /* section 标题前缀 icon — 全局,Sidebar.vue / WatchedSidebar.vue 共用。
-   scoped 写在 Sidebar.vue 时 WatchedSidebar 不生效,会导致两处 icon 字号不一致。 */
+   scoped 写在 Sidebar.vue 时 WatchedSidebar 不生效,会导致两处 icon 字号不一致。
+   2026-07-29:加 display:inline-block + width:18px + text-align:center —— Material
+   Symbols 的 glyph 即使同 font-size 宽度也不一致(如 visibility 比 layers 窄),
+   单纯的 margin-right:4px 会让 icon-text 视觉间距随 glyph 宽度漂移。把 box 锁
+   18px 后,glyph 视觉居中,实际间距统一,跟 row icon(.watched-icon 18px / .tree-row
+   icon)共享同一参考系。 */
 .section-icon {
     font-size: 14px !important;
     color: var(--text-3);
     vertical-align: -2px;
     margin-right: 4px;
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
 }
 
 .tree {
@@ -372,7 +428,14 @@
     display: flex;
     align-items: center;
     height: 28px;
-    padding: 0 8px 0 4px;
+    /* padding-left 8 (从 0) + caret margin-left 0 (从 -4):让 .tree-row.active
+       的 2px accent bar (inset box-shadow 落在 row 边 x=2-4) 跟 caret 起点
+       之间留 4px breathing —— 原 margin-left:-4 把 caret 拉到 row 左缘之外
+       (row-x=-4),chevron glyph 跟 box-shadow bar 在视觉上完全重叠
+       ("挨在一起")。padding-left 8 让 caret 起点落到 row-x=8,bar (x=2-4)
+       跟 caret box (x=8-24) 之间 4px 缓冲。children 通过 .tree-children
+       padding-left 20 嵌套缩进。 */
+    padding: 0 8px 0 8px;
     border-radius: var(--radius);
     color: var(--text-2);
     cursor: pointer;
@@ -387,14 +450,19 @@
     font-weight: 600;
 }
 .tree-row .caret {
-    width: 24px; height: 24px;
+    /* 16x16 caret 不再溢出 row 左缘(margin-left 0 而非 -4),详细理由见
+       .tree-row 注释 —— 让 .tree-row.active 的 2px accent bar 跟 caret
+       起点之间留 4px breathing。margin-right -4 保留 → caret 跟 doc-icon
+       间距紧凑,doc-icon 起点仍在 row-x=20。点击区域仍是 16x16,iOS 最
+       小可点击尺寸。 */
+    width: 16px; height: 16px;
     display: flex; align-items: center; justify-content: center;
     color: var(--text-3);
     flex-shrink: 0;
     transition: transform var(--duration-fast) ease, background-color var(--duration-fast) ease, color var(--duration-fast) ease;
     border-radius: var(--radius);
     cursor: pointer;
-    margin: 0 -4px 0 -4px;
+    margin: 0 -4px 0 0;
 }
 .tree-row .caret:hover { background: var(--bg-subtle); color: var(--text-2); }
 /* Active 行上 hover caret:不再加深底色 —— 行本身已是 accent-soft 蓝,
@@ -456,8 +524,11 @@
 }
 .create-page-btn {
     width: 100%;
-    min-height: 32px;
-    padding: 6px 10px;
+    /* 28px 跟 sidebar 其他 row 同款高度(quick-nav / watched-row / tree-row)—
+       之前 32px 跟 28px 标准行不一致,视觉上"创建按钮"显得比 page tree
+       重,拖累了 sticky 顶部 / row 列表的视觉密度。 */
+    min-height: 28px;
+    padding: 0 8px;
     border-radius: var(--radius);
     background: transparent;
     border: 0;
@@ -2400,6 +2471,9 @@ kbd {
 .tree-row.active {
     background: var(--accent-soft);
     color: var(--accent);
+    /* 2px inset bar 在 row-x=2-4,跟 caret 起点 (row-x=8,因为 padding-left
+       8 + caret margin-left 0,见 .tree-row / .tree-row .caret 注释) 之间
+       留 4px breathing,chevron glyph 不再压在 bar 上。 */
     box-shadow: inset 2px 0 0 var(--accent);
     border-radius: 0 var(--radius) var(--radius) 0;
 }

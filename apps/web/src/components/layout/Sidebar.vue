@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -12,6 +12,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
 import WatchedSidebar from './WatchedSidebar.vue'
+import SidebarTopSection from './SidebarTopSection.vue'
 import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
 
 const pagesStore = usePagesStore()
@@ -44,6 +45,14 @@ function onSidebarScroll() {
 // render keeps the sidebar clean.
 const tree = computed(() => pagesStore.getTreeForSpace(spacesStore.activeSpaceId.value))
 
+// P1-9: 加载中状态 —— 切空间时 `ensureRootsLoaded` 异步跑,期间 tree.length
+// 是 0,跟真空态视觉冲突。`isRootsLoaded` 仍 false 时显示「加载中…」分支,
+// 加载完成后才是真空态「还没有页面」。
+const treeLoading = computed(() => {
+  const id = spacesStore.activeSpaceId.value
+  return id ? !pagesStore.isRootsLoaded(id) : false
+})
+
 const totalPages = computed(() => pagesStore.pages.length)
 
 // Active-space quick-nav. Mirrors the topbar's SpaceSwitcher trigger but
@@ -56,16 +65,21 @@ const isActivePersonal = computed(() => active.value?.kind === 'personal')
 const activePageCount = computed(() => {
   const id = active.value?.id
   if (!id) return 0
-  return pagesStore.pages.filter((p) => p.spaceId === id).length
+  // P1-9: 过滤 trashed 页(soft-deleted,deletedAt !== null)。
+  // 之前含 trashed → 软删后 chip 计数不减少,用户困惑(列表少了 1 条,
+  // 但 chip 仍显示原数)。现在跟 PageTree / getTreeForSpace 行为一致,
+  // 用户软删 → chip 立即减 1,跟视觉一致。
+  return pagesStore.pages.filter((p) => p.spaceId === id && p.deletedAt == null).length
 })
 
-// Personal-space shortcut: separate from the active-space chip so users have
-// a one-click path back to their personal space when they're working in a
-// shared space. Rendered as a small bottom-anchor link — not a primary nav item.
-const personalSpace = computed(() => spacesStore.personalSpace.value)
-const showMySpaceShortcut = computed(
-  () => personalSpace.value && active.value && !isActivePersonal.value,
-)
+// P1-9: 归档空间 UI 标识 —— 用 spacesStore.isArchived 派生,模板里挂
+// 「已归档」badge。事实来源在 store,避免 component 里散落
+// `active.archivedAt` 重复判定。
+const isActiveArchived = computed(() => spacesStore.isArchived(active.value?.id))
+
+// Personal-space shortcut 已被 SidebarTopSection 取代(P1-7):sticky 顶部
+// 「我的工作台」单行始终可见,不再需要底部虚线分隔的快捷链接。
+// `personalSpace` computed 和 `showMySpaceShortcut` 删掉,死代码清理。
 
 // 与 HomeView.canCreateInSpace 对齐:viewer 在团队空间里看不到创建入口,
 // 否则他们点了会撞后端 404。让 UI 提前表达"这里只读"。
@@ -97,6 +111,32 @@ async function createRoot() {
 }
 
 /**
+ * P1-9: `/` 快捷键绑 createRoot —— 跟 sidebar 底部 create-page-btn 上
+ * 那个 kbd 提示对齐。之前只有 kbd 文字没 handler,user 按了无反应。
+ *
+ * 守卫:
+ *   - focus 在 input/textarea/contenteditable 里 → 跳过,让用户正常输
+ *     入 `/`。Tiptap 编辑器是 contenteditable,这条也覆盖 EditView 焦点。
+ *   - 没创建权限(viewer / 锁定空间) → 跳过,不偷走键。
+ *   - 修饰键组合(Cmd+/、Ctrl+/)→ 跳过,避免跟未来可能的全局搜索
+ *     快捷键冲突。裸 `/` 才是 create page。
+ */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key !== '/') return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const target = e.target as HTMLElement | null
+  if (!target) return
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+  if (!canCreateInSpace.value) return
+  e.preventDefault()
+  void createRoot()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+/**
  * Sidebar 底部的「导入 Markdown」入口 — 无 sourceRow 时直接打开 modal,
  * 落到 active space 根(parentId = null)。
  */
@@ -110,13 +150,6 @@ function goHome() {
   // Active space's home — the `/` route renders HomeView for whatever
   // activeSpaceId is set. Clicking the chip while already on '/' is a no-op.
   void router.push('/')
-}
-
-function goMySpace() {
-  // Prefer the canonical URL so /me shows up in the address bar and the
-  // browser history — refreshing /me re-runs the redirect, which is what
-  // we want when the personal space id changes (e.g. user renamed).
-  void router.push('/me')
 }
 
 /**
@@ -247,28 +280,29 @@ watch(
 
 <template>
   <aside ref="sidebarRef" class="sidebar" @scroll="onSidebarScroll">
+    <!-- Active-space chip 移到最顶部 ——「you are here」锚点永远先看到。
+         视觉重量比之前大幅降低:去掉 accent-soft 背景,改用 3px 左侧 accent
+         竖线 + muted 文字,跟下面的 sidebar row 视觉同款,不再是一块独立的色
+         块。28px row,SpaceAvatar 20px,跟 sidebar 其它 row 视觉统一。 -->
     <div class="quick-nav">
-      <!-- Active-space chip: always reflects the currently active space (any
-           kind) so the sidebar's identity matches the topbar. The chip is
-           itself a "home" button — clicking it returns to the active space's
-           home view. Old behavior rendered the personal space here regardless
-           of the active space, which was confusing when working in a team
-           space. -->
       <button
         v-if="active"
         type="button"
         class="quick-nav-item quick-nav-active"
+        :class="{ 'quick-nav-archived': isActiveArchived }"
         :title="`回到 ${active.name} 首页`"
         @click="goHome"
       >
-        <!-- v0.7+: viewer-role → 空间名旁挂一个 14px lock 图标;
-             不在头像上叠角标(20px 头像 + 9px glyph 会糊),
-             跟 Confluence 「hide-not-disable」对齐 —— 无创建按钮 + 小锁即表达只读 -->
         <SpaceAvatar
           :space="active"
           :size="20"
         />
         <span class="active-name">{{ active.name }}</span>
+        <span
+          v-if="isActiveArchived"
+          class="active-archived-badge"
+          title="此空间已归档"
+        >已归档</span>
         <span
           v-if="!canCreateInSpace"
           class="material-symbols-outlined active-lock"
@@ -278,19 +312,24 @@ watch(
       </button>
     </div>
 
-    <!-- M13 我的关注 —— 个人空间无 watch 语义,不渲染此 section。 -->
+    <!-- P1-7:sticky 顶部「我的工作台」单行入口,2026-07-29 收尾 P1-9 删
+         掉「已固定 / 最近访问」两块(已在 /me 工作台完整呈现),避免
+         sidebar + 页面两份重复。下方才是当前空间的 page tree,继续滚动。 -->
+    <SidebarTopSection />
+
+    <!-- M13 此空间的关注 (2026-07-29 由「我的关注」改名)—— 个人空间无 watch 语义,不渲染此 section。 -->
     <WatchedSidebar v-if="!isActivePersonal" />
 
     <div class="sidebar-section">
       <div class="sidebar-section-title">
-        <span>
+        <span class="section-label">
           <span class="material-symbols-outlined section-icon">layers</span>
           此空间的页面
         </span>
-        <span class="count">{{ tree.length }}</span>
+        <span class="count">{{ activePageCount }}</span>
       </div>
       <EmptyState
-        v-if="tree.length === 0"
+        v-if="tree.length === 0 && !treeLoading"
         class="tree-empty"
         variant="no-data"
         size="sm"
@@ -304,6 +343,12 @@ watch(
           创建第一个
         </button>
       </EmptyState>
+      <!-- P1-9: 加载中显示 muted 文字,跟真空态区分。PageTree 顶层根加载
+           由 ensureRootsLoaded 异步发起,期间切到新空间会闪一下「还没有
+           页面」,用户会以为这空间是空的。让显示变成「加载中…」避免误判。 -->
+      <div v-else-if="tree.length === 0 && treeLoading" class="tree-loading">
+        加载中…
+      </div>
       <div v-else class="tree">
         <PageTree
           v-for="root in tree"
@@ -336,17 +381,34 @@ watch(
 </template>
 
 <style scoped>
+/* Active-space chip 视觉重量降低:
+ *   - 28px row(跟 sidebar 其它 row 同款)
+ *   - 左侧 3px accent 竖线代替大色块背景 —— 仍然能一眼认出「这是 active」,
+ *     但不抢 sticky 顶部「我的工作台」的视觉重心
+ *   - 文字 muted (text-2) + hover 才升到 text-1,跟 watched-row / tree-row 同款
+ *   - 底部 1px border 跟 sticky 顶部「我的工作台」视觉分隔
+ */
 .quick-nav {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-bottom: 20px;
+  /* 2026-07-29 sidebar polish:删 border-bottom + padding-bottom —— 旧版在
+     chip 「激活的空间」跟下面 sticky「我的工作台」之间有一条 1px 分隔线,
+     加上 SidebarTopSection 自带的 border-bottom,siderbar 顶部出现 2 条
+     横线,把 4 个 section 切分成 (1)|(2)|(3+4) 三块,用户反馈"很割裂"。
+     现在 chip 跟 sticky 「我的工作台」之间只用 4px 微间距衔接(原 12+1
+     border 也分不开两个同字色/同字号的 row),sticky 「我的工作台」跟
+     滚动内容(此空间的关注 + 此空间的页面)之间保留 SidebarTopSection 唯
+     一一条 1px 分隔线——既维持 sticky 顶部边界,又消除视觉割裂。 */
+  margin-bottom: 4px;
 }
 .quick-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 28px;
+  /* 2026-07-29:删 ::before 3px bar 后,padding-left 从 11 回到 8,跟 sh-item
+     / watched-row / tree-row 统一,padding 不再为那条竖线特别让位。 */
   padding: 0 8px;
   border-radius: var(--radius);
   color: var(--text-2);
@@ -372,17 +434,38 @@ watch(
 }
 .quick-nav-item:hover .material-symbols-outlined { color: var(--text-1); }
 
-/* Active-space chip: a small colored avatar chip replaces the plain icon
- * so users can spot the current space at a glance. Mirrors the topbar
- * SpaceSwitcher's avatar treatment for visual consistency. The chip is
- * always the active space (any kind), so it doesn't need an "active" state
- * — it's always in that state. */
+/* Active-space chip:左侧 3px accent 竖线 + muted 文字 + 透明背景 —— 比之前
+ * 整行 accent-soft 大色块轻得多,跟 sticky 顶部「我的工作台」+ 团队
+ * 空间 watched 列表在视觉重量上对齐。
+ * 文字仍是 var(--text-2) muted,hover 才升 text-1,跟下面的 row 同款。
+ *
+ * 设计决策(P1-9 文档化):quick-nav-active 故意**不**走 accent-soft 背景
+ * + accent 字色 + 600 加粗这套「active」视觉 —— 跟 sticky 顶部「我的
+ * 工作台」(sh-item-active)+ 团队空间 watched-row.active 故意不同。
+ * quick-nav 是「我在这里」的持久锚点,顶部固定不滚走,视觉太重会跟
+ * sticky 顶部 + page tree active 行争色。3px 竖线 + muted 文字是这条
+ * 规则的最优解。
+ *
+ * 2026-07-29:删掉 SidebarPinnedSection / SidebarRecentsSection 后,sticky
+ * 顶部只剩「我的工作台」一块;此处规则同步收紧,不再需要为「Pinned/
+ * Recents active」让位。 */
 .quick-nav-active {
+  /* 2026-07-29:删 ::before 3px accent 竖线(下方注释展开)。padding-left
+     跟着从 11px 回到 8px,跟 sh-item / watched-row row 节奏统一。 */
   padding: 0 8px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 500;
 }
-.quick-nav-active .material-symbols-outlined { color: var(--accent); }
+/* 2026-07-29 删除 .quick-nav-active::before —— 早期 P1-9 阶段为了让
+   chip「激活的空间」语义可视化,加了永久显示的 3px accent 竖线代表
+   "you are here" 锚点。但用户反馈它视觉上像"激活样式"(永远亮),
+   跟 chip 不是导航项、只是状态指示的语义冲突。
+   现在 chip 纯靠 muted 文字 + 名字 + count 跟 lock 表达"当前空间"
+   语义 —— 这种极简风是 Notion / Linear 左 rail 的标准做法。
+   「你点击它会跳到该空间 home」这件事交由 hover:bg-subtle 反馈
+   (跟其它 sidebar row 一致);不需要常驻竖线作为"可点击性"提示。 */
+.quick-nav-active .material-symbols-outlined { color: var(--text-3); }
 .active-name {
   flex: 1;
   overflow: hidden;
@@ -391,11 +474,11 @@ watch(
 }
 .active-count {
   font-size: 11px;
-  color: var(--accent);
-  background: rgba(255, 255, 255, 0.6);
+  color: var(--text-3);
+  background: var(--bg-subtle);
   padding: 1px 6px;
   border-radius: 8px;
-  font-weight: 600;
+  font-weight: 500;
 }
 /* viewer-role 只读锁:名字与页数之间的 14px muted 小锁。放在这里而不是叠在
    20px 头像上 —— 头像太小,角标 glyph 会糊。lock 轮廓在小尺寸下比 visibility
@@ -405,45 +488,27 @@ watch(
   color: var(--text-3);
   flex-shrink: 0;
 }
-
-/* "我的空间" anchor: a quiet bottom-of-section shortcut back to the user's
- * personal space when the active space is something else. Rendered as a
- * small inline button so it doesn't compete with the active-space chip
- * above or the create-page button at the very bottom. */
-.sidebar-myspace-anchor {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--border);
-}
-.msa-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius);
-  color: var(--text-3);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.msa-btn:hover { background: var(--bg-subtle); color: var(--text-1); }
-.msa-icon { font-size: 16px !important; color: var(--text-3); flex-shrink: 0; }
-.msa-btn:hover .msa-icon { color: var(--text-1); }
-.msa-label { font-weight: 500; }
-.msa-hint {
-  margin-left: auto;
+/* P1-9: 归档空间 badge —— 跟 .active-count 同款半透白底 + text-3 字体尺寸,
+   「已归档」三个字作为 chip 标识。位置在名字后 / lock 前,跟 lock 共存
+   (archived 是空间级,readonly 是用户级,两者正交)。 */
+.active-archived-badge {
   font-size: 11px;
   color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 120px;
+  background: var(--bg-subtle);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+/* 归档空间的 quick-nav 整体视觉降级 —— 名字颜色降低到 text-3,跟
+   archivedBadge 视觉重量对齐。不影响 3px accent 竖线 (它是固定
+   active 标识,跟 archived 正交)。 */
+.quick-nav-archived .active-name {
+  color: var(--text-3);
+}
+.quick-nav-archived .active-count {
+  /* 归档空间的页数跟生产环境脱钩,弱化显示 */
+  opacity: 0.6;
 }
 
 .sidebar-section-title .count {
@@ -457,9 +522,43 @@ watch(
   letter-spacing: 0;
 }
 
+/* Sidebar 三个 section 之间用 sticky top 自身的 border-bottom 做分隔 —
+   见 SidebarTopSection.vue。WatchedSidebar / page-tree section 跟 sticky 顶
+   部之间的 visual divider 由 sticky 底边提供,这里只补上 12px margin-top 给
+   一点呼吸空间,不要再叠 border-top(避免双线夹一缝的难看效果)。 */
+.sidebar-section {
+  margin-top: 12px;
+}
+
 .tree-empty {
-  /* EmptyState 自带 padding,这里仅约束外层居中即可 */
-  margin-top: 8px;
+  /* EmptyState 自带 padding 28px 16px,挤压 row 视觉。P1-9 (sidebar polish)
+     收紧:EmptyState 内部 padding 改为 8px,左对齐 + icon 紧随其后,让
+     "还没有页面"跟 row 文字起点(X=20)对齐,跟 watched-empty
+     的 0 8px 同款节奏。 */
+  margin-top: 4px;
+}
+/* P1-9: 加载中分支 —— 跟 watched-empty 同款 28px / 12px / 0 8px / text-3,
+   跟 row 文字起点对齐。 */
+.tree-loading {
+  min-height: 28px;
+  line-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.tree-empty :deep(.empty-state) {
+  padding: 8px;
+  align-items: flex-start;
+  text-align: left;
+  gap: 0;
+}
+.tree-empty :deep(.empty-icon) {
+  margin: 0 8px 0 0;
+  width: 28px;
+  height: 28px;
+}
+.tree-empty :deep(.empty-icon .material-symbols-outlined) {
+  font-size: 18px;
 }
 .tree-empty-cta {
   display: inline-flex;
