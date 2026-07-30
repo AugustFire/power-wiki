@@ -766,7 +766,11 @@ spacePermissionsRouter.get('/:id/members', async (c) => {
           'grantedBy', aug.granted_by,
           'grantedAt', aug.granted_at
         )
+        -- P2: 排序先按 role rank DESC —— MAX-rank 合并的「赢家」必须落在
+        -- sources[0],前端据此渲染「生效中」标记 + 「调整」按钮的跳转目标。
+        -- 同 rank 内仍是 direct 优先 → 组名 → 授权时间,保持原有稳定顺序。
         ORDER BY
+          CASE aug.role WHEN 'admin' THEN 3 WHEN 'editor' THEN 2 WHEN 'viewer' THEN 1 END DESC,
           CASE aug.source_kind WHEN 'direct' THEN 0 ELSE 1 END,
           ug.name NULLS FIRST,
           aug.granted_at ASC

@@ -88,6 +88,42 @@ const ROLE_INFO: Record<SpaceRole, { label: string; icon: string }> = {
   viewer: { label: '只读', icon: 'visibility' },
 }
 
+/* ─── P2:哪一条来源在「赢」 ─────────────────────────────────────
+ * 有效角色是所有来源按 MAX-rank 合并的结果(admin > editor > viewer),
+ * 所以当一个人同时有「直接 viewer」和「某组 editor」两条来源时,生效的
+ * 是 editor —— 统一的 effective pill 看不出这件事,管理员会误以为直接
+ * 授权在生效。
+ *
+ * 后端已把 sources 按 role rank DESC 排序(见 spacePermissions.ts 的
+ * jsonb_agg ORDER BY),所以「赢家」= role 等于 effectiveRole 的那些条目;
+ * 同 rank 打平时 sources[0](direct 优先)是唯一的代表条目 —— 只给它挂
+ * 「生效中」标记,避免多条并列时到处都是 ✓ 反而看不出重点。
+ */
+function isWinningSource(member: SpaceMember, index: number): boolean {
+  const s = member.sources[index]
+  if (!s) return false
+  return s.role === member.effectiveRole && index === 0
+}
+
+/** 是否存在「被覆盖」的来源 —— 用来决定要不要给这一行加解释性 hint。 */
+function hasOverriddenSource(member: SpaceMember): boolean {
+  return member.sources.length > 1
+    && member.sources.some((s) => s.role !== member.effectiveRole)
+}
+
+function sourceTitle(member: SpaceMember, s: SpaceMemberSource, index: number): string {
+  const where = s.kind === 'direct'
+    ? '直接授权'
+    : `通过组「${s.groupName ?? s.groupId}」授权`
+  const role = ROLE_INFO[s.role].label
+  const verdict = isWinningSource(member, index)
+    ? '当前生效的就是这一条'
+    : s.role === member.effectiveRole
+      ? '与生效角色同级'
+      : `已被更高的「${ROLE_INFO[member.effectiveRole].label}」覆盖`
+  return `${where} — ${role} · ${verdict}。到「授权」tab 修改。`
+}
+
 /* ─── 跳 grants tab + 高亮 ────────────────────────────────────── */
 /**
  * 跳转到 grants tab 并通过 query 传递要高亮的 grant。
@@ -134,7 +170,8 @@ function copyUserId(userId: string) {
     </div>
     <p class="smt-hint">
       显示当前空间的所有成员,以及每个人是怎么拿到访问权的(直接授权 / 通过某个组)。
-      写操作请到「授权」tab。
+      一个人有多条来源时,按权限最大的那一条生效(管理 &gt; 编辑 &gt; 只读),
+      打勾的来源就是当前生效的那条。写操作请到「授权」tab。
     </p>
 
     <div v-if="loadError" class="smt-error">
@@ -212,18 +249,34 @@ function copyUserId(userId: string) {
             <button
               type="button"
               class="smt-source"
-              :class="[`smt-source-${s.kind}`]"
-              :title="s.kind === 'direct' ? '直接授权 — 在授权 tab 修改' : `通过组「${s.groupName ?? s.groupId}」授权 — 在授权 tab 改组授权`"
+              :class="[
+                `smt-source-${s.kind}`,
+                isWinningSource(m, i) ? 'smt-source-winning' : '',
+                !isWinningSource(m, i) && s.role !== m.effectiveRole ? 'smt-source-overridden' : '',
+              ]"
+              :title="sourceTitle(m, s, i)"
               @click="goHighlightGrant(s, m.userId)"
             >
-              <span class="material-symbols-outlined smt-source-icon">
+              <span
+                v-if="isWinningSource(m, i)"
+                class="material-symbols-outlined smt-source-check"
+                aria-hidden="true"
+              >check</span>
+              <span v-else class="material-symbols-outlined smt-source-icon">
                 {{ s.kind === 'direct' ? 'person' : 'workspaces' }}
               </span>
               <span class="smt-source-label">
                 {{ s.kind === 'direct' ? '直接' : (s.groupName ?? s.groupId) }}
               </span>
+              <span class="smt-source-role">{{ ROLE_INFO[s.role].label }}</span>
             </button>
           </template>
+          <!-- 只在真的有「被覆盖」来源时出现 —— 单来源的行不需要解释合并规则 -->
+          <span
+            v-if="hasOverriddenSource(m)"
+            class="smt-source-note"
+            title="多条来源取权限最大的那一条生效(管理 > 编辑 > 只读),打勾的是当前生效的来源"
+          >取最大权限生效</span>
         </div>
         <button
           type="button"
@@ -498,6 +551,50 @@ function copyUserId(userId: string) {
   color: var(--text-2);
   background: var(--bg-canvas);
   border-color: transparent;
+}
+
+/* P2:MAX-rank 合并的赢家 —— accent 描边 + ✓,让「哪条在生效」一眼可见。
+   不用填充色块,避免跟 grants tab 的可点 chip 混淆(这里仍是只读视图)。 */
+.smt-source-winning {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  font-weight: 600;
+}
+
+/* 被更高 rank 覆盖的来源 —— 降到次要层级(不删,管理员仍需知道它存在)。 */
+.smt-source-overridden {
+  color: var(--text-3);
+  background: var(--bg-canvas);
+  border-color: transparent;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 60%, transparent);
+}
+.smt-source-overridden:hover {
+  text-decoration: none;
+}
+
+.smt-source-check {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 每条来源自己的角色 —— 有了它管理员才能看出「直接是只读、组给了编辑」。 */
+.smt-source-role {
+  flex-shrink: 0;
+  padding-left: 5px;
+  margin-left: 1px;
+  border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.smt-source-note {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  cursor: help;
 }
 
 /* ─── 「调整授权」button ─── */

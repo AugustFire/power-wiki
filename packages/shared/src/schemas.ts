@@ -150,6 +150,13 @@ export const PageNodeSchema = z.object({
    * 短路补充。
    */
   viewerRole: z.enum(['viewer', 'editor', 'admin']).nullable().optional(),
+  /**
+   * 模块 1 P2:所属空间是否已归档,与 viewerRole 同一条注入路径。
+   * 非 admin 的 GET /api/spaces 过滤掉归档空间,但其页面仍可直链读 ——
+   * 所以前端不能靠 spacesStore 判断,必须由 page DTO 携带。
+   * ReadView 渲染只读横幅 / EditView 降级为只读靠这个字段。
+   */
+  spaceArchived: z.boolean().optional(),
 })
 
 /** 树形节点(sidebar 渲染用) — 显式标注类型解决 z.lazy 递归推导 */

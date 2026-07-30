@@ -91,6 +91,7 @@ import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
 import { canAccessSpace, getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import {
   canReadPage,
+  canReadSpace,
   canEditPage,
   canEditSpace,
   getEffectiveSpaceRolesForUser,
@@ -134,7 +135,29 @@ async function attachViewerRoles(
     ...new Set(nodes.map((n) => n.spaceId).filter((s): s is string => s !== null)),
   ]
   const roles = await getEffectiveSpaceRolesForUser(principal, spaceIds)
-  return nodes.map((n) => ({ ...n, viewerRole: roles.get(n.spaceId) ?? null }))
+  const archived = await getArchivedSpaceFlags(spaceIds)
+  return nodes.map((n) => ({
+    ...n,
+    viewerRole: roles.get(n.spaceId) ?? null,
+    spaceArchived: archived.has(n.spaceId),
+  }))
+}
+
+/**
+ * 模块 1 P2:一次 SQL 拿这批 space 的归档状态,返回**已归档**的 id 集合。
+ *
+ * 为什么必须由 page 路径注入:非 admin 的 `GET /api/spaces` 会过滤掉归档
+ * 空间,但归档空间的页面仍可直链读到 —— 前端 spacesStore 里没有那条
+ * space,`isArchived()` 会误报未归档。空数组短路,不发 SQL。
+ */
+async function getArchivedSpaceFlags(spaceIds: string[]): Promise<Set<string>> {
+  if (spaceIds.length === 0) return new Set()
+  const result = await db.execute<{ id: string }>(sql`
+    SELECT id FROM spaces
+     WHERE archived_at IS NOT NULL
+       AND id IN (${sql.join(spaceIds.map((id) => sql`${id}`), sql`, `)})
+  `)
+  return new Set(result.rows.map((r) => r.id))
 }
 
 /* ─── GET /api/pages ─────────────────────────────────────────────────────
@@ -397,6 +420,15 @@ pagesRouter.get('/trash', async (c) => {
  *  Returns 404 if the page is in a space the current user can't access.
  *  Existence in inaccessible spaces is intentionally indistinguishable from
  *  "page doesn't exist".
+ *
+ *  模块 1 P2 例外:如果用户**能读这个空间**、只是被页面级 view 限制挡住,
+ *  则回 404 + `error: 'view_restricted'` + 空间名,让前端能给出「此页面存在
+ *  访问限制,请联系空间管理员」而不是笼统的「页面不存在」。
+ *
+ *  为什么这不泄漏:空间成员本来就知道这个空间存在、也能在 sidebar 看到
+ *  「🔒 限制中」chip(hasViewRestriction 早就随列表返回)。对**非空间成员**
+ *  仍然一律裸 not_found —— 不透露空间名,也不透露页面是否存在。
+ *  状态码保持 404(不用 403),避免 client 端既有的 404→跳走逻辑分叉。
  */
 pagesRouter.get('/:id', async (c) => {
   const me = c.get('user')
@@ -405,6 +437,22 @@ pagesRouter.get('/:id', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404)
   if (row.spaceId === null) return c.json({ error: 'not_found' }, 404)
   if (!(await canReadPage(principalFromUser(me), row.id, row.spaceId))) {
+    if (await canReadSpace(principalFromUser(me), row.spaceId)) {
+      const [space] = await db
+        .select({ name: spaces.name })
+        .from(spaces)
+        .where(eq(spaces.id, row.spaceId))
+        .limit(1)
+      return c.json(
+        {
+          error: 'view_restricted',
+          message: '该页面已设置查看限制',
+          spaceId: row.spaceId,
+          spaceName: space?.name ?? null,
+        },
+        404,
+      )
+    }
     return c.json({ error: 'not_found' }, 404)
   }
   const [node] = await attachViewerRoles([row], me, principalFromUser(me))

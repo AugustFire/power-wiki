@@ -136,6 +136,20 @@ export interface PageNode {
    * 把后端 404 提前到按钮不可见阶段;不依赖再次访问 server。
    * Optional:老 cache / seed 数据可能缺失,fallback null 等同于无权限。 */
   viewerRole?: 'viewer' | 'editor' | 'admin' | null
+  /**
+   * 模块 1 P2:所属空间是否已归档。与 viewerRole 同一条注入路径
+   * (`attachViewerRoles`)。
+   *
+   * 为什么挂在 page 上而不让前端查 space:非 admin 的 `GET /api/spaces`
+   * **会过滤掉**归档空间(见 routes/spaces.ts 的 activeIds),但归档空间的
+   * 页面仍可通过直链读到 —— 所以前端 spacesStore 里根本没有那条 space,
+   * `isArchived(spaceId)` 会误报 false。挂在 page DTO 上是唯一可靠来源。
+   *
+   * ReadView 用它渲染「此空间已归档,仅可阅读」横幅,EditView 用它把
+   * 编辑器降级为只读(后端 canEditSpace 本来就 403,这里是把 403 提前
+   * 成可见提示)。Optional:老 cache 缺失时按未归档对待。
+   */
+  spaceArchived?: boolean
 }
 
 /** 树形结构上的节点(Sidebar / PageTree 渲染用),与 PageNode 解耦避免暴露 contentJSON 等大字段。 */

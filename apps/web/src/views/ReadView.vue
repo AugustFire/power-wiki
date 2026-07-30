@@ -146,9 +146,16 @@ function bindInternalLinkHover(root: HTMLElement) {
 
 const page = computed(() => pagesStore.getPage(props.id))
 const subPages = computed(() => pagesStore.getChildren(props.id))
-type PageLoadState = 'loading' | 'ready' | 'not-found' | 'error'
+type PageLoadState = 'loading' | 'ready' | 'not-found' | 'restricted' | 'error'
 const pageLoadState = ref<PageLoadState>(page.value ? 'ready' : 'loading')
 const pageLoadError = ref('')
+/**
+ * 模块 1 P2:被页面级 view 限制挡住时,后端(GET /api/pages/:id)回
+ * 404 + `error: 'view_restricted'` + 空间名。存下空间名,好在空状态里
+ * 告诉用户「去找哪个空间的管理员」——只有空间成员才会拿到这个码,
+ * 非成员仍是裸 not_found,所以这里显示空间名不泄漏任何东西。
+ */
+const restrictedSpaceName = ref<string | null>(null)
 let pageLoadRun = 0
 
 async function loadPageResource(id: string): Promise<void> {
@@ -157,6 +164,7 @@ async function loadPageResource(id: string): Promise<void> {
   const cachedSpaceId = cached?.spaceId ?? null
   if (!cached) pageLoadState.value = 'loading'
   pageLoadError.value = ''
+  restrictedSpaceName.value = null
 
   try {
     const loaded = await api.pages.get(id)
@@ -165,6 +173,16 @@ async function loadPageResource(id: string): Promise<void> {
     pageLoadState.value = 'ready'
   } catch (error) {
     if (run !== pageLoadRun) return
+    // 先判 view_restricted:它也是 404,但语义是「存在但你看不了」,
+    // 不能走下面 not_found 那套「空间可能已不可见 → refresh → 跳首页」的流程。
+    if (error instanceof ApiError && error.code === 'view_restricted') {
+      const body = error.body as { spaceName?: string | null } | null
+      restrictedSpaceName.value = body?.spaceName ?? null
+      // 缓存里的这条已经不可读了,清掉避免 sidebar / 最近访问继续拿它渲染。
+      pagesStore.removeCachedPage(id)
+      pageLoadState.value = 'restricted'
+      return
+    }
     if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
       pagesStore.removeCachedPage(id)
       if (cachedSpaceId && cachedSpaceId === spacesStore.activeSpaceId.value) {
@@ -564,6 +582,8 @@ const canShare = computed(() => {
   if (!p) return false
   const me = authStore.user
   if (!me) return false
+  // 归档空间不再发放新的分享链接(share 是写操作)。
+  if (p.spaceArchived) return false
   if (isPersonalSpace.value) return false
   if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
@@ -581,6 +601,8 @@ const canEdit = computed(() => {
   if (!p) return false
   const me = authStore.user
   if (!me) return false
+  // 模块 1 P2:归档空间整体只读,admin 也不例外(对齐后端 canEditSpace)。
+  if (p.spaceArchived) return false
   if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
@@ -762,7 +784,7 @@ watch(
                chrome 高度稳定,load 后是 fade 而不是空白闪一下。
                按 active space 判断根是否就绪 —— 全局 `loaded` 是「至少一个空间
                加载完」太宽,在跨空间跳转或刚切空间时会过早取消 skeleton。 -->
-          <div v-if="pageLoadState === 'loading' || (spacesStore.activeSpaceId.value && !pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value))" class="read-skeleton" aria-busy="true" aria-live="polite">
+          <div v-if="pageLoadState !== 'not-found' && pageLoadState !== 'restricted' && pageLoadState !== 'error' && (pageLoadState === 'loading' || (spacesStore.activeSpaceId.value && !pagesStore.isRootsLoaded(spacesStore.activeSpaceId.value)))" class="read-skeleton" aria-busy="true" aria-live="polite">
             <Skeleton height="36px" width="70%" />
             <div class="read-skeleton-byline">
               <Skeleton width="32px" height="32px" radius="50%" />
@@ -789,6 +811,22 @@ watch(
               返回空间首页
             </button>
           </EmptyState>
+          <!-- 模块 1 P2:区分「页面不存在」和「页面有查看限制」。后者给出
+               空间名 + 明确的下一步(找空间管理员申请),而不是一律 404。 -->
+          <EmptyState
+            v-else-if="pageLoadState === 'restricted'"
+            variant="no-permission"
+            icon="lock"
+            title="此页面存在访问限制"
+            :hint="restrictedSpaceName
+              ? `这个页面被设置了查看限制，你目前不在允许名单里。如需访问，请联系空间「${restrictedSpaceName}」的管理员。`
+              : '这个页面被设置了查看限制，你目前不在允许名单里。如需访问，请联系该空间的管理员。'"
+            size="lg"
+          >
+            <button type="button" class="btn primary" @click="returnToSpaceHome">
+              返回空间首页
+            </button>
+          </EmptyState>
           <EmptyState
             v-else-if="pageLoadState === 'error'"
             icon="cloud_off"
@@ -801,6 +839,19 @@ watch(
             </button>
           </EmptyState>
           <div v-else-if="page">
+            <!-- 模块 1 P2:归档空间只读横幅。归档语义此前只在 Sidebar /
+                 SpaceSwitcher 表达,深链直接打开归档空间里的页面时毫无提示,
+                 用户点了保存才发现无效。这里在正文最上方明说。 -->
+            <div v-if="page.spaceArchived" class="archived-banner">
+              <span class="material-symbols-outlined archived-banner-icon" aria-hidden="true">
+                inventory_2
+              </span>
+              <div class="archived-banner-text">
+                <strong>此空间已归档,仅可阅读。</strong>
+                <span>归档空间的页面不能新建、编辑或删除。如需恢复编辑,请联系管理员解除归档。</span>
+              </div>
+            </div>
+
             <!-- 标签条(紧凑版) — 已发布是页面状态,作者 pill 是贡献者元数据,
                  都归 .page-tags。每条 pill 角色清晰:已发布 = 状态,创建者 = 角色。
                  作者 pill 仅在「最后编辑者 ≠ 创建者」时出现(同人场景由 byline
@@ -1007,6 +1058,40 @@ watch(
   font-size: 13px;
   color: var(--text-3);
   max-width: 360px;
+}
+
+/* 模块 1 P2:归档只读横幅。用中性灰(与 Sidebar 归档灰带同语义)而非
+   warning 橙 —— 归档是生命周期状态,不是错误或风险。 */
+.archived-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.archived-banner-icon {
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.archived-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.archived-banner-text strong {
+  color: var(--text-1);
+  font-weight: 600;
 }
 
 .page-tags {

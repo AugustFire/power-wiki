@@ -59,6 +59,10 @@ const rightRailEl = inject<Ref<HTMLElement | null>>('appRightRail', ref(null))
 function canEditPageNode(p: PageNode): boolean {
   const me = authStore.user
   if (!me) return false
+  // 模块 1 P2:归档空间整体只读,连 admin 也不例外 —— 与后端 canEditSpace
+  // 的归档短路一致(lib/permissions.ts)。放在 isAdmin 之前,否则 admin 会
+  // 进到编辑器里写半天再吃 403。
+  if (p.spaceArchived) return false
   if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
   if (authStore.isAdmin) return true
   if (p.viewerRole && p.viewerRole !== 'viewer') return true
@@ -273,6 +277,13 @@ onMounted(async () => {
       hydrateExistingPage(fetched)
       return
     } catch (e) {
+      // view_restricted 也是 404,但页面**是存在的** —— 不能落到下面
+      // 「404 ⇒ 当成新页面创建」的分支,否则会凭空多出一篇同 id 的新页。
+      // 交给 ReadView 呈现「此页面存在访问限制」。
+      if (e instanceof ApiError && e.code === 'view_restricted') {
+        await router.replace(`/p/${props.id}`)
+        return
+      }
       if (!(e instanceof ApiError && e.status === 404)) {
         await router.replace(`/p/${props.id}`)
         return
