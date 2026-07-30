@@ -10,6 +10,7 @@ import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { newId } from '@/lib/id'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
@@ -137,22 +138,27 @@ function excerpt(html: string): string {
 
 <template>
   <div class="home-shell">
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <span class="crumb-item current">{{ homeTitle }} · 首页</span>
-        <span
-          v-if="!canCreateInSpace"
-          class="material-symbols-outlined crumb-lock"
-          title="你在此空间只有只读权限,无法创建新页面"
-        >lock</span>
-      </div>
-      <div class="page-actions">
-        <button v-if="canCreateInSpace" class="btn primary" @click="createRoot">
-          <span class="material-symbols-outlined icon-lg">add</span>
-          新建页面
-        </button>
-      </div>
-    </Teleport>
+    <Breadcrumb :segments="[{ label: homeTitle + ' · 首页' }]">
+      <template #current>
+        <span class="crumb-item current">
+          {{ homeTitle }} · 首页
+          <span
+            v-if="!canCreateInSpace"
+            class="material-symbols-outlined crumb-lock"
+            title="你在此空间只有只读权限,无法创建新页面"
+          >lock</span>
+        </span>
+      </template>
+    </Breadcrumb>
+    <!-- page-actions 同样 Teleport 到 #app-subheader,与面包屑并列渲染,
+         视觉上「页面名/操作按钮」左右两段,顺序由 CSS .app-subheader-content
+         下 .breadcrumb/.page-actions 的 order 锁死(见 components.css)。 -->
+    <div class="page-actions">
+      <button v-if="canCreateInSpace" class="btn primary" @click="createRoot">
+        <span class="material-symbols-outlined icon-lg">add</span>
+        新建页面
+      </button>
+    </div>
 
     <div class="content-inner home-page content-wide">
       <div v-if="rootPages.length === 0" class="empty">

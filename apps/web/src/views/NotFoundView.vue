@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import BrandLogo from '@/components/ui/BrandLogo.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 const router = useRouter()
@@ -13,13 +14,10 @@ function goHome() {
 
 <template>
   <div class="notfound-shell">
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <a href="#/">我的知识库</a>
-        <span class="sep">/</span>
-        <span class="crumb-item current">页面不存在</span>
-      </div>
-    </Teleport>
+    <Breadcrumb :segments="[
+      { label: '我的知识库', to: '/' },
+      { label: '页面不存在' },
+    ]" />
 
     <div class="empty notfound">
           <BrandLogo :size="32" class="nf-mark" />

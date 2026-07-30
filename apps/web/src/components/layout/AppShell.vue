@@ -49,6 +49,16 @@ const hasToc = computed(() => route.meta.hasToc === true)
  */
 const rightRailEl = ref<HTMLElement | null>(null)
 provide<Ref<HTMLElement | null>>('appRightRail', rightRailEl)
+
+/** 同 rightRailEl 的设计:<div id="app-subheader"> 在 workspace 分支
+ *  v-else-if="loaded" 下才渲染,manager 分支(等价的 isManagerLayout)不
+ *  渲染。路由从 /manager/* 切到 /me/watched 这种「manager → workspace」
+ *  转换时,manager branch 先 unmount、workspace branch 后 mount,中间
+ *  时刻后代组件可能先于 #app-subheader 出现在 DOM,字符串 Teleport target
+ *  会 warn 失败;走 ref 把目标元素直接交给 Teleport.process() 跳过
+ *  querySelector,跟 right-rail 同款。 */
+const subheaderEl = ref<HTMLElement | null>(null)
+provide<Ref<HTMLElement | null>>('appSubheader', subheaderEl)
 </script>
 
 <template>
@@ -105,7 +115,7 @@ provide<Ref<HTMLElement | null>>('appRightRail', rightRailEl)
 
       <template v-else-if="loaded">
         <div class="subheader">
-          <div id="app-subheader" class="app-subheader-content"></div>
+          <div id="app-subheader" ref="subheaderEl" class="app-subheader-content"></div>
         </div>
         <div
           class="layout"

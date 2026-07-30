@@ -32,6 +32,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import SpaceMembersTab from '@/views/manager/SpaceMembersTab.vue'
 import PickPageDialog from '@/components/layout/PickPageDialog.vue'
 import { useConfirm } from '@/composables/useConfirm'
@@ -427,6 +428,17 @@ const isManagerRoute = computed(() =>
 const backTarget = computed(() => (isManagerRoute.value ? '/manager/spaces' : '/'))
 const backLabel = computed(() => (isManagerRoute.value ? '空间' : '我的知识库'))
 
+/** 面包屑 segments —— 双路径共用:manager 路径第一段「空间」(链接回
+ *  /manager/spaces),非 manager 路径「我的知识库」(链接回 /),末段
+ *  都是当前 space.name(loading 时用 Skeleton 占位,error 时退 —)。 */
+const breadcrumbSegments = computed(() => {
+  const cur = space.value?.name ?? '—'
+  return [
+    { label: backLabel.value, to: backTarget.value },
+    { label: cur },
+  ]
+})
+
 /* ─── 加载 ───────────────────────────────────────────────────── */
 async function load() {
   loading.value = true
@@ -782,30 +794,29 @@ function formatDate(ts: number): string {
 
 <template>
   <div class="space-edit">
-    <Teleport v-if="!isManagerRoute" to="#app-subheader">
-      <div class="breadcrumb">
-        <RouterLink :to="backTarget" class="crumb-item crumb-link">
-          {{ backLabel }}
-        </RouterLink>
-        <span class="sep">/</span>
+    <Breadcrumb
+      v-if="!isManagerRoute"
+      :segments="breadcrumbSegments"
+    >
+      <template #current="{ segment }">
         <span class="crumb-item current">
           <Skeleton v-if="loading" width="120px" height="14px" />
-          <template v-else-if="space">{{ space.name }}</template>
-          <template v-else>—</template>
+          <template v-else>{{ segment.label }}</template>
         </span>
-      </div>
-    </Teleport>
-    <nav v-else class="se-breadcrumb" aria-label="面包屑导航">
-      <RouterLink :to="backTarget">
-        {{ backLabel }}
-      </RouterLink>
-      <span class="se-bc-sep" aria-hidden="true">/</span>
-      <span class="se-bc-current">
-        <Skeleton v-if="loading" width="120px" height="14px" />
-        <template v-else-if="space">{{ space.name }}</template>
-        <template v-else>—</template>
-      </span>
-    </nav>
+      </template>
+    </Breadcrumb>
+    <Breadcrumb
+      v-else
+      variant="inline"
+      :segments="breadcrumbSegments"
+    >
+      <template #current="{ segment }">
+        <span class="crumb-item current">
+          <Skeleton v-if="loading" width="120px" height="14px" />
+          <template v-else>{{ segment.label }}</template>
+        </span>
+      </template>
+    </Breadcrumb>
 
     <header class="se-header" v-if="space">
       <div class="se-header-text">
@@ -1564,29 +1575,9 @@ function formatDate(ts: number): string {
 /* ─── Layout ─── */
 .se-stack { display: flex; flex-direction: column; gap: 12px; }
 
-/* ─── Breadcrumb ─── */
-.se-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  margin-bottom: 12px;
-}
-.se-breadcrumb a {
-  color: var(--accent);
-  text-decoration: none;
-  padding: 2px 4px;
-  margin: -2px -4px;
-  border-radius: 3px;
-  transition: background var(--duration-fast) var(--ease-out);
-}
-.se-breadcrumb a:hover {
-  background: var(--accent-soft, #DEEBFF);
-  text-decoration: none;
-}
-.se-bc-sep { color: var(--text-3); }
-.se-bc-current { color: var(--text-2); font-weight: 500; }
+/* 旧 .se-breadcrumb / .se-bc-sep / .se-bc-current 一律删除(P2 收口):
+   SpaceEditView 现在用统一 <Breadcrumb>(manager 路径走 inline 变体,
+   非 manager 路径走 subheader 变体),不再自绘面包屑样式。 */
 
 .se-error {
   padding: 48px;

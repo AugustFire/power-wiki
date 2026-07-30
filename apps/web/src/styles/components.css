@@ -140,6 +140,12 @@
 
 .page-actions { display: flex; gap: 8px; align-items: center; }
 
+/* subheader 内的面包屑和页面操作都是 Teleport 进 #app-subheader 的,DOM 顺序
+   取决于各自 mount 时机(<Breadcrumb> 要等 target ref 就绪,会晚一拍插入),
+   靠 order 锁死「面包屑在左、操作在右」,不依赖 teleport 到达顺序。 */
+.app-subheader-content > .breadcrumb { order: 0; }
+.app-subheader-content > .page-actions { order: 1; }
+
 /* 分组:在 primary 按钮前插一根细分隔线,跟 ghost 组隔开 */
 .page-actions .btn.primary {
     margin-left: 4px;

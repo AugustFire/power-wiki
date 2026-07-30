@@ -19,6 +19,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUiStore } from '@/stores/ui'
 import { usePagesStore } from '@/stores/pages'
@@ -55,6 +56,15 @@ const memberSearch = ref('')
 const availableSearch = ref('')
 
 const pendingUserId = ref<string | null>(null)
+
+/** 面包屑:用户组(链回 /manager/people?tab=groups)/ <group.name>。 */
+const breadcrumbSegments = computed(() => {
+  const cur = group.value?.name ?? '—'
+  return [
+    { label: '用户组', to: '/manager/people?tab=groups' },
+    { label: cur },
+  ]
+})
 
 async function load() {
   loading.value = true
@@ -239,15 +249,14 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 
 <template>
   <div class="group-edit">
-    <nav class="ge-breadcrumb" aria-label="面包屑导航">
-      <RouterLink :to="{ name: 'manager-people', query: { tab: 'groups' } }">用户组</RouterLink>
-      <span class="ge-bc-sep" aria-hidden="true">/</span>
-      <span class="ge-bc-current">
-        <Skeleton v-if="loading" width="120px" height="14px" />
-        <template v-else-if="group">{{ group.name }}</template>
-        <template v-else>—</template>
-      </span>
-    </nav>
+    <Breadcrumb variant="inline" :segments="breadcrumbSegments">
+      <template #current="{ segment }">
+        <span class="crumb-item current">
+          <Skeleton v-if="loading" width="120px" height="14px" />
+          <template v-else>{{ segment.label }}</template>
+        </span>
+      </template>
+    </Breadcrumb>
 
     <header class="ge-header">
       <div class="ge-header-text">
@@ -450,22 +459,8 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
 <style scoped>
 .group-edit { width: 100%; }
 
-/* ─── Breadcrumb ─── */
-.ge-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  margin-bottom: 12px;
-}
-.ge-breadcrumb a {
-  color: var(--accent);
-  text-decoration: none;
-}
-.ge-breadcrumb a:hover { text-decoration: underline; }
-.ge-bc-sep { color: var(--text-3); }
-.ge-bc-current { color: var(--text-2); font-weight: 500; }
+/* 旧 .ge-breadcrumb / .ge-bc-sep / .ge-bc-current 一律删除(P2 收口):
+   GroupEditView 现在用统一 <Breadcrumb variant="inline">。 */
 
 .ge-loading,
 .ge-error {

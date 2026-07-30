@@ -21,20 +21,32 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
-import { useRouter } from 'vue-router'
 import VersionList from '@/components/page/VersionList.vue'
 import VersionDiffView from '@/components/page/VersionDiffView.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import PageActions from '@/components/ui/PageActions.vue'
+import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
 import { usePageVersions } from '@/composables/usePageVersions'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { PageVersion } from '@power-wiki/shared'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
-const router = useRouter()
 const versionsComposable = usePageVersions()
 
 const page = computed(() => pagesStore.getPage(props.id))
+
+/** 面包屑 = 我的知识库 / <祖辈链> / <页面名> / 版本历史。页面名那段是链接,
+ *  兼作「返回页面」通道,代替原来 left-actions 的「← 返回页面」按钮
+ *  (P2 收口:全站统一走 <Breadcrumb>,History 不再单独留「返回」位)。 */
+const pageBreadcrumb = usePageBreadcrumbSegments(() => props.id, {
+  trailingLabel: () => '版本历史',
+})
+const breadcrumbSegments = computed(() => [
+  { label: '我的知识库', to: '/' },
+  ...pageBreadcrumb.value,
+])
 
 /** 浏览器 tab 标题:"<页面名> · 历史版本 · power-wiki"。page 没解析出时退 BASE。 */
 useDocumentTitle(() => (page.value ? `${page.value.title} · 历史版本` : null))
@@ -149,10 +161,6 @@ function onSelect(v: PageVersion) {
   selectedVersion.value = v
 }
 
-function goBack() {
-  router.push(`/p/${props.id}`)
-}
-
 /** 把 changeNote 翻译成中文标签 —— 跟 VersionList.noteFor 同算法,
  *  集中在这一个函数里方便 diff header 复用。空 note / 自动 snapshot
  *  都标「自动快照」,用户主动 restore 出来的标「从历史恢复」。 */
@@ -165,31 +173,12 @@ function formatChangeNote(note: string | null | undefined): string {
 
 <template>
   <div class="history-shell">
-    <Teleport to="#app-subheader">
-      <div class="left-actions">
-        <button
-          type="button"
-          class="btn ghost back-link"
-          :title="`返回 ${page?.title ?? '页面'}`"
-          aria-label="返回页面"
-          @click="goBack"
-        >
-          <span class="material-symbols-outlined">arrow_back</span>
-          返回页面
-        </button>
-      </div>
-      <div class="page-context">
-        <span class="material-symbols-outlined page-context-icon">history</span>
-        <span class="history-page-title">{{ page?.title ?? '加载中…' }}</span>
-        <span class="page-context-sep">·</span>
-        <span class="page-context-label">版本历史</span>
-      </div>
-      <div class="page-actions">
-        <span v-if="getState().versions.length > 0" class="vp-count">
-          共 {{ getState().versions.length }} 个版本
-        </span>
-      </div>
-    </Teleport>
+    <Breadcrumb :segments="breadcrumbSegments" />
+    <PageActions>
+      <span v-if="getState().versions.length > 0" class="vp-count">
+        共 {{ getState().versions.length }} 个版本
+      </span>
+    </PageActions>
 
     <div class="history-layout">
       <section class="history-list-pane" aria-label="版本列表">
@@ -250,46 +239,11 @@ function formatChangeNote(note: string | null | undefined): string {
 </template>
 
 <style scoped>
-.left-actions { display: inline-flex; align-items: center; }
-.back-link {
-  gap: 4px;
-  font-weight: 500;
-}
-.back-link .material-symbols-outlined {
-  font-size: 18px;
-}
-
-.page-context {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-  font-size: 14px;
-  color: var(--text-2);
-}
-.page-context-icon {
-  font-size: 18px;
-  color: var(--text-3);
-}
-.history-page-title {
-  /* breadcrumb 形态的页面名 —— 跟 ReadView 大标题(.page-title,
-   * components.css 里 36px)区分,避免命名冲突。父级 .page-context
-   * 设了 14px,这里不重复设 font-size,直接继承。 */
-  font-weight: 600;
-  color: var(--text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 480px;
-}
-.page-context-sep {
-  color: var(--text-3);
-}
-.page-context-label {
-  color: var(--text-3);
-  font-size: 13px;
-}
+/* 旧 .left-actions / .back-link / .page-context / .page-context-icon /
+   .history-page-title / .page-context-sep / .page-context-label 一律删除
+   (P2 收口):History 现在用统一 <Breadcrumb> 渲染「我的知识库 / <祖辈链>
+   / 版本历史」三段,原本「← 返回页面」按钮 + page-context 块被面包屑里的
+   页面链链接替代。 */
 
 .vp-count {
   font-size: 11px;

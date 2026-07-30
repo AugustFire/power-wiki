@@ -12,6 +12,7 @@
  */
 import { RouterView, RouterLink, useRoute } from 'vue-router'
 import { computed } from 'vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 
 const route = useRoute()
 
@@ -29,20 +30,25 @@ const section = computed(() => {
   if (name.startsWith('manager-audit')) return '审计日志'
   return '管理后台'
 })
+
+/** 面包屑 segments —— manager 分支没有 #app-subheader(那是 workspace 布局
+ *  独有的),所以用 bar 变体:同一套 .breadcrumb 样式,原地渲染进本层
+ *  自己的 .subheader。 */
+const breadcrumbSegments = computed(() => {
+  const seg = section.value
+  const list: Array<{ label: string; to?: string }> = [
+    { label: '我的知识库', to: '/' },
+    { label: '管理后台', to: '/manager/people' },
+  ]
+  if (seg !== '管理后台') list.push({ label: seg })
+  return list
+})
 </script>
 
 <template>
   <div class="manager-shell">
     <div class="subheader">
-      <div class="breadcrumb">
-        <a href="#/">我的知识库</a>
-        <span class="sep">/</span>
-        <RouterLink to="/manager/people" class="crumb-item">管理后台</RouterLink>
-        <template v-if="section !== '管理后台'">
-          <span class="sep">/</span>
-          <span class="crumb-item current">{{ section }}</span>
-        </template>
-      </div>
+      <Breadcrumb variant="bar" :segments="breadcrumbSegments" />
     </div>
 
     <div class="manager-grid">

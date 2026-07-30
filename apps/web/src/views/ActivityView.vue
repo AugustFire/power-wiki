@@ -23,6 +23,8 @@ import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import PageActions from '@/components/ui/PageActions.vue'
 import { useRecentActivity } from '@/composables/useRecentActivity'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useSpacesStore } from '@/stores/spaces'
@@ -146,14 +148,12 @@ function chipColor(kind: ActivityEvent['kind']): string {
 
 <template>
   <div class="activity-main">
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <a href="#/" class="crumb-item crumb-link">我的知识库</a>
-        <span class="sep">/</span>
-        <span class="crumb-item current">最近页面活动</span>
-      </div>
-      <div class="page-actions">
-        <label class="filter-select">
+    <Breadcrumb :segments="[
+      { label: '我的知识库', to: '/' },
+      { label: '最近页面活动' },
+    ]" />
+    <PageActions>
+      <label class="filter-select">
           <span>空间</span>
           <select v-model="selectedSpace">
             <option :value="ALL_SPACES">所有空间</option>
@@ -174,8 +174,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
           >refresh</span>
           刷新
         </button>
-      </div>
-    </Teleport>
+    </PageActions>
 
     <div class="content-inner activity-page">
       <header class="activity-header">

@@ -21,7 +21,9 @@ import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
-import { useBreadcrumb } from '@/composables/useBreadcrumb'
+import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import PageActions from '@/components/ui/PageActions.vue'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
@@ -367,8 +369,13 @@ const showAuthorSuffix = computed(() => {
 })
 
 // 面包屑链路(根 → 当前页) + 折叠渲染分段(>3 段中间省略)
-// useBreadcrumb 复用给 EditView,保持两边行为一致。
-const { visibleBreadcrumb } = useBreadcrumb(() => props.id)
+// usePageBreadcrumbSegments 适配到统一 <Breadcrumb> 组件,跟 EditView /
+// HistoryView 走同一份渲染;折叠 / … 省略策略在 composable 里集中处理。
+const pageBreadcrumb = usePageBreadcrumbSegments(() => props.id)
+const breadcrumbSegments = computed(() => [
+  { label: '我的知识库', to: '/' },
+  ...pageBreadcrumb.value,
+])
 
 function goEdit() {
   if (page.value) router.push(`/p/${page.value.id}/edit`)
@@ -650,37 +657,8 @@ watch(
 <template>
   <div class="read-shell">
     <ScrollProgress />
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <a href="#/" class="crumb-item crumb-link">我的知识库</a>
-        <template v-for="(c, i) in visibleBreadcrumb.head" :key="'h-' + i">
-          <span class="sep">/</span>
-          <a
-            v-if="i < visibleBreadcrumb.head.length - 1 || visibleBreadcrumb.ellipsis || visibleBreadcrumb.tail.length > 0"
-            class="crumb-item crumb-link"
-            :href="`#/p/${c.id}`"
-          >
-            {{ c.title }}
-          </a>
-          <span v-else class="crumb-item current">{{ c.title }}</span>
-        </template>
-        <template v-if="visibleBreadcrumb.ellipsis">
-          <span class="sep">/</span>
-          <span class="crumb-item ellipsis" title="中间层级省略">…</span>
-          <template v-for="(c, i) in visibleBreadcrumb.tail" :key="'t-' + i">
-            <span class="sep">/</span>
-            <a
-              v-if="i < visibleBreadcrumb.tail.length - 1"
-              class="crumb-item crumb-link"
-              :href="`#/p/${c.id}`"
-            >
-              {{ c.title }}
-            </a>
-            <span v-else class="crumb-item current">{{ c.title }}</span>
-          </template>
-        </template>
-      </div>
-      <div class="page-actions">
+    <Breadcrumb :segments="breadcrumbSegments" />
+    <PageActions>
 <!--        <button-->
 <!--          v-if="page"-->
 <!--          class="btn ghost"-->
@@ -733,8 +711,7 @@ watch(
           <span class="material-symbols-outlined icon-lg">edit</span>
           编辑
         </button>
-      </div>
-    </Teleport>
+    </PageActions>
 
     <!-- Viewer 兜底 banner —— EditView 检测到无权限时,redirect 到当前
          read URL 并挂 ?readonly=1。这里消费 query、显示提示、然后用
@@ -1099,36 +1076,6 @@ watch(
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 20px;
-}
-
-.crumb-item.ellipsis {
-  color: var(--text-3);
-  cursor: default;
-  font-weight: 600;
-  padding: 0 4px;
-}
-
-/* 面包屑可点 crumb:祖辈 / 同级祖先都能跳,鼠标 hover 高亮 + 键盘 focus
-   显环。current 是最后一段,渲染为 <span class="crumb-item current">,
-   走另一套非链接样式。 */
-.crumb-item.crumb-link {
-  cursor: pointer;
-  color: var(--text-2);
-  text-decoration: none;
-  border-radius: 3px;
-  padding: 1px 4px;
-  transition: background var(--duration-fast) var(--ease-out),
-              color var(--duration-fast) var(--ease-out);
-}
-.crumb-item.crumb-link:hover {
-  background: var(--bg-subtle);
-  color: var(--accent);
-  text-decoration: none;
-}
-.crumb-item.crumb-link:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-  color: var(--accent);
 }
 
 .subpages-title .count {

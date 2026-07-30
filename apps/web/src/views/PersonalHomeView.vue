@@ -6,6 +6,8 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import PageActions from '@/components/ui/PageActions.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
@@ -258,26 +260,22 @@ function relativeTime(timestamp: number): string {
 
 <template>
   <div class="personal-home-shell">
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <span class="crumb-item current">我的工作台</span>
-      </div>
-      <div class="page-actions">
-        <button
-          v-if="canCreatePersonalPage"
-          class="btn"
-          type="button"
-          @click="createPersonalPage"
-        >
-          <span class="material-symbols-outlined icon-lg">add</span>
-          新建个人页面
-        </button>
-        <button class="btn primary" type="button" @click="uiStore.openSettings()">
-          <span class="material-symbols-outlined icon-lg">edit</span>
-          编辑资料
-        </button>
-      </div>
-    </Teleport>
+    <Breadcrumb :segments="[{ label: '我的工作台' }]" />
+    <PageActions>
+      <button
+        v-if="canCreatePersonalPage"
+        class="btn"
+        type="button"
+        @click="createPersonalPage"
+      >
+        <span class="material-symbols-outlined icon-lg">add</span>
+        新建个人页面
+      </button>
+      <button class="btn primary" type="button" @click="uiStore.openSettings()">
+        <span class="material-symbols-outlined icon-lg">edit</span>
+        编辑资料
+      </button>
+    </PageActions>
 
     <div class="content-inner personal-home-page content-wide">
       <header class="profile-cover">

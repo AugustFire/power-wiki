@@ -13,6 +13,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
@@ -37,6 +38,16 @@ const editName = ref('')
 const editColor = ref('#0052CC')
 const editRole = ref<'admin' | 'user'>('user')
 const saving = ref(false)
+
+/** 面包屑:人员(链回 /manager/people)/ <user.name>。loading 阶段末段
+ *  退 Skeleton,走 #current 插槽。 */
+const breadcrumbSegments = computed(() => {
+  const cur = user.value?.name ?? '—'
+  return [
+    { label: '人员', to: '/manager/people' },
+    { label: cur },
+  ]
+})
 
 const oneTimePassword = ref<string | null>(null)
 const copied = ref(false)
@@ -245,15 +256,14 @@ const colorPresets = [
 
 <template>
   <div class="user-edit">
-    <nav class="ue-breadcrumb" aria-label="面包屑导航">
-      <RouterLink to="/manager/people">人员</RouterLink>
-      <span class="ue-bc-sep" aria-hidden="true">/</span>
-      <span class="ue-bc-current">
-        <Skeleton v-if="loading" width="120px" height="14px" />
-        <template v-else-if="user">{{ user.name }}</template>
-        <template v-else>—</template>
-      </span>
-    </nav>
+    <Breadcrumb variant="inline" :segments="breadcrumbSegments">
+      <template #current="{ segment }">
+        <span class="crumb-item current">
+          <Skeleton v-if="loading" width="120px" height="14px" />
+          <template v-else>{{ segment.label }}</template>
+        </span>
+      </template>
+    </Breadcrumb>
 
     <header class="ue-header">
       <Skeleton v-if="loading" width="56px" height="56px" radius="50%" />
@@ -526,22 +536,8 @@ const colorPresets = [
 <style scoped>
 .user-edit { max-width: 1000px; }
 
-/* ─── Breadcrumb ─── */
-.ue-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  margin-bottom: 12px;
-}
-.ue-breadcrumb a {
-  color: var(--accent);
-  text-decoration: none;
-}
-.ue-breadcrumb a:hover { text-decoration: underline; }
-.ue-bc-sep { color: var(--text-3); }
-.ue-bc-current { color: var(--text-2); font-weight: 500; }
+/* 旧 .ue-breadcrumb / .ue-bc-sep / .ue-bc-current 一律删除(P2 收口):
+   UserEditView 现在用统一 <Breadcrumb variant="inline">。 */
 
 .ue-loading,
 .ue-error {

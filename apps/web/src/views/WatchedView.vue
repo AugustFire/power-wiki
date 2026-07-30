@@ -18,6 +18,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/lib/api'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { useSpacesStore } from '@/stores/spaces'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { formatRelativeTime } from '@/lib/relativeTime'
@@ -121,13 +122,10 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
 
 <template>
   <div class="read-shell">
-    <Teleport to="#app-subheader">
-      <div class="breadcrumb">
-        <a href="#/">我的知识库</a>
-        <span class="sep">/</span>
-        <span class="crumb-item current">我的关注</span>
-      </div>
-    </Teleport>
+    <Breadcrumb :segments="[
+      { label: '我的知识库', to: '/' },
+      { label: '我的关注' },
+    ]" />
 
     <div class="content-inner watched-page">
           <h1 class="page-title">我的关注</h1>
@@ -177,7 +175,6 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
               </button>
             </div>
           </div>
-        </div>
         </div>
   </div>
 </template>
