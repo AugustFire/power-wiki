@@ -26,6 +26,13 @@ interface RecentEntry {
   id: string
   title: string
   visitedAt: number
+  /**
+   * 所属空间 id。syncFromServer 从 server 拉到的 PageNode 自带;
+   * recordVisit 也要求 caller 传入(ReadView 有 page 对象,顺手给)。
+   * 老 localStorage cache 里可能没有 → fall through 到 pagesStore 查找。
+   * 让「最近访问」section 直接渲染空间头像,而不是通用 history icon
+   * (PersonalHomeView 的视觉对齐要求)。 */
+  spaceId?: string
 }
 
 function isValid(e: unknown): e is RecentEntry {
@@ -76,6 +83,7 @@ export function useRecentPages() {
         id: p.id,
         title: p.title,
         visitedAt: p.updatedAt,
+        spaceId: p.spaceId,
       }))
       list.value = next
       save(next)
@@ -84,12 +92,12 @@ export function useRecentPages() {
     }
   }
 
-  function recordVisit(page: { id: string; title: string }): void {
+  function recordVisit(page: { id: string; title: string; spaceId?: string }): void {
     if (!page.id || !page.title) return
     // 移到最前 + 去重 + 截断。Date.now() 而不是去重旧 visitedAt,保证
     // 重新访问时刷新"刚刚"。
     const next: RecentEntry[] = [
-      { id: page.id, title: page.title, visitedAt: Date.now() },
+      { id: page.id, title: page.title, visitedAt: Date.now(), spaceId: page.spaceId },
       ...list.value.filter((e) => e.id !== page.id),
     ].slice(0, MAX)
     list.value = next

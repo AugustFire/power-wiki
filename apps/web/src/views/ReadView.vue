@@ -444,7 +444,7 @@ watch(page, async () => {
 watch(
   () => page.value,
   (p) => {
-    if (p && p.title) recordVisit({ id: p.id, title: p.title })
+    if (p && p.title) recordVisit({ id: p.id, title: p.title, spaceId: p.spaceId })
   },
   { immediate: true },
 )

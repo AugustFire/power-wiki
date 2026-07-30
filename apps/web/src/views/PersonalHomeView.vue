@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import DashboardCard from '@/components/page/DashboardCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSpacesStore } from '@/stores/spaces'
@@ -16,7 +17,28 @@ import { formatRelativeTime } from '@/lib/relativeTime'
 import { newId } from '@/lib/id'
 import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
 import { api } from '@/lib/api'
-import type { DashboardPayload, PageNode, Space } from '@power-wiki/shared'
+import type { DashboardPayload, PageNode, Space, SpaceRole } from '@power-wiki/shared'
+
+/* ─── 模块 1 P1 · 共享空间与角色 ─────────────────────────────────────
+ * SpaceSwitcher 只列空间名 + 描述,没有「我是谁」的信息;被加进 / 移出
+ * 团队空间对用户是不透明的。这里给 /me 增加一栏身份清单,row 视觉跟
+ * SpaceMembersTab 对齐(role pill 配色一致),但只展示自己一行。
+ *
+ * **只展示 shared/team 空间** — personal 空间已经通过 cover 里的
+ * 「进入个人空间 →」link 暴露,再列一份等于重复;section 的语义是
+ * 「我在哪些团队空间、各自什么角色」,不是「我的全部空间」。
+ *
+ * 数据 0 改动:`GET /api/spaces` 已经给每条 space 注入 `viewerRole`
+ * (effective space role,后端 `getEffectiveSpaceRolesForUser` 计算),
+ * 前端直接消费 `spacesStore.spaces.value` 即可。ROLE_INFO 视觉对齐
+ * SpaceMembersTab 的 smt-role-value(同一套配色 + icon + label),
+ * 这里不抽公共组件 —— CLAUDE.md 「read-only roles are not buttons」
+ * 把它当「信息」而非「组件」对待,本地写一份 4 行映射。*/
+const ROLE_INFO: Record<SpaceRole, { label: string; icon: string }> = {
+  admin:  { label: '管理', icon: 'shield_person' },
+  editor: { label: '编辑', icon: 'edit' },
+  viewer: { label: '只读', icon: 'visibility' },
+}
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -54,10 +76,14 @@ const profileSummary = computed(() => {
 })
 const recentItems = computed(() => recentList.value.map((entry) => {
   const page = pagesStore.getPage(entry.id)
+  // spaceId 优先级:1) entry 自带(syncFromServer / recordVisit 都塞了);
+  // 2) pagesStore lookup(老 localStorage cache 没塞 spaceId 时);
+  // 3) null → fallback 回 history icon。
+  const spaceId = entry.spaceId ?? page?.spaceId ?? null
   return {
     id: entry.id,
     title: page?.title || entry.title,
-    spaceId: page?.spaceId ?? null,
+    spaceId,
     timestamp: entry.visitedAt,
     // 死 row = page 已被 soft-delete。pagesStore.getPage 走内部 pages map,
     // soft-delete 后的页不在那里(API 列表过滤 deletedAt)→ getPage 返回
@@ -162,9 +188,67 @@ function goPersonalSpace(): void {
   }
 }
 
+/* goToSpace — 「我的空间与角色」section 的进入按钮 handler。
+ * 跟 goPersonalSpace 同形态(setActiveSpace + 跳 /),泛化到任意 space。
+ * 不预加载 pages roots:`/` 路由的 SpaceHomeView 挂载时会自己拉,
+ * 不需要 dashboard 路径额外触发一次请求(避免双跳抖动)。*/
+function goToSpace(space: Space): void {
+  spacesStore.setActiveSpace(space.id)
+  if (router.currentRoute.value.path !== '/') {
+    void router.push('/')
+  }
+}
+
+/* sharedSpacesRows — section 渲染源,**只包含 shared/team 空间**。
+ * 排序:活跃(name 字母序)→ 归档(仅 admin,name 字母序,行视觉降级)。
+ * personal 空间不进 list —— 已在 cover 暴露,这里是「团队身份清单」。*/
+const sharedSpacesRows = computed<Space[]>(() => {
+  const all = spacesStore.spaces.value
+  const isAdmin = auth.user?.role === 'admin'
+  const active = all
+    .filter((s) => s.kind === 'shared' && !s.archivedAt)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+  const archived = isAdmin
+    ? all
+        .filter((s) => s.kind === 'shared' && !!s.archivedAt)
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : []
+  return [...active, ...archived]
+})
+
+const isAdminUser = computed(() => auth.user?.role === 'admin')
+
+/* section meta 文案:普通用户「共 N 个」足够;admin 多挂一段「已归档 M 个」,
+ * 跟 Sidebar / SpaceSwitcher 在 admin 视图下的「team N · 归档 M」节奏一致。*/
+const sharedSpacesMeta = computed(() => {
+  const total = sharedSpacesRows.value.length
+  if (!isAdminUser.value) return `共 ${total} 个`
+  const archived = sharedSpacesRows.value.filter((s) => !!s.archivedAt).length
+  if (archived === 0) return `共 ${total} 个`
+  return `共 ${total} 个 · 已归档 ${archived} 个`
+})
+
+/* 描述一行:team 空间没 desc 就不显示;归档则在末尾追加「归档后只读」
+ * 灰字(走 inventory_2 icon)。返回 null = 不显示副信息行(干净)。*/
+function spaceSubLabel(space: Space): { icon: string; text: string } | null {
+  if (space.archivedAt) return { icon: 'inventory_2', text: '已归档 · 归档后只读' }
+  return null
+}
+
 function ensurePageLoaded(page: PageNode): void {
   if (pagesStore.getPage(page.id)) return
   void pagesStore.ensureAncestorsLoaded(page.id)
+}
+
+/* recentSpaceById — 「最近访问」row 用空间头像(不是通用 history icon)
+ * 来给用户空间归属感。空间已删 / spaceId 为 null(老 cache / dead row)
+ * 时返回 null,fallback 回 history icon。spaceById 已是 reactive,
+ * 跟着 spacesStore.spaces.value 走。*/
+function recentSpaceById(spaceId: string | null): Space | null {
+  if (!spaceId) return null
+  return spaceById.value.get(spaceId) ?? null
 }
 
 function relativeTime(timestamp: number): string {
@@ -198,7 +282,7 @@ function relativeTime(timestamp: number): string {
     <div class="content-inner personal-home-page content-wide">
       <header class="profile-cover">
         <UserAvatar
-          :size="80"
+          :size="56"
           :label="auth.user?.name ?? '我'"
           :color="auth.user?.color"
           :avatar-kind="auth.user?.avatarKind ?? null"
@@ -220,10 +304,6 @@ function relativeTime(timestamp: number): string {
             <span>进入个人空间 →</span>
           </button>
         </div>
-        <button class="profile-edit" type="button" @click="uiStore.openSettings()">
-          <span class="material-symbols-outlined">manage_accounts</span>
-          编辑资料
-        </button>
       </header>
 
       <div v-if="error" class="personal-home-error">
@@ -233,6 +313,62 @@ function relativeTime(timestamp: number): string {
       </div>
 
       <div class="personal-sections">
+        <section class="personal-section shared-spaces-section">
+          <header class="section-head">
+            <h2 class="section-title">
+              <span class="material-symbols-outlined section-icon">workspaces</span>
+              共享空间与角色
+            </h2>
+            <span class="section-meta">{{ sharedSpacesMeta }}</span>
+          </header>
+          <ul v-if="sharedSpacesRows.length > 0" class="ms-list">
+            <li
+              v-for="space in sharedSpacesRows"
+              :key="space.id"
+              class="ms-row"
+              :class="{ 'ms-row-archived': !!space.archivedAt }"
+            >
+              <SpaceAvatar :space="space" :size="20" />
+              <span class="ms-row-name">{{ space.name }}</span>
+              <span
+                v-if="spaceSubLabel(space)"
+                class="ms-row-sub"
+              >
+                <span class="material-symbols-outlined ms-row-sub-icon">{{ spaceSubLabel(space)!.icon }}</span>
+                <span>{{ spaceSubLabel(space)!.text }}</span>
+              </span>
+              <span class="ms-spacer" />
+              <span
+                v-if="space.viewerRole"
+                class="ms-role"
+                :class="`ms-role-${space.viewerRole}`"
+              >
+                <span class="material-symbols-outlined ms-role-icon">{{ ROLE_INFO[space.viewerRole].icon }}</span>
+                <span>{{ ROLE_INFO[space.viewerRole].label }}</span>
+              </span>
+              <span v-else class="ms-role ms-role-none">
+                <span class="material-symbols-outlined ms-role-icon">help</span>
+                <span>未知</span>
+              </span>
+              <button
+                type="button"
+                class="ms-enter"
+                :title="`进入「${space.name}」空间首页`"
+                @click="goToSpace(space)"
+              >
+                <span class="material-symbols-outlined">arrow_forward</span>
+              </button>
+            </li>
+          </ul>
+          <EmptyState
+            v-else
+            icon="workspaces"
+            title="还没有加入任何团队空间"
+            hint="联系管理员把你加入团队空间,就可以在这里看到自己的角色。"
+            size="sm"
+          />
+        </section>
+
         <section class="personal-section">
           <header class="section-head">
             <h2 class="section-title">
@@ -271,7 +407,7 @@ function relativeTime(timestamp: number): string {
         <section class="personal-section">
           <header class="section-head">
             <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon">add_circle</span>
+              <span class="material-symbols-outlined section-icon">edit_note</span>
               我创建的
             </h2>
             <span class="section-meta">最近 {{ payload?.created.length ?? 0 }} 个</span>
@@ -327,7 +463,17 @@ function relativeTime(timestamp: number): string {
                 :disabled="!item.alive"
                 @click="openStoredPage(item)"
               >
-                <span class="material-symbols-outlined stored-icon">history</span>
+                <!-- 用空间头像替代通用 history icon —— 让「最近访问」跟
+                  「我创建的」section 的有色 page icon 视觉对齐,同时给
+                  用户空间归属感。空间已删 / page 是 dead row 时 fallback
+                  回 history icon(灰色)。-->
+                <SpaceAvatar
+                  v-if="recentSpaceById(item.spaceId)"
+                  :space="recentSpaceById(item.spaceId)"
+                  :size="20"
+                  class="stored-avatar"
+                />
+                <span v-else class="material-symbols-outlined stored-icon">history</span>
                 <span class="stored-title">{{ item.title }}</span>
                 <span class="stored-meta">{{ relativeTime(item.timestamp) }}</span>
               </button>
@@ -348,25 +494,28 @@ function relativeTime(timestamp: number): string {
 
 <style scoped>
 .personal-home-page {
-  padding-top: 32px;
+  padding-top: 28px;
   padding-bottom: 64px;
 }
+/* cover —— 双列布局(avatar + 文字块),去掉右侧冗余的「编辑资料」
+ * 按钮(subheader 已有一份);padding 从 28/32 收到 20/28,跟下方
+ * section 卡片节奏一致;box-shadow 去掉 —— 在 2560 宽视口下阴影很
+ * 重,border + radius 已经足够把 cover 跟背景区分开。*/
 .profile-cover {
   display: grid;
-  grid-template-columns: 80px 1fr auto;
+  grid-template-columns: 64px minmax(0, 1fr);
   align-items: center;
-  gap: 24px;
-  padding: 28px 32px;
-  margin-bottom: 28px;
+  column-gap: 24px;
+  padding: 20px 28px;
+  margin-bottom: 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg);
-  box-shadow: var(--shadow-sm);
 }
 .profile-copy { min-width: 0; }
 .profile-eyebrow {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
@@ -375,27 +524,28 @@ function relativeTime(timestamp: number): string {
 .profile-name {
   margin: 0;
   color: var(--text-1);
-  font-size: 28px;
+  font-size: 26px;
   line-height: 1.2;
   letter-spacing: -0.02em;
 }
 .profile-email {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: var(--text-3);
   font-size: 13px;
 }
 .profile-summary {
-  margin: 12px 0 0;
+  margin: 10px 0 0;
   color: var(--text-2);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 /* 「进入个人空间 →」— cover 内的 inline link,把"工作台"跟"个人空间
- * 容器视图"两个产品连起来。视觉上做成 tertiary 链接(text-2 → text-1
- * → accent on hover),跟 .profile-summary 同字号但更轻量,避免盖过
- * 主 CTA(右侧的「编辑资料」)。lock_person icon 跟 SpaceSwitcher
- * 触发器徽章复用,降低首次见到的认知成本。 */
+ * 容器视图"两个产品连起来。视觉上做成 tertiary 链接(text-2 → accent
+ * on hover),跟 .profile-summary 同字号但更轻量;cover 右上已经没有
+ * 主 CTA,这个 link 是唯一的导航出口(从 /me 进 personal space 的入口),
+ * 颜色比之前的 text-2 略深一点(text-2 → text-1 默认色)让链接可见度
+ * 跟上提升。lock_person icon 跟 SpaceSwitcher 触发器徽章复用。*/
 .profile-space-link {
   display: inline-flex;
   align-items: center;
@@ -404,9 +554,10 @@ function relativeTime(timestamp: number): string {
   padding: 0;
   background: transparent;
   border: 0;
-  color: var(--text-2);
+  color: var(--text-1);
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition: color var(--duration-fast) var(--ease-out);
 }
@@ -415,29 +566,6 @@ function relativeTime(timestamp: number): string {
   font-size: 15px !important;
   color: inherit;
 }
-.profile-edit {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text-2);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-}
-.profile-edit:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.profile-edit .material-symbols-outlined { font-size: 18px !important; }
 .personal-home-error {
   display: flex;
   align-items: center;
@@ -462,7 +590,7 @@ function relativeTime(timestamp: number): string {
 .personal-sections {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: 24px;
   align-items: start;
 }
 .personal-section {
@@ -470,18 +598,15 @@ function relativeTime(timestamp: number): string {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
-  transition: border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
 }
-.personal-section:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-}
+/* 静态卡片,不交互 —— 去掉 hover 边框/阴影变化(原 transition 让边框
+ * 在 mouseover 时变成 border-strong + 加 shadow,在大网格里 4 张卡同时
+ * 高亮显得「卡片墙」,而非信息分区。)*/
 .section-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--border);
 }
 .section-title {
@@ -536,8 +661,8 @@ function relativeTime(timestamp: number): string {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 48px;
-  padding: 8px 16px;
+  min-height: 46px;
+  padding: 7px 16px;
   border: 0;
   background: transparent;
   color: var(--text-2);
@@ -560,6 +685,12 @@ function relativeTime(timestamp: number): string {
   color: var(--text-3);
   font-size: 20px !important;
 }
+/* stored-avatar —— 「最近访问」用真实空间头像替代通用 history icon;
+ * 跟 .ms-row 的 SpaceAvatar 同 size=22 节奏对齐,让两个 section 的
+ * row 视觉权重一致。flex-shrink: 0 防止被 title 截断挤压。*/
+.stored-avatar {
+  flex-shrink: 0;
+}
 .stored-title {
   flex: 1;
   min-width: 0;
@@ -573,5 +704,126 @@ function relativeTime(timestamp: number): string {
   flex-shrink: 0;
   color: var(--text-3);
   font-size: 12px;
+}
+
+/* ─── 模块 1 P1 · 共享空间与角色 ─────────────────────────────────────
+ * section 复用 .personal-section 卡片样式(统一边框 / 阴影 / hover 行为),
+ * 放在 .personal-sections 2 列网格的第一个 cell 里 —— 跟 @提及我并列。
+ * 之所以进 2 列网格:共享空间行数通常很少(普通用户 1-5 个),全宽 row
+ * 会让每行 ~1100px 跑一两个字段,显空。半宽 cell ≈ 580px,row 紧凑更
+ * 符合信息密度。
+ *
+ * row 用 flex 而非 grid:5 个元素(avatar / name / sub / role / enter)
+ * 边界规则不一致(grid-template-columns 难写),flex + 1fr-spacer 让
+ * role pill + enter 始终靠右、name 截断发生在剩余空间里。role pill 是
+ * 纯文字 + icon + 配色,无背景填充 —— CLAUDE.md 「read-only roles are
+ * not buttons」硬约束:role 是信息,不是可点 chip。配色跟 SpaceMembersTab
+ * 的 .smt-role-{admin|editor|viewer} 完全一致,但**不抽公共组件**
+ * —— 跨视图共享样式约定改用「视觉对齐」而非「共享 class」。*/
+.shared-spaces-section .section-icon {
+  color: var(--accent);
+}
+.ms-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ms-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.ms-row:last-child { border-bottom: 0; }
+.ms-row:hover { background: var(--bg-canvas); }
+
+/* 归档行视觉降级 —— 跟 SpaceSwitcher 的 ss-menu-item-archived 同节奏
+ * (opacity 0.65),不阻塞 hover 高亮(hover 时透明度自动回到 1 让用户
+ * 看见这是「可点」,只是内容是历史快照)。*/
+.ms-row-archived {
+  opacity: 0.65;
+}
+.ms-row-archived:hover {
+  opacity: 1;
+}
+
+.ms-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.ms-row-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.ms-row-sub-icon {
+  font-size: 12px !important;
+  color: inherit;
+  line-height: 1;
+}
+
+/* spacer —— 让 name/sub 跟右侧 role+enter 之间留一段弹性空白,
+ * name 截断时不会贴着 role pill。min-width: 0 防止 flex 子项内容撑破。*/
+.ms-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* role pill —— text + icon,无背景,跟 SpaceMembersTab smt-role-value 视觉一致 */
+.ms-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ms-role-icon {
+  font-size: 14px !important;
+  line-height: 1;
+}
+.ms-role-admin { color: var(--accent); }
+.ms-role-editor { color: var(--text-2); }
+.ms-role-viewer { color: var(--text-3); }
+.ms-role-none { color: var(--text-3); font-style: italic; }
+
+/* 进入按钮 —— icon-only(arrow_forward),跟其他 list-row 的右箭头节奏
+ * 一致(不显「进入空间」文字,让 row 更紧凑)。hover 给 accent-soft。*/
+.ms-enter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.ms-enter:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ms-enter .material-symbols-outlined {
+  font-size: 16px !important;
+  line-height: 1;
 }
 </style>
