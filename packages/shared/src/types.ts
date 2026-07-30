@@ -321,6 +321,18 @@ export interface Space {
    * 显示「归档人 + 归档时间」用。
    */
   archivedByUserId?: string
+  /**
+   * 团队空间主页:Confluence space homepage 的同构能力。
+   *   - null = 未配置,`/` 路由渲染 SpaceHomeView 仪表盘;
+   *   - 非 null = `/` 自动 redirect 到 /p/:homepagePageId,复用 ReadView。
+   *
+   * 设置校验由 PATCH /api/spaces/:id 路由完成:目标 page 必须存在、属于
+   * 本 space、未被 soft-delete。purge 时由 pages.ts 的 purge transaction
+   * 同事务清空引用(防止悬挂)。
+   *
+   * personal space 永远 null。Optional 兼容老 cache。
+   */
+  homepagePageId?: string | null
 }
 
 /**

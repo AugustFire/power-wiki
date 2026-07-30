@@ -44,7 +44,7 @@ import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
-import { updateSpaceMetadata } from '../lib/spaceMetadata'
+import { updateSpaceMetadata, validateHomepageForSpace } from '../lib/spaceMetadata'
 import { loadGrantsForSpaces, type SpaceGrants } from '../lib/permissions'
 import { recordPermissionAudit } from '../lib/auditLog'
 import type { Space } from '@power-wiki/shared'
@@ -72,6 +72,8 @@ function rowToSpace(row: SpaceRow, accessGroupIds: string[] = []): Space {
     archivedAt:
       typeof row.archivedAt === 'string' ? Number(row.archivedAt) : row.archivedAt ?? null,
     archivedByUserId: row.archivedByUserId ?? undefined,
+    // 主页字段:admin / 非 admin 都返回(决定 `/` 渲染路径)。
+    homepagePageId: row.homepagePageId ?? null,
   }
 }
 
@@ -240,6 +242,16 @@ adminSpacesRouter.patch('/:id', async (c) => {
   )[0]
   if (!existing || existing.kind === 'personal') {
     return c.json({ error: 'not_found' }, 404)
+  }
+  // homepagePageId 必须在 updateSpaceMetadata 之前校验 —— 目标 page
+  // 必须存在 + 属于本 space + 未被 soft-delete。校验失败返 400。
+  // 顺序在 404 gate 之后:空间不存在 / personal 时不该先漏一条主页相关的
+  // 400,那会泄漏「这个 id 是个 space」。
+  if (parsed.data.homepagePageId !== undefined) {
+    const homepageError = await validateHomepageForSpace(id, parsed.data.homepagePageId)
+    if (homepageError) {
+      return c.json({ error: 'invalid_input', message: homepageError }, 400)
+    }
   }
   const updated = await updateSpaceMetadata(id, parsed.data)
   if (!updated) return c.json({ error: 'not_found' }, 404)

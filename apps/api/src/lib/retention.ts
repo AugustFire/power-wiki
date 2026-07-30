@@ -38,9 +38,9 @@
  * Per CLAUDE.md "不主动 commit / push":changes stay local;user says
  * "提交吧" before any git commit/push.
  */
-import { and, eq, isNotNull, lt } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import { db } from '../db/client'
-import { adminSettings, pages } from '../db/schema'
+import { adminSettings, pages, spaces } from '../db/schema'
 
 /** Fallback retention when admin_settings row missing or value unparseable. */
 export const DEFAULT_TRASH_RETENTION_DAYS = 30
@@ -84,6 +84,10 @@ export async function getTrashRetentionDays(): Promise<number> {
  *     admin's manual hard-delete path runs the full cleanup transaction;
  *     for v0 we accept the simplification that orphan child rows will
  *     stay. A future task can add full cascade).
+ *   - **Exception**: `spaces.homepage_page_id` pointing at a purged page IS
+ *     cleared, in the same transaction. Orphan child rows are invisible
+ *     background dirt; a dangling homepage breaks `/` for every member of
+ *     that space, so it doesn't get the v0 pass.
  *
  * When retention is 0, returns 0 immediately without hitting the DB.
  */
@@ -92,15 +96,22 @@ export async function purgeExpiredTrash(): Promise<number> {
   if (days === 0) return 0
 
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
-  const result = await db
-    .delete(pages)
-    .where(and(isNotNull(pages.deletedAt), lt(pages.deletedAt, cutoff)))
-  // Drizzle's pg-core delete() returns rowCount; type may be {} | RowList
-  // depending on driver, so coerce to number via runtime field name.
-  // node-postgres returns { rowCount: number } via .then.
-  // Drizzle wraps the raw result; we get an array-like of undefined rows.
-  // The actual row count comes back as a number on `affectedRows` for
-  // postgres-js — be defensive.
-  const rc = (result as unknown as { rowCount?: number }).rowCount
-  return typeof rc === 'number' ? rc : 0
+  return await db.transaction(async (tx) => {
+    const expiring = await tx
+      .select({ id: pages.id })
+      .from(pages)
+      .where(and(isNotNull(pages.deletedAt), lt(pages.deletedAt, cutoff)))
+    if (expiring.length === 0) return 0
+    const expiringIds = expiring.map((row) => row.id)
+    // 团队空间主页悬挂防护 —— 与 pages.ts purge transaction 同款语义。
+    // 上面的 cascade 简化(orphan 子行留着)在这里不能照搬:悬挂的
+    // homepage_page_id 会让整个空间的 `/` redirect 撞 404,是全员可见的
+    // 故障,不是后台脏数据。
+    await tx
+      .update(spaces)
+      .set({ homepagePageId: null, updatedAt: Date.now() })
+      .where(inArray(spaces.homepagePageId, expiringIds))
+    await tx.delete(pages).where(inArray(pages.id, expiringIds))
+    return expiringIds.length
+  })
 }

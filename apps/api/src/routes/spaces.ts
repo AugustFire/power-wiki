@@ -28,7 +28,7 @@ import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
 import { loadGrantsForSpace, loadGrantsForSpaces } from '../lib/permissions'
 import { canAdminSpace, getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
-import { updateSpaceMetadata } from '../lib/spaceMetadata'
+import { updateSpaceMetadata, validateHomepageForSpace } from '../lib/spaceMetadata'
 import type { Variables } from '../auth/middleware'
 
 export const spacesRouter = new Hono<{ Variables: Variables }>()
@@ -228,6 +228,16 @@ spacesRouter.patch('/:id', async (c) => {
   }
   if (Object.keys(parsed.data).length === 0) {
     return c.json({ error: 'invalid_input', message: '至少需要更新一个字段' }, 400)
+  }
+
+  // homepagePageId 必须在 updateSpaceMetadata 之前校验 —— 目标 page
+  // 必须存在 + 属于本 space + 未被 soft-delete。校验失败返 400,不让
+  // updateSpaceMetadata 把悬挂 id 写进 DB。
+  if (parsed.data.homepagePageId !== undefined) {
+    const homepageError = await validateHomepageForSpace(id, parsed.data.homepagePageId)
+    if (homepageError) {
+      return c.json({ error: 'invalid_input', message: homepageError }, 400)
+    }
   }
 
   const updated = await updateSpaceMetadata(id, parsed.data)

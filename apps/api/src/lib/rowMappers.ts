@@ -58,5 +58,9 @@ export function rowToSpace(row: SpaceRow, opts: { includeOwner?: boolean } = {})
     archivedAt:
       typeof row.archivedAt === 'string' ? Number(row.archivedAt) : row.archivedAt ?? null,
     archivedByUserId: opts.includeOwner ? row.archivedByUserId ?? undefined : undefined,
+    // homepagePageId 是产品语义元信息(决定了 `/` 渲染什么),所有成员都
+    // 需要看到 —— 不走 includeOwner gate。null = 未配置(走仪表盘),非
+    // null = `/` 跳该 pageId。
+    homepagePageId: row.homepagePageId ?? null,
   }
 }

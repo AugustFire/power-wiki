@@ -33,6 +33,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } 
 import { useRoute, useRouter } from 'vue-router'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import SpaceMembersTab from '@/views/manager/SpaceMembersTab.vue'
+import PickPageDialog from '@/components/layout/PickPageDialog.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useEscape } from '@/composables/useEscape'
 import { useUiStore } from '@/stores/ui'
@@ -69,6 +70,62 @@ const editDesc = ref('')
 const editColor = ref(SPACE_COLOR_PALETTE[0].value as string)
 const saving = ref(false)
 const formDirty = ref(false)
+
+/* ─── 空间主页 state ─────────────────────────────────────────── */
+/**
+ * 团队空间主页设置 —— 选一篇本空间内的页面,`/` 路由自动跳转过去。
+ * Confluence space homepage 的同构能力。
+ *
+ * 数据流:space.value.homepagePageId 是事实来源(后端字段)。本组件只
+ * 维护 picker modal 的开/关,以及 saving 状态;选页 / 清除都直接 PATCH
+ * /api/spaces/:id,成功后 api.spaces.update 把新 space 写回 store + 自身
+ * ref,UI 自动 rerender。不引入本地 pending diff —— 单一原子操作,跟
+ * 「访问控制」的 grants diff 模型不同(那里是批量编辑)。
+ *
+ * 字段:
+ *   - homepagePickerOpen: 选择页面的 modal 开/关。
+ *   - homepageSaving: PATCH 进行中,disable 按钮避免双击。
+ */
+const homepagePickerOpen = ref(false)
+const homepageSaving = ref(false)
+
+/**
+ * 当前主页页对象:从 pagesStore 拿(已加载的页 metadata),未加载时
+ * 返 undefined(template 显示「已配置但页面未加载」降级)。
+ *
+ * 注意:homepagePageId 可能指向已 soft-delete 的页(API 不在
+ * read-time 自动清)。template 用 `homepagePage.deletedAt` 显式标
+ * 黄色警告,提示管理员换页或 restore。
+ */
+const homepagePage = computed(() => {
+  const id = space.value?.homepagePageId
+  if (!id) return null
+  return pagesStore.getPage(id) ?? null
+})
+
+async function onPickHomepage(pageId: string | null): Promise<void> {
+  if (!space.value) return
+  if (pageId === space.value.homepagePageId) {
+    homepagePickerOpen.value = false
+    return
+  }
+  homepageSaving.value = true
+  try {
+    const updated = await api.spaces.update(space.value.id, { homepagePageId: pageId })
+    space.value = updated
+    // 同步 store,让 sidebar / space switcher / SpaceHomeView 立即感知。
+    spacesStore.upsert(updated)
+    homepagePickerOpen.value = false
+    uiStore.notify(
+      pageId ? '已设置空间主页' : '已清除空间主页',
+      'success',
+    )
+  } catch (e) {
+    uiStore.notify(e instanceof ApiError ? e.message : '保存失败', 'error')
+  } finally {
+    homepageSaving.value = false
+  }
+}
 
 /* ─── 访问控制 state ─────────────────────────────────────────── */
 const grants = ref<SpaceGrants>({ groups: [], users: [] })
@@ -1009,6 +1066,63 @@ function formatDate(ts: number): string {
           </div>
         </div>
       </section>
+
+      <!-- ─── 空间主页(全局 admin 或 space-admin;仅团队空间) ─── -->
+      <!-- 与基本信息同权限门(可以AdminSpace),放同一信息 tab 让管理员
+           在一处完成元数据 + 入口页配置。personal space 永远 null,跳过此
+           card(没有「主页」概念,`/` 渲染其 root + 仪表盘)。 -->
+      <section v-if="canEditMetadata && space.kind !== 'personal'" class="se-card">
+        <h2 class="se-card-title">空间主页</h2>
+        <p class="se-card-desc">
+          选一篇本空间内的页面作为主页 —— 所有进入此空间的人会直接看到它(类似 Confluence 的 space homepage)。不设置时,`/` 路由继续渲染系统仪表盘。
+        </p>
+
+        <div v-if="homepagePage" class="se-homepage-row">
+          <span class="material-symbols-outlined se-homepage-icon">description</span>
+          <div class="se-homepage-meta">
+            <RouterLink :to="`/p/${homepagePage.id}`" class="se-homepage-title">
+              {{ homepagePage.title || '(无标题)' }}
+            </RouterLink>
+            <span v-if="homepagePage.deletedAt" class="se-homepage-warn">
+              <span class="material-symbols-outlined se-homepage-warn-icon">error</span>
+              该页面已被移入回收站 —— 团队成员现在无法访问主页,建议更换或恢复。
+            </span>
+          </div>
+        </div>
+        <div v-else-if="space.homepagePageId" class="se-homepage-row se-homepage-row--stale">
+          <span class="material-symbols-outlined se-homepage-icon">help</span>
+          <div class="se-homepage-meta">
+            <span class="se-homepage-title">已配置主页 ID:<code>{{ space.homepagePageId }}</code></span>
+            <span class="se-homepage-warn">该页面已不可访问(可能被永久删除),建议清除或更换。</span>
+          </div>
+        </div>
+        <div v-else class="se-homepage-empty">
+          <span class="material-symbols-outlined se-homepage-empty-icon">push_pin</span>
+          <span class="se-homepage-empty-text">当前未设置主页,`/` 路由展示系统仪表盘。</span>
+        </div>
+
+        <div class="se-card-actions">
+          <button
+            v-if="homepagePage || space.homepagePageId"
+            type="button"
+            class="btn ghost"
+            :disabled="homepageSaving"
+            @click="onPickHomepage(null)"
+          >
+            <span class="material-symbols-outlined btn-icon">delete</span>
+            清除主页
+          </button>
+          <button
+            type="button"
+            class="btn"
+            :disabled="homepageSaving"
+            @click="homepagePickerOpen = true"
+          >
+            <span class="material-symbols-outlined btn-icon">{{ homepagePage || space.homepagePageId ? 'edit' : 'add' }}</span>
+            {{ homepagePage || space.homepagePageId ? '更换页面' : '选择页面' }}
+          </button>
+        </div>
+      </section>
       </template>
 
       <!-- ─── 成员 tab ─── -->
@@ -1423,6 +1537,16 @@ function formatDate(ts: number): string {
         </div>
       </Transition>
     </Teleport>
+
+    <!-- ─── 主页选择 modal ─── -->
+    <PickPageDialog
+      v-if="homepagePickerOpen && space"
+      :space-id="space.id"
+      :selected-id="space.homepagePageId ?? null"
+      title="选择主页页面"
+      @close="homepagePickerOpen = false"
+      @select="onPickHomepage"
+    />
 
   </div>
 </template>
@@ -1916,6 +2040,87 @@ function formatDate(ts: number): string {
 .se-card-actions:has(button:not(:disabled)) {
   border-top-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
+/* 「空间主页」section —— 与基本信息 card 同宽,行内显示当前主页 + 操作
+   按钮。warning 行(已 trash 或已 purge 残留)用黄底提示管理员换页。 */
+.se-card-desc {
+  margin: 0 0 14px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.se-homepage-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+.se-homepage-row--stale {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+.se-homepage-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 22px !important;
+}
+.se-homepage-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.se-homepage-title {
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.se-homepage-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.se-homepage-title code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.se-homepage-warn {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 2px;
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.se-homepage-warn-icon {
+  font-size: 16px !important;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.se-homepage-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  font-size: 13px;
+}
+.se-homepage-empty-icon {
+  color: var(--text-3);
+  font-size: 20px !important;
+}
+.se-homepage-empty-text { line-height: 1.5; }
 /* saving spinner:CSS-only,12px 圆环,纯 currentColor 跟随按钮文字色,
    disabled 态下按钮文字变浅,spinner 也跟着淡。 */
 .se-spinner {

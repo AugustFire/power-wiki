@@ -285,6 +285,18 @@ export const SpaceSchema = z.object({
    * 只用于前端显示「归档于 2026-XX-XX by XXX」。
    */
   archivedByUserId: z.string().min(1).optional(),
+  /**
+   * 团队空间主页 —— 指向本空间内一篇页面的 id。null = 未配置,`/` 渲染
+   * SpaceHomeView 仪表盘模板;非 null = `/` 自动 redirect 到
+   * `/p/:homepagePageId`,复用 ReadView 全套渲染。
+   *
+   * 设置校验(由 PATCH /api/spaces/:id 路由完成):目标 page 必须存在、
+   * 属于本 space、未被 soft-delete。Page purge 时由 purge transaction
+   * 同事务清空引用(防止悬挂)。
+   *
+   * Optional + nullable:老 cache 没有该字段(向下兼容,按未配置走仪表盘)。
+   */
+  homepagePageId: z.string().min(1).max(64).nullable().optional(),
 })
 
 /* ---------- Auth API 输入 schema ---------- */
@@ -426,6 +438,18 @@ export const UpdateSpaceInputSchema = z.object({
   description: z.string().max(500).nullable().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$/).optional(),
   icon: z.string().max(40).nullable().optional(),
+  /**
+   * 团队空间主页:指向本空间内一篇 page 的 id。null = 清除主页,`/` 恢复
+   * 仪表盘模板。undefined = 不更新该字段(配合 .optional())。
+   *
+   * 后端验证三件事:
+   *   (a) 该 page 存在;
+   *   (b) pages.space_id = 本 spaceId;
+   *   (c) pages.deleted_at IS NULL。
+   * 不满足任一条件返 400 invalid_input。personal space 该字段永远保持
+   * null(路由层面 kind !== 'shared' 短路)。
+   */
+  homepagePageId: z.string().min(1).max(64).nullable().optional(),
 })
 
 /** PUT /api/admin/spaces/:id/access — 整组替换 */

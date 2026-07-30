@@ -1908,6 +1908,14 @@ pagesRouter.delete('/:id', async (c) => {
         .delete(attachments)
         .where(inArray(attachments.pageId, subtreeIds))
       await tx.delete(pages).where(inArray(pages.id, subtreeIds))
+      // 团队空间主页悬挂防护:任何空间若把子树中任一 pageId 设为主页,
+      // 同事务置 null,避免 `/` redirect 撞不存在的 pageId。soft-delete
+      // 不走此路径 —— admin 仍能在空间设置看到原主页已 trash,自己决定
+      // 是 restore 还是改设其他页(详见 0033 migration 注释)。
+      await tx
+        .update(spaces)
+        .set({ homepagePageId: null, updatedAt: Date.now() })
+        .where(inArray(spaces.homepagePageId, subtreeIds))
     })
     // Best-effort object cleanup — failures leave orphans, only logged.
     for (const { storageKey } of attachmentRows) {

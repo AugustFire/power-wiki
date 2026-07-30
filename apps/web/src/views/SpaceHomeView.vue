@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -26,6 +26,39 @@ const activeSpace = computed(() => spacesStore.activeSpace.value)
 const isPersonal = computed(() => activeSpace.value?.kind === 'personal')
 const fallbackSpaceName = computed(() =>
   isPersonal.value ? '我的个人空间' : '团队空间',
+)
+/**
+ * 团队空间主页跳转:Confluence space homepage 的同构。
+ *
+ * 当 activeSpace 配置了 homepagePageId(管理员在 SpaceEditView 里挑的本
+ * 空间内一篇页面),`/` 路由应该渲染那篇页面的 ReadView,而不是系统仪
+ * 表盘。个人空间永远为 null(没这个概念),跳过此分支。
+ *
+ * 用 router.replace 而不是 push —— `/` 是入口,「返回 `/`」不应再触发
+ * 一次 redirect(否则 history 里堆栈爆炸)。
+ *
+ * 处理边界:homepagePageId 指向的页可能是 trash 或已 hard-delete。
+ *   - soft-delete(进回收站):API 没自动清字段,保留信息让 admin 知情;
+ *     ReadView 的 trash 渲染会接管(trashed 页面访问会显示相应状态)。
+ *   - hard-delete(purge):pages.ts purge transaction 已同事务清空引用,
+ *     所以「悬挂引用」不会发生(除非用户在 purge 流程完成前就缓存了
+ *     stale activeSpace —— 此时 router.replace 会撞 ReadView 的 404,
+ *     ReadView 显示错误页,用户可手动回 `/` 重试,这次就会走仪表盘)。
+ */
+const homepagePageId = computed(() => {
+  if (isPersonal.value) return null
+  return activeSpace.value?.homepagePageId ?? null
+})
+watch(
+  [homepagePageId, activeSpaceId],
+  ([target, sid]) => {
+    if (!target || !sid) return
+    // 仅当确实停在 `/`(home 路由)时跳;用户在 home 之后又点了别的页
+    // 进来(罕见),不要把人家踢回主页。
+    if (router.currentRoute.value.name !== 'home') return
+    void router.replace(`/p/${target}`)
+  },
+  { immediate: true },
 )
 const homeTitle = computed(() => activeSpace.value?.name ?? fallbackSpaceName.value)
 useDocumentTitle(() => `${homeTitle.value} · 首页`)

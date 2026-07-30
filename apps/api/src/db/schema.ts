@@ -173,6 +173,27 @@ export const spaces = pgTable('spaces', {
    * UI 不取这个名字也行,后端 audit 表有专门记录(target_kind='space')。
    */
   archivedByUserId: text('archived_by_user_id'),
+  /**
+   * 团队空间主页 —— 指向本空间内一篇页面作为 `/` 的渲染目标。
+   * Confluence space homepage 的同构能力:onboarding / 使命宣言 / 关
+   * 键链接等团队撰写内容挂这里,而非系统仪表盘。null = 未配置(继续走
+   * SpaceHomeView 的 dashboard 模板);非 null = `/` 自动 redirect 到
+   * `/p/:homepagePageId`,复用 ReadView 全部渲染能力。
+   *
+   * No FK(项目硬约束)—— page purge 端点在同事务里清掉引用本 pageId
+   * 的 spaces 行,避免悬挂。soft-delete 不清,保留信息让 admin 知情。
+   * 校验放在 PATCH /api/spaces/:id 路由:homepagePageId 必须
+   *   (a) 非 null 时,该 page 必须存在(不被 hard-deleted)
+   *   (b) 必须属于本 space(`pages.space_id = spaces.id`)
+   *   (c) 不能处于 trash(`pages.deleted_at IS NULL`)
+   * 不命中这三条返 400 invalid_input。
+   *
+   * 仅 kind='shared' 空间有意义 —— personal space 由 owner 自行管理,
+   * `/` 渲染其 root 页面树 + 仪表盘,没必要再叠一层「主页」抽象。
+   * schema 层不写 CHECK 强制,personal space 该字段永远保持 null(路由
+   * 不接受非 null 写入,等同约束)。
+   */
+  homepagePageId: text('homepage_page_id'),
 })
 
 /**
