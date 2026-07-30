@@ -190,10 +190,12 @@ async function autoExpandAndLocate(pageId: string): Promise<void> {
   const chain = await pagesStore.ensureAncestorsLoaded(pageId)
   if (chain.length === 0) return
   const page = chain[chain.length - 1]!
-  // 侧栏跟随当前页所在空间:跨空间点链接时切过去,同空间是 no-op。
-  if (page.spaceId && spacesStore.activeSpaceId.value !== page.spaceId) {
-    spacesStore.setActiveSpace(page.spaceId)
-  }
+  // 不再在这里调 setActiveSpace:如果用户刚从 SpaceSwitcher 切到一个空间,
+  // activeSpaceId 已经是新空间,本视图的 pageId 还在旧空间(URL 没动),
+  // 此时把 activeSpaceId 改回 page.spaceId 会"静默"撤销用户刚做的选择,
+  // 表现就是"点完下拉,过 0.5s switcher 又回退到上一个空间"。空间切换的
+  // 唯一入口是用户操作(SpaceSwitcher / PublishToSpace / Sidebar 跨空间链接),
+  // 这里只负责展开 + 滚视野。
   const sid = page.spaceId ?? spacesStore.activeSpaceId.value ?? ''
   // 跨空间跳转时,新空间的根可能还没加载(`pagesStore.init()` 只加载
   // active space 的根)。先 await 根加载,保证下面 ensureChildrenLoaded 找
