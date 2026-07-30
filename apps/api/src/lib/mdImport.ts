@@ -205,6 +205,13 @@ function inlineTokensToParagraph(tokens: Token[]): TiptapJSON {
   for (const tok of tokens) {
     switch (tok.type) {
       case 'text': {
+        // prosemirror-markdown 的 parseInline 会在 strong/em/code 等 inline
+        // 边界处吐首尾的空 text token(`**P0**` → `[text:"", strong_open,
+        // text:"P0", strong_close, text:""]`)。这些空节点不携带任何信息,
+        // 但 ProseMirror schema 拒绝 `{type:'text', text:''}`,否则 EditView
+        // 的 setContent 会爆 RangeError: Empty text nodes are not allowed。
+        // 在源头跳过,既保证新导入干净,又不用依赖下游 sanitize 兜底。
+        if (typeof tok.content !== 'string' || tok.content === '') break
         content.push({
           type: 'text',
           text: tok.content,

@@ -108,8 +108,24 @@ const LEGACY_MARK_NAME_MAP: Record<string, string> = {
 }
 
 /**
- * 深拷贝一份 JSON,并把其中所有 text 节点的 legacy mark 名规范化成 Tiptap
- * 名。返回新对象,不改动传入的(可能是 reactive 的)原对象。
+ * 把一份 contentJson 修整成 Tiptap 编辑器可以吃的形态:
+ *   1. legacy mark 名 → Tiptap mark 名(`strong` → `bold` 等),覆盖历史
+ *      Markdown 导入留下的脏 mark 名。
+ *   2. 删掉空 text 节点。ProseMirror schema 不允许 `{type:'text',
+ *      text:''}`,EditView 一旦撞上就抛 RangeError: Empty text nodes are
+ *      not allowed。空 text 节点的来源包括:
+ *        - prosemirror-markdown 解析 `**P0**` 时会在 strong 边界吐首尾空
+ *          token(已在 `apps/api/src/lib/mdImport.ts` 跳过,但存量页面已
+ *          落库);服务端修复前那批 markdown 导入页面顶上就挂着这些节点,
+ *          一进编辑态就炸。
+ *        - Tiptap DOM 粘贴路径里偶发的边界行为(纯空 inline run)。
+ *        - 旧版 schema 写入的残留(本地化工具 / 编辑器内 ctrl+shift+v 等)。
+ *      自愈策略是递归扫整棵树,凡是 text 类型且 text === '' 的直接抽掉。
+ *      抽掉后父节点 content 可能变空数组 — 大多数块类型(content: 'block*')
+ *      允许空 content,无副作用;`tableCell` / `tableHeader` 要求至少一个
+ *      paragraph(原表格行内已有此保证,这条 sanitize 不会让它们破)。
+ *
+ * 深拷贝返回,不改动传入的(可能是 reactive 的)原对象。
  */
 export function normalizeLegacyMarks(json: AnyJSON): AnyJSON {
   const clone = JSON.parse(JSON.stringify(json)) as AnyJSON
@@ -121,14 +137,38 @@ export function normalizeLegacyMarks(json: AnyJSON): AnyJSON {
       return
     }
     if (Array.isArray(node.marks)) {
+      // 1. 把 legacy mark 名改成 Tiptap 名。
+      // 2. 抽掉缺 type 的 malformed mark。历史 markdown 导入残留
+      //    `{"attrs":{}}`(没 type)时,ProseMirror `Schema.markFromJSON` 会
+      //    抛 `There is no mark type undefined in this schema`,整份文档
+      //    编辑器拒绝挂载。抽掉这种 mark 是廉价修复——失去的只是这一段
+      //    文本的格式,文本内容保留;auto-save 会把干净内容回写。
+      node.marks = node.marks.filter(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (mk: any) => mk && typeof mk === 'object' && typeof mk.type === 'string' && mk.type.length > 0,
+      )
       for (const mk of node.marks) {
-        if (mk && typeof mk === 'object' && typeof mk.type === 'string' && LEGACY_MARK_NAME_MAP[mk.type]) {
+        if (LEGACY_MARK_NAME_MAP[mk.type]) {
           mk.type = LEGACY_MARK_NAME_MAP[mk.type]
         }
       }
     }
-    if (Array.isArray(node.content)) node.content.forEach(walk)
+    if (Array.isArray(node.content)) {
+      // 先递归,再过滤掉标记为空的 text 节点。
+      node.content.forEach(walk)
+      node.content = node.content.filter(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c: any) => !(c && c.type === 'text' && c.text === ''),
+      )
+    }
   }
   walk(clone)
+  // 顶层 doc.content 也走一遍同样的过滤。
+  if (Array.isArray(clone.content)) {
+    clone.content = clone.content.filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (c: any) => !(c && c.type === 'text' && c.text === ''),
+    )
+  }
   return clone
 }
