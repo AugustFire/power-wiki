@@ -25,7 +25,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
-import { useRecentActivity } from '@/composables/useRecentActivity'
+import { useRecentActivity, type ActivityFilters } from '@/composables/useRecentActivity'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
@@ -43,6 +43,49 @@ useDocumentTitle(() => '活动流')
 const ALL_SPACES = '__all__'
 
 const selectedSpace = ref<string>(ALL_SPACES)
+const selectedKinds = ref<ActivityEvent['kind'][]>([])
+const selectedTime = ref<'all' | 'today' | 'week' | 'month'>('all')
+const selectedActor = ref<'all' | 'me'>('all')
+
+const kindOptions: Array<{ value: ActivityEvent['kind']; label: string }> = [
+  { value: 'created', label: '创建' },
+  { value: 'edited', label: '编辑' },
+  { value: 'moved', label: '移动' },
+  { value: 'restored', label: '恢复' },
+  { value: 'duplicated', label: '复制' },
+  { value: 'published', label: '发布' },
+  { value: 'trashed', label: '删除' },
+  { value: 'purged', label: '永久删除' },
+]
+
+function sinceForTime(): number | undefined {
+  if (selectedTime.value === 'all') return undefined
+  const now = new Date()
+  if (selectedTime.value === 'today') {
+    now.setHours(0, 0, 0, 0)
+  } else if (selectedTime.value === 'week') {
+    const day = now.getDay() || 7
+    now.setDate(now.getDate() - day + 1)
+    now.setHours(0, 0, 0, 0)
+  } else {
+    now.setDate(1)
+    now.setHours(0, 0, 0, 0)
+  }
+  return now.getTime()
+}
+
+function activityFilters(): ActivityFilters {
+  return {
+    kinds: selectedKinds.value.length > 0 ? [...selectedKinds.value] : undefined,
+    since: sinceForTime(),
+    actor: selectedActor.value === 'me' ? 'me' : undefined,
+  }
+}
+
+const activeFilterCount = computed(() =>
+  selectedKinds.value.length + (selectedTime.value === 'all' ? 0 : 1) + (selectedActor.value === 'all' ? 0 : 1),
+)
+
 
 const accessibleSpaces = computed<Space[]>(() => {
   // 用户可见的所有空间。admin 已经能看全库,但 dropdown 仍按用户视角列 —
@@ -54,7 +97,7 @@ const accessibleSpaces = computed<Space[]>(() => {
  * 当前 filter 的展示 label。all = "所有空间",否则用 space 名字。
  */
 const filterLabel = computed(() => {
-  if (selectedSpace.value === ALL_SPACES) return '所有空间'
+  if (selectedSpace.value === ALL_SPACES) return '所有共享空间'
   const s = accessibleSpaces.value.find((x) => x.id === selectedSpace.value)
   return s?.name ?? '(未知空间)'
 })
@@ -62,13 +105,14 @@ const filterLabel = computed(() => {
 /**
  * 重置到第一页 + 拉数据。单一 source of truth — onMounted / watch(route)
  * / 刷新按钮 / filter 切换都走这里,避免「某条路径漏 load」导致 feed
- * 卡在旧数据。filter 总是回到 active space(用户切走又回来不该卡旧值)。
+ * filter 总是回到 active space(用户切走又回来不该卡旧值),并携带当前
+ * 事件类型 / 时间段 / 操作人筛选。
  */
 async function reloadFromTop(): Promise<void> {
   if (!spacesStore.loaded.value) await spacesStore.init()
   const active = spacesStore.activeSpaceId.value
   selectedSpace.value = active ?? ALL_SPACES
-  await load(selectedSpace.value === ALL_SPACES ? null : selectedSpace.value)
+  await load(selectedSpace.value === ALL_SPACES ? null : selectedSpace.value, activityFilters())
 }
 
 /**
@@ -82,11 +126,15 @@ onMounted(() => { void reloadFromTop() })
 watch(() => route.fullPath, () => { void reloadFromTop() })
 
 watch(selectedSpace, async (v) => {
-  await load(v === ALL_SPACES ? null : v)
+  await load(v === ALL_SPACES ? null : v, activityFilters())
 })
 
+watch([selectedKinds, selectedTime, selectedActor], () => {
+  void load(selectedSpace.value === ALL_SPACES ? null : selectedSpace.value, activityFilters())
+}, { deep: true })
+
 async function refresh(): Promise<void> {
-  await load(selectedSpace.value === ALL_SPACES ? null : selectedSpace.value)
+  await load(selectedSpace.value === ALL_SPACES ? null : selectedSpace.value, activityFilters())
 }
 
 function openPage(ev: ActivityEvent): void {
@@ -154,26 +202,52 @@ function chipColor(kind: ActivityEvent['kind']): string {
     ]" />
     <PageActions>
       <label class="filter-select">
-          <span>空间</span>
-          <select v-model="selectedSpace">
-            <option :value="ALL_SPACES">所有空间</option>
-            <option v-for="s in accessibleSpaces" :key="s.id" :value="s.id">
-              {{ s.name }}
-            </option>
-          </select>
-        </label>
-        <button
-          class="refresh-btn"
-          type="button"
-          :disabled="state.loading"
-          @click="refresh"
-        >
-          <span
-            class="material-symbols-outlined icon-md"
-            :class="{ 'is-loading': state.loading }"
-          >refresh</span>
-          刷新
-        </button>
+        <span>空间</span>
+        <select v-model="selectedSpace">
+          <option :value="ALL_SPACES">所有共享空间</option>
+          <option v-for="s in accessibleSpaces" :key="s.id" :value="s.id">
+            {{ s.name }}
+          </option>
+        </select>
+      </label>
+      <details class="kind-filter">
+        <summary>事件类型<span v-if="selectedKinds.length"> {{ selectedKinds.length }}</span></summary>
+        <div class="kind-filter-popover">
+          <label v-for="kind in kindOptions" :key="kind.value">
+            <input v-model="selectedKinds" type="checkbox" :value="kind.value" />
+            <span>{{ kind.label }}</span>
+          </label>
+        </div>
+      </details>
+      <label class="filter-select">
+        <span>时间</span>
+        <select v-model="selectedTime">
+          <option value="all">全部时间</option>
+          <option value="today">今天</option>
+          <option value="week">本周</option>
+          <option value="month">本月</option>
+        </select>
+      </label>
+      <label class="filter-select">
+        <span>操作人</span>
+        <select v-model="selectedActor">
+          <option value="all">所有人</option>
+          <option value="me">只看我</option>
+        </select>
+      </label>
+      <span v-if="activeFilterCount" class="active-filter-count">已应用 {{ activeFilterCount }} 个筛选</span>
+      <button
+        class="refresh-btn"
+        type="button"
+        :disabled="state.loading"
+        @click="refresh"
+      >
+        <span
+          class="material-symbols-outlined icon-md"
+          :class="{ 'is-loading': state.loading }"
+        >refresh</span>
+        刷新
+      </button>
     </PageActions>
 
     <div class="content-inner activity-page">
@@ -181,7 +255,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
         <div class="title-block">
           <h1 class="title">最近页面活动</h1>
           <p class="subtitle">
-            Workspace-wide 最近 50 条 page 活动事件,涵盖编辑/创建/复制/移动/恢复/发布。按发生时间倒序,点击进入对应页。
+            Workspace-wide 最近 50 条共享空间活动事件,涵盖编辑/创建/复制/移动/恢复/发布。按发生时间倒序,点击进入对应页。
           </p>
         </div>
       </header>
@@ -333,10 +407,51 @@ function chipColor(kind: ActivityEvent['kind']): string {
   color: var(--text-1);
   cursor: pointer;
 }
-.filter-select select:hover { border-color: var(--border-strong); }
-.filter-select select:focus {
-  outline: none;
-  border-color: var(--focus-ring);
+/* 5.5 — multi-select event chips live in a compact native details popover. */
+.kind-filter {
+  position: relative;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.kind-filter summary {
+  height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 4px);
+  background: var(--bg);
+  color: var(--text-1);
+  cursor: pointer;
+  list-style: none;
+}
+.kind-filter summary::-webkit-details-marker { display: none; }
+.kind-filter[open] summary { border-color: var(--focus-ring); }
+.kind-filter-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-popover);
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px 14px;
+  min-width: 220px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.kind-filter-popover label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.kind-filter-popover input { accent-color: var(--accent); }
+.active-filter-count {
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .refresh-btn {
   display: inline-flex;

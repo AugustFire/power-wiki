@@ -423,7 +423,7 @@ function accessSummary(s: Space): AccessSummary {
       :title="kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间'"
       :hint="kindTab === 'shared'
         ? '创建空间以按团队 / 项目组织页面,并通过用户组控制访问权限。'
-        : '每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。'"
+        : '每个用户首次登录时会自动创建个人空间(草稿区)。这里没有可供管理员创建的个人空间。'"
       variant="no-results"
       size="sm"
     />

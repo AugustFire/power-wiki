@@ -65,6 +65,7 @@ import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
 import { recordPermissionAudit } from '../lib/auditLog'
+import { getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
 
 /** Anonymized display name — shown in JOIN fallbacks everywhere authorship
  *  displays. Keep stable: UI strings / snapshots / tests reference this. */
@@ -225,8 +226,38 @@ adminUsersRouter.get('/', async (c) => {
   return c.json(response)
 })
 
-// ─── GET /api/admin/users/:id ──────────────────────────────────────────────
-// Single user lookup. The list endpoint omits some metadata and the edit
+// ─── GET /api/admin/users/:id/spaces ────────────────────────────────────────
+// Membership summary for the user detail page. Shared spaces use the same
+// effective direct/group grant calculation as the permissions UI; personal
+// space is included only when owned by the target user.
+adminUsersRouter.get('/:id/spaces', async (c) => {
+  const id = c.req.param('id')
+  const target = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
+  if (!target) return c.json({ error: 'not_found' }, 404)
+
+  const shared = await db
+    .select({ id: spaces.id, name: spaces.name, color: spaces.color, kind: spaces.kind })
+    .from(spaces)
+    .where(eq(spaces.kind, 'shared'))
+    .orderBy(asc(spaces.name))
+  const roles = await getEffectiveSpaceRolesForUser(principalFromUser(target), shared.map((s) => s.id))
+  const items = shared
+    .filter((space) => roles.get(space.id) != null)
+    .map((space) => ({ ...space, role: roles.get(space.id)! }))
+
+  const personal = (await db
+    .select({ id: spaces.id, name: spaces.name, color: spaces.color, kind: spaces.kind })
+    .from(spaces)
+    .where(and(eq(spaces.kind, 'personal'), eq(spaces.ownerId, id)))
+    .limit(1))[0]
+  // 个人空间所有人 = 在该空间有 admin 权限。SpaceRole schema 仅
+  // admin/editor/viewer,前端按 kind==='personal' 显示「所有者」即可。
+  if (personal) items.unshift({ ...personal, role: 'admin' as const })
+
+  return c.json({ items })
+})
+
+// ─── GET /api/admin/users/:id ──────────────────────────────────────────────// Single user lookup. The list endpoint omits some metadata and the edit
 // view needs the full row. Kept separate from list so we don't ship every
 // field on every page render.
 adminUsersRouter.get('/:id', async (c) => {

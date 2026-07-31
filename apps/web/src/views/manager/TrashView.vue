@@ -205,6 +205,12 @@ watch(kindTab, () => {
   if (!tabSpaces.value.some((s) => s.id === selectedSpaceId.value)) {
     selectedSpaceId.value = tabSpaces.value[0]?.id ?? ''
   }
+  // 5.9: 同步 reset 其他 filter — shared tab 选「工程」+ 输入「草稿」+ 选
+  // 删除者后切到 personal tab,前 3 个 filter 仍生效但无数据,用户会以为
+  // 是 bug。Reset 到 default 让「切 tab = 看全部」语义可预测。
+  searchText.value = ''
+  deletedByFilter.value = 'all'
+  sortKey.value = 'newest'
 })
 
 watch(selectedSpaceId, (id) => {
@@ -460,7 +466,7 @@ async function onPurge(id: string, title: string) {
       :title="kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间'"
       :hint="kindTab === 'shared'
         ? '创建空间以按团队 / 项目组织页面。'
-        : '每个用户在第一次登录时会自动创建一个个人空间(草稿区)。当前还没有任何用户。'"
+        : '每个用户首次登录时会自动创建个人空间(草稿区),管理员无需手动创建。'"
       variant="no-data"
       size="sm"
     />

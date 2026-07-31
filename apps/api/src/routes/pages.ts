@@ -48,7 +48,7 @@
  */
 
 import { Hono } from 'hono'
-import { and, eq, getTableColumns, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm'
+import { and, eq, getTableColumns, gte, inArray, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import {
   ActivityEventSchema,
   CreatePageInputSchema,
@@ -298,7 +298,19 @@ pagesRouter.get('/activity', async (c) => {
     }
     accessibleScope = inArray(pageEvents.spaceId, ids)
   }
+  const kindFilter = c.req.query('kind')?.split(',').filter((kind): kind is PageEventKind => SUPPORTED_KINDS.has(kind as PageEventKind)) ?? []
+  const sinceRaw = Number(c.req.query('since') ?? '')
+  const actorFilter = c.req.query('actor')?.trim() || null
+
+  const kindSql: SQL = kindFilter.length > 0 ? inArray(pageEvents.kind, kindFilter) : sql`TRUE`
+  const sinceSql: SQL = Number.isFinite(sinceRaw) && sinceRaw > 0
+    ? gte(pageEvents.createdAt, sinceRaw)
+    : sql`TRUE`
+  const actorSql: SQL = actorFilter === 'me' ? eq(pageEvents.actorId, me.id) : sql`TRUE`
   const spaceFilter: SQL = spaceId ? eq(pageEvents.spaceId, spaceId) : sql`TRUE`
+  // Workspace-wide feed excludes private personal-space events. An explicit
+  // personal-space filter remains available for callers that intentionally inspect it.
+  const workspaceKindFilter: SQL = spaceId ? sql`TRUE` : eq(spaces.kind, 'shared')
 
   // page_events → pages (拿最新 title) → users (actor name/color) → spaces (chip)
   // created_at DESC。LIMIT limit+1 → applyPagination 算 hasMore。
@@ -324,7 +336,7 @@ pagesRouter.get('/activity', async (c) => {
     .leftJoin(pages, eq(pages.id, pageEvents.pageId))
     .leftJoin(users, eq(users.id, pageEvents.actorId))
     .leftJoin(spaces, eq(spaces.id, pageEvents.spaceId))
-    .where(and(spaceFilter, accessibleScope))
+    .where(and(spaceFilter, workspaceKindFilter, kindSql, sinceSql, actorSql, accessibleScope))
     .orderBy(sql`${pageEvents.createdAt} DESC`)
     .limit(limit + 1)
     .offset(offset)

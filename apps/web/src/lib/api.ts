@@ -469,11 +469,15 @@ export const api = {
       spaceId?: string | null,
       limit?: number,
       offset?: number,
+      filters?: { kinds?: string[]; since?: number; actor?: 'me' },
     ): Promise<{ items: ActivityEvent[]; hasMore: boolean }> => {
       const params = new URLSearchParams()
       if (spaceId) params.set('space', spaceId)
       if (limit !== undefined) params.set('limit', String(limit))
       if (offset !== undefined && offset > 0) params.set('offset', String(offset))
+      if (filters?.kinds?.length) params.set('kind', filters.kinds.join(','))
+      if (filters?.since) params.set('since', String(filters.since))
+      if (filters?.actor) params.set('actor', filters.actor)
       const qs = params.toString() ? `?${params.toString()}` : ''
       return request(`/pages/activity${qs}`)
     },
@@ -1016,6 +1020,15 @@ export const api = {
         return AdminUsersListResponseSchema.parse(raw) as AdminUsersListResponse
       },
       get: (id: string) => getOneUser<User>(`/admin/users/${encodeURIComponent(id)}`),
+      spaces: async (id: string): Promise<{
+        items: Array<{
+          id: string
+          name: string
+          color: string
+          kind: 'personal' | 'shared'
+          role: 'admin' | 'editor' | 'viewer'
+        }>
+      }> => request(`/admin/users/${encodeURIComponent(id)}/spaces`),
       create: async (
         input: CreateUserInput,
       ): Promise<{ user: User; initialPassword: string }> => {

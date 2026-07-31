@@ -16,6 +16,12 @@ import type { ActivityEvent } from '@power-wiki/shared'
 
 const PAGE_SIZE = 20
 
+export interface ActivityFilters {
+  kinds?: string[]
+  since?: number
+  actor?: 'me'
+}
+
 interface ActivityState {
   items: ActivityEvent[]
   loading: boolean
@@ -23,6 +29,7 @@ interface ActivityState {
   loadingMore: boolean
   /** 'all' = 不过滤,其他值 = spaceId */
   spaceId: string | null
+  filters: ActivityFilters
   offset: number
   hasMore: boolean
   error: string | null
@@ -34,19 +41,24 @@ export function useRecentActivity() {
     loading: false,
     loadingMore: false,
     spaceId: null,
+    filters: {},
     offset: 0,
     hasMore: false,
     error: null,
   })
 
   /** 重置到第一页(进路由 / filter 切换 / 点刷新)。替换 items。 */
-  async function load(spaceId: string | null = state.spaceId): Promise<void> {
+  async function load(
+    spaceId: string | null = state.spaceId,
+    filters: ActivityFilters = state.filters,
+  ): Promise<void> {
     state.loading = true
     state.error = null
     state.spaceId = spaceId
+    state.filters = filters
     state.offset = 0
     try {
-      const res = await api.pages.activity(spaceId, PAGE_SIZE, 0)
+      const res = await api.pages.activity(spaceId, PAGE_SIZE, 0, filters)
       state.items = res.items
       state.hasMore = res.hasMore
     } catch (e) {
@@ -70,7 +82,7 @@ export function useRecentActivity() {
     state.error = null
     const nextOffset = state.offset + PAGE_SIZE
     try {
-      const res = await api.pages.activity(state.spaceId, PAGE_SIZE, nextOffset)
+      const res = await api.pages.activity(state.spaceId, PAGE_SIZE, nextOffset, state.filters)
       state.items = state.items.concat(res.items)
       state.offset = nextOffset
       state.hasMore = res.hasMore

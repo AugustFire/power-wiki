@@ -19,6 +19,7 @@ import { api } from '@/lib/api'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { useSpacesStore } from '@/stores/spaces'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { formatRelativeTime } from '@/lib/relativeTime'
@@ -44,6 +45,34 @@ const spaceById = computed(() => {
   const m = new Map<string, (typeof spacesStore.spaces.value)[number]>()
   for (const s of spacesStore.spaces.value) m.set(s.id, s)
   return m
+})
+
+const groupedItems = computed(() => {
+  const groups: Array<{
+    spaceId: string
+    name: string
+    color: string
+    kind: 'personal' | 'shared'
+    items: PageNode[]
+  }> = []
+  const bySpace = new Map<string, (typeof groups)[number]>()
+  for (const page of items.value) {
+    let group = bySpace.get(page.spaceId)
+    if (!group) {
+      const space = spaceById.value.get(page.spaceId)
+      group = {
+        spaceId: page.spaceId,
+        name: space?.name ?? '(已删除空间)',
+        color: space?.color ?? 'var(--text-3)',
+        kind: space?.kind === 'personal' ? 'personal' : 'shared',
+        items: [],
+      }
+      bySpace.set(page.spaceId, group)
+      groups.push(group)
+    }
+    group.items.push(page)
+  }
+  return groups
 })
 
 async function loadFirstPage() {
@@ -109,15 +138,7 @@ function openPage(p: PageNode) {
   void router.push(`/p/${p.id}`)
 }
 
-function spaceChip(p: PageNode): { name: string; color: string; isPersonal: boolean } | null {
-  const s = spaceById.value.get(p.spaceId)
-  if (!s) return null
-  return {
-    name: s.name,
-    color: s.color,
-    isPersonal: s.kind === 'personal',
-  }
-}
+
 </script>
 
 <template>
@@ -144,26 +165,39 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
             title="还没有关注任何页面"
             message="在任意页面右上角点 👁 即可关注。编辑、改名、移动、删除都会通知你。"
           />
-          <div v-else class="watched-list">
-            <button
-              v-for="p in items"
-              :key="p.id"
-              type="button"
-              class="watched-card"
-              @click="openPage(p)"
+          <div v-else class="watched-groups">
+            <section
+              v-for="group in groupedItems"
+              :key="group.spaceId"
+              class="watched-group"
             >
-              <div class="watched-card-row1">
-                <span class="material-symbols-outlined doc-icon">description</span>
-                <span class="watched-card-title">{{ p.title }}</span>
-                <span v-if="spaceChip(p)" class="watched-space-chip" :style="{ background: spaceChip(p)!.color + '22', color: spaceChip(p)!.color }">
-                  {{ spaceChip(p)!.name }}
-                </span>
+              <header class="watched-group-head">
+                <SpaceAvatar
+                  :space="spaceById.get(group.spaceId) ?? null"
+                  :size="20"
+                />
+                <h2>{{ group.name }}</h2>
+                <span>{{ group.items.length }} 个页面</span>
+              </header>
+              <div class="watched-list">
+                <button
+                  v-for="p in group.items"
+                  :key="p.id"
+                  type="button"
+                  class="watched-card"
+                  @click="openPage(p)"
+                >
+                  <div class="watched-card-row1">
+                    <span class="material-symbols-outlined doc-icon">description</span>
+                    <span class="watched-card-title">{{ p.title }}</span>
+                  </div>
+                  <div class="watched-card-row2">
+                    <span v-if="p.authorName" class="watched-card-author">{{ p.authorName }} ·</span>
+                    <span>更新于 {{ formatRelativeTime(p.updatedAt) }}</span>
+                  </div>
+                </button>
               </div>
-              <div class="watched-card-row2">
-                <span v-if="p.authorName" class="watched-card-author">{{ p.authorName }} ·</span>
-                <span>更新于 {{ formatRelativeTime(p.updatedAt) }}</span>
-              </div>
-            </button>
+            </section>
 
             <div v-if="hasMore" class="watched-loadmore">
               <button
@@ -193,6 +227,39 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
   font-size: 13px;
   color: var(--text-3);
   margin-bottom: 24px;
+}
+
+.watched-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.watched-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.watched-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.watched-group-head h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.watched-group-head > span {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .watched-list {

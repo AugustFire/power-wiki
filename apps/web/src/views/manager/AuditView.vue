@@ -362,6 +362,17 @@ function formatPayload(p: unknown): string {
     <header class="page-head">
       <h1>审计日志</h1>
       <p class="muted">权限变更与资源生命周期的完整历史(append-only)。仅管理员可见。</p>
+      <!-- 5.10: 域分离提示。审计只覆盖 11 种管理类事件(权限 / 共享 /
+           空间归档 / 用户组删除 / 用户注销),**不涵盖页面编辑 / 创建 /
+           移动**;后两类查「最近页面活动」。新 admin 容易把本页面当成
+           activity 别名,加 eyebrow 把契约打明。 -->
+      <div class="eyebrow">
+        <span class="material-symbols-outlined eyebrow-icon">fact_check</span>
+        <div class="eyebrow-text">
+          <strong>覆盖范围</strong>:空间角色 / 页面限制 / 公开链接 / 空间归档与删除 / 用户组删除 / 用户注销。
+          <strong>不涵盖</strong>:页面编辑、创建、移动 —— 请到「最近页面活动」查看。
+        </div>
+      </div>
     </header>
 
     <!-- Toolbar -->
@@ -545,6 +556,35 @@ function formatPayload(p: unknown): string {
   margin: 0;
   font-size: 13px;
   color: var(--text-3);
+}
+
+/* 5.10 eyebrow — domain-separation hint. Uses accent-soft instead of
+   warning so it doesn't compete with the toolbar's filter controls for
+   attention; this is informational, not action-blocking. */
+.eyebrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-md, 6px);
+}
+.eyebrow-icon {
+  font-size: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.eyebrow-text {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.eyebrow-text strong {
+  font-weight: 600;
+  color: var(--text-1);
 }
 
 .card {

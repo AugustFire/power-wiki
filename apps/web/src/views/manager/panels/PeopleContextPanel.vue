@@ -99,6 +99,10 @@ function openPage(id: string) {
   void router.push(`/p/${id}`)
 }
 
+function openUser(id: string) {
+  void router.push(`/manager/people/users/${id}`)
+}
+
 onMounted(async () => {
   // Stats panel + main table share the same fetch. ensureLoaded() guards
   // against double-fire: if PeopleView's usePaginatedList already kicked
@@ -194,16 +198,27 @@ onMounted(async () => {
     </div>
 
     <!-- 最近登录: top 5 users sorted by lastLoginAt desc. Fills the right
-         panel on 2K where 320px would otherwise feel sparse. -->
+         panel on 2K where 320px would otherwise feel sparse. Symmetric with
+         「最近活动」 — every row navigates somewhere: users → edit page,
+         pages → read view. -->
     <div v-if="topLoggedIn.length > 0" class="section">
       <div class="section-title">最近登录</div>
       <ul class="mini-list">
-        <li v-for="u in topLoggedIn" :key="u.id" class="mini-row">
+        <li
+          v-for="u in topLoggedIn"
+          :key="u.id"
+          class="mini-row mini-row-clickable"
+          role="button"
+          tabindex="0"
+          @click="openUser(u.id)"
+          @keydown.enter="openUser(u.id)"
+        >
           <UserAvatar :size="24" :label="u.name ?? ''" :color="u.color ?? ''" :avatar-kind="u.avatarKind ?? null" :avatar-ref="u.avatarRef ?? null" :user-id="u.id" />
           <div class="mini-text">
             <div class="mini-name">{{ u.name }}</div>
             <div class="mini-sub">{{ u.lastLoginAt ? relativeShort(u.lastLoginAt) : '从未' }}</div>
           </div>
+          <span class="mini-row-arrow material-symbols-outlined">chevron_right</span>
         </li>
       </ul>
     </div>
@@ -334,5 +349,25 @@ onMounted(async () => {
   font-size: 18px;
   color: var(--text-3);
   flex-shrink: 0;
+}
+
+/* hover affordance — chevron only visible on hover/focus of clickable rows.
+   Default opacity 0 keeps the row visually quiet; opacity transition
+   tells users the row is actionable without permanent visual noise. */
+.mini-row-arrow {
+  font-size: 16px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.mini-row-clickable:hover .mini-row-arrow,
+.mini-row-clickable:focus-visible .mini-row-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--accent);
 }
 </style>

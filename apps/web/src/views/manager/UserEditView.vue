@@ -12,13 +12,29 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
-import type { User } from '@power-wiki/shared'
+import type { User, Space } from '@power-wiki/shared'
+
+type SpaceMembership = Awaited<ReturnType<typeof api.admin.users.spaces>>['items'][number]
+
+/** SpaceAvatar 接受完整 Space,但 /admin/users/:id/spaces 只返 id/name/color/kind,
+ *  视觉上只用到前 4 个字段。补 createdAt / updatedAt 占位以满足类型。 */
+function asSpaceAvatarSource(m: SpaceMembership): Space {
+  return {
+    id: m.id,
+    name: m.name,
+    color: m.color,
+    kind: m.kind,
+    createdAt: 0,
+    updatedAt: 0,
+  }
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +46,8 @@ const userId = computed(() => String(route.params.id ?? ''))
 const user = ref<User | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+const memberships = ref<SpaceMembership[]>([])
+const membershipsLoading = ref(false)
 
 /** 浏览器 tab 标题:"编辑成员: <name>";user 没拉到时退 BASE。 */
 useDocumentTitle(() => (user.value ? `编辑成员: ${user.value.name}` : null))
@@ -85,6 +103,21 @@ async function load() {
     }
   } finally {
     loading.value = false
+  }
+  // 5.11: 5.11: 加载该用户的「所在空间 + 角色」。失败不阻塞主表单
+  // (顶部已有 loadError),单独 inline 显示。
+  void loadMemberships()
+}
+
+async function loadMemberships() {
+  membershipsLoading.value = true
+  try {
+    const r = await api.admin.users.spaces(userId.value)
+    memberships.value = r.items
+  } catch {
+    memberships.value = []
+  } finally {
+    membershipsLoading.value = false
   }
 }
 
@@ -246,6 +279,30 @@ function statusTone(s: User['status']): 'good' | 'warn' | 'bad' {
     case 'disabled': return 'bad'
     case 'anonymized': return 'bad'
   }
+}
+
+/* 5.11: 所在空间 section 视觉对齐 PersonalHomeView「共享空间与角色」。
+   个人空间在 kind==='personal' 时显示「所有者」;共享空间按 SpaceRole 渲
+   染(与 SpaceMembersTab ROLE_INFO 一致)。 */
+function spaceRoleLabel(m: SpaceMembership): string {
+  if (m.kind === 'personal') return '所有者'
+  switch (m.role) {
+    case 'admin': return '管理'
+    case 'editor': return '编辑'
+    case 'viewer': return '只读'
+  }
+}
+function spaceRoleTone(m: SpaceMembership): 'accent' | 'purple' | 'good' | 'neutral' {
+  if (m.kind === 'personal') return 'accent'
+  switch (m.role) {
+    case 'admin': return 'purple'
+    case 'editor': return 'good'
+    case 'viewer': return 'neutral'
+  }
+}
+
+function openSpace(spaceId: string) {
+  void router.push(`/manager/spaces/${spaceId}`)
 }
 
 const colorPresets = [
@@ -413,6 +470,38 @@ const colorPresets = [
             {{ saving ? '保存中…' : '保存' }}
           </button>
         </div>
+      </section>
+
+      <!-- 所在空间 + 角色(5.11):让 admin 不必逐个空间进 SpaceEditView →
+           MembersTab 才能查到 user 在哪个空间 / 什么角色。复用
+           PersonalHomeView「共享空间与角色」视觉:space row + role pill,
+           个人空间(若有)排第一。 -->
+      <section class="ue-card">
+        <h2 class="ue-card-title">所在空间</h2>
+        <div v-if="membershipsLoading" class="ue-ms-loading">
+          <Skeleton height="36px" />
+          <Skeleton height="36px" />
+        </div>
+        <div v-else-if="memberships.length === 0" class="ue-ms-empty">
+          该用户尚未加入任何空间。
+        </div>
+        <ul v-else class="ue-ms-list">
+          <li
+            v-for="m in memberships"
+            :key="m.id"
+            class="ue-ms-row"
+            role="button"
+            tabindex="0"
+            @click="openSpace(m.id)"
+            @keydown.enter="openSpace(m.id)"
+          >
+            <SpaceAvatar :space="asSpaceAvatarSource(m)" :size="20" />
+            <span class="ue-ms-name">{{ m.name }}</span>
+            <span class="ue-ms-kind">{{ m.kind === 'personal' ? '个人空间' : '团队空间' }}</span>
+            <span class="ue-ms-role" :class="`tone-${spaceRoleTone(m)}`">{{ spaceRoleLabel(m) }}</span>
+            <span class="material-symbols-outlined ue-ms-arrow">chevron_right</span>
+          </li>
+        </ul>
       </section>
 
       <!-- Admin actions -->
@@ -705,6 +794,90 @@ const colorPresets = [
 .ue-ro-value {
   color: var(--text-2);
   font-family: var(--font-mono, monospace);
+}
+
+/* ─── 5.11 所在空间 + 角色 ─── */
+.ue-ms-loading { display: flex; flex-direction: column; gap: 8px; }
+.ue-ms-empty {
+  font-size: 13px;
+  color: var(--text-3);
+  padding: 8px 0;
+}
+.ue-ms-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ue-ms-row {
+  display: grid;
+  /* avatar | name | kind | role pill | chevron */
+  grid-template-columns: 20px minmax(0, 1fr) auto auto 18px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, 4px);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.ue-ms-row:hover { background: var(--bg-canvas); }
+.ue-ms-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.ue-ms-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ue-ms-kind {
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 1px 8px;
+  background: var(--bg-canvas);
+  border-radius: var(--radius-pill, 999px);
+}
+.ue-ms-role {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+}
+.ue-ms-role.tone-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ue-ms-role.tone-purple {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+.ue-ms-role.tone-good {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.ue-ms-role.tone-neutral {
+  background: var(--bg-canvas);
+  color: var(--text-2);
+}
+.ue-ms-arrow {
+  font-size: 16px;
+  color: var(--text-3);
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.ue-ms-row:hover .ue-ms-arrow,
+.ue-ms-row:focus-visible .ue-ms-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--accent);
 }
 
 /* ─── 危险操作 — 注销用户(内联面板) ─── */
