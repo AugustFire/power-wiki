@@ -1126,7 +1126,19 @@
 }
 
 /* TOC 折叠手柄 —— 折叠状态下出现在右边缘,点击恢复 240px 列宽。
-   跟 design/toc.html 的 .toc-expand-handle 同款视觉(24×48px 细长条)。 */
+   模块 4 P1 (4.5) 视觉权重修复:24×48 在 2560 视口下"鼠标不贴边完全
+   看不到"。改"hover 展开"(尺寸收敛自 doc 字面的 32×64 → 28×56,
+   太大会在 1440 视口里霸占 ~4% 高度):
+     - 默认 24×48 / 浅灰,保持静息态不打扰主内容;
+     - 鼠标 hover 扩展到 28×56 + accent 边框 + accent 图标色,左侧
+       accent 边缘 + 投影加深,跟 doc 描述里的 Confluence 处理对齐;
+     - hover-in 100ms 即时,hover-out 200ms 收 —— 借助
+       `.toc-expand-handle:not(:hover) { transition-delay: 200ms }`
+       单边延迟,不写 JS;
+     - ::before 当作 16px hit-zone 扩展,鼠标靠近右边距但还没压到可见
+       区域也能命中 :hover,避免"24px 太窄贴不到"的二次问题。
+   跟 design/wiki-toc.html 旧设计相比,意图从"纤细常驻条"改为
+   "轻量常驻 + 主动浮出"。 */
 .toc-expand-handle {
     position: fixed;
     right: 0;
@@ -1143,13 +1155,39 @@
     justify-content: center;
     cursor: pointer;
     z-index: var(--z-popover, 1000);
-    color: var(--text-2);
+    color: var(--text-3);
     box-shadow: -2px 0 5px rgba(0, 0, 0, 0.05);
-    transition: background 0.2s, color 0.2s;
+    transition: width 100ms var(--ease-out),
+                height 100ms var(--ease-out),
+                background 100ms var(--ease-out),
+                color 100ms var(--ease-out),
+                border-color 100ms var(--ease-out),
+                box-shadow 100ms var(--ease-out);
+}
+.toc-expand-handle:not(:hover) {
+    /* 反向延迟:鼠标离开后让"缩回去"慢 200ms,留下"展开稳了一下再收"
+     * 的视觉缓冲,避免快速划过时按钮缩得太突兀。 */
+    transition-delay: 200ms;
 }
 .toc-expand-handle:hover {
+    width: 28px;
+    height: 56px;
     background: var(--bg-subtle);
     color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: -3px 0 10px rgba(0, 82, 204, 0.25);
+    transition-delay: 0s;
+}
+/* hit-zone 扩展:不可见透明区域向左延 16px,让"鼠标靠近右缘但还没压
+   到 24px 视觉条上"的 hover 也命中。pointer-events 走默认 auto,
+   pseudo 算进父元素命中范围,触发 :hover。 */
+.toc-expand-handle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: 16px;
 }
 .toc-expand-handle .material-symbols-outlined {
     font-size: 20px;
