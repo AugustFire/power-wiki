@@ -257,6 +257,14 @@ function userRoleLabel(r: User['role']): string {
   return r === 'admin' ? '管理员' : '普通用户'
 }
 
+function activeFilterCount(): number {
+  let n = 0
+  if (userFilters.q) n++
+  if (userFilters.status !== undefined) n++
+  if (userFilters.role !== undefined) n++
+  return n
+}
+
 /* ─── Group state ──────────────────────────────────────────────────── */
 const { showCreateGroup } = useManagerActions()
 const createGroupName = ref('')
@@ -482,67 +490,118 @@ watch(activeTab, (t) => {
 
       <div v-if="usersLoading && users.length === 0" class="uv-loading">加载中…</div>
       <template v-else>
-      <!-- Filter toolbar (M17) — 仅 users tab 显示,groups tab 不适用
-           状态/角色概念。视觉上跟下面的表格连成一体:工具栏底边去掉,
-           表格顶边内嵌,搜索框宽度按内容自适应而不是 1 1 280。-->
-      <!-- Filter toolbar (M17) — 搜索框做成「主输入框」:无外部 label,
-           icon + placeholder 自带语义;两个 select 跟搜索框之间用 24px
-           间距 + 1px 分隔线分组;整组左 padding 24px,「搜索」字样从
-           左侧框线往里收。 -->
+      <!-- 5.4:M17 工具栏 + active filter chips。
+           工具栏本身(filter 输入 + 两个 select + 清空按钮)控制 filter
+           入口;chips 行仅当有活跃 filter 时出现,负责「可见 + 可单删」的
+           状态呈现。两者物理相连但视觉独立(chips bg 区分),跟 Confluence
+           用户目录行为一致:清空筛选仍然走工具栏按钮一键全清,chips 上
+           的 × 走单点删除(粒度更细)。 -->
       <div v-if="users.length > 0 || hasActiveFilter()" class="users-shell">
-        <div class="filter-group filter-group-search">
-          <div class="search-input-wrap">
-            <span class="material-symbols-outlined search-icon">search</span>
-            <input
-              id="pv-search"
-              v-model="userFilters.q"
-              type="text"
-              class="input search-input"
-              placeholder="按姓名或邮箱搜索…"
-              autocomplete="off"
-            />
-            <button
-              v-if="userFilters.q"
-              type="button"
-              class="search-clear"
-              title="清空搜索"
-              @click="userFilters.q = ''"
-            >
+        <div class="toolbar">
+          <div class="filter-group filter-group-search">
+            <div class="search-input-wrap">
+              <span class="material-symbols-outlined search-icon">search</span>
+              <input
+                id="pv-search"
+                v-model="userFilters.q"
+                type="text"
+                class="input search-input"
+                placeholder="按姓名或邮箱搜索…"
+                autocomplete="off"
+              />
+              <button
+                v-if="userFilters.q"
+                type="button"
+                class="search-clear"
+                title="清空搜索"
+                @click="userFilters.q = ''"
+              >
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+          </div>
+          <div class="filter-group-select-wrapper">
+            <div class="filter-group filter-group-select">
+              <label class="filter-label" for="pv-status">状态</label>
+              <select id="pv-status" v-model="userFilters.status" class="select">
+                <option :value="undefined">全部状态</option>
+                <option value="active">正常</option>
+                <option value="must_reset_password">需重置密码</option>
+                <option value="disabled">已禁用</option>
+                <option value="anonymized">已注销</option>
+              </select>
+            </div>
+            <div class="filter-group filter-group-select">
+              <label class="filter-label" for="pv-role">角色</label>
+              <select id="pv-role" v-model="userFilters.role" class="select">
+                <option :value="undefined">全部角色</option>
+                <option value="admin">管理员</option>
+                <option value="user">普通用户</option>
+              </select>
+            </div>
+          </div>
+          <button
+            v-if="hasActiveFilter()"
+            type="button"
+            class="clear-filters"
+            @click="clearUserFilters"
+          >
+            <span class="material-symbols-outlined">filter_alt_off</span>
+            <span>清空筛选</span>
+          </button>
+        </div>
+        <!-- Active filter chips —— 5.4 主目标。0 命中或全显示场景下,chip
+             strip 是 filter ↔ 数据 因果链的唯一可见锚点。原先 filter 状态
+             只藏在 select / input 内部,清空搜索词再次输入时没人意识到自
+             己到底筛了什么;现在 chips 一字排开,「筛选: 张三」、「状态:
+             已禁用」、「角色: 管理员」一眼可读,各点 × 单删。 -->
+        <div v-if="hasActiveFilter()" class="active-filters-strip">
+          <span class="af-label">已应用 {{ activeFilterCount() }} 个筛选</span>
+          <button
+            v-if="userFilters.q"
+            type="button"
+            class="filter-chip"
+            :title="`移除搜索: ${userFilters.q}`"
+            @click="userFilters.q = ''"
+          >
+            <span class="filter-chip-prefix">搜索</span>
+            <span class="filter-chip-value">{{ userFilters.q }}</span>
+            <span class="filter-chip-x" aria-hidden="true">
               <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
+            </span>
+          </button>
+          <button
+            v-if="userFilters.status"
+            type="button"
+            class="filter-chip"
+            title="移除状态筛选"
+            @click="userFilters.status = undefined"
+          >
+            <span class="filter-chip-prefix">状态</span>
+            <span class="filter-chip-value">{{ userStatusLabel(userFilters.status).text }}</span>
+            <span class="filter-chip-x" aria-hidden="true">
+              <span class="material-symbols-outlined">close</span>
+            </span>
+          </button>
+          <button
+            v-if="userFilters.role"
+            type="button"
+            class="filter-chip"
+            title="移除角色筛选"
+            @click="userFilters.role = undefined"
+          >
+            <span class="filter-chip-prefix">角色</span>
+            <span class="filter-chip-value">{{ userRoleLabel(userFilters.role) }}</span>
+            <span class="filter-chip-x" aria-hidden="true">
+              <span class="material-symbols-outlined">close</span>
+            </span>
+          </button>
         </div>
-        <div class="filter-group-select-wrapper">
-          <div class="filter-group filter-group-select">
-            <label class="filter-label" for="pv-status">状态</label>
-            <select id="pv-status" v-model="userFilters.status" class="select">
-              <option :value="undefined">全部状态</option>
-              <option value="active">正常</option>
-              <option value="must_reset_password">需重置密码</option>
-              <option value="disabled">已禁用</option>
-              <option value="anonymized">已注销</option>
-            </select>
-          </div>
-          <div class="filter-group filter-group-select">
-            <label class="filter-label" for="pv-role">角色</label>
-            <select id="pv-role" v-model="userFilters.role" class="select">
-              <option :value="undefined">全部角色</option>
-              <option value="admin">管理员</option>
-              <option value="user">普通用户</option>
-            </select>
-          </div>
-        </div>
-        <button
-          v-if="hasActiveFilter()"
-          type="button"
-          class="clear-filters"
-          @click="clearUserFilters"
-        >
-          <span class="material-symbols-outlined">filter_alt_off</span>
-          <span>清空筛选</span>
-        </button>
       </div>
-      <div v-if="users.length > 0 || hasActiveFilter()" class="users-shell">
+      <!-- 表格卡 —— 5.4 收口:0 命中且 filter active 时,空表体换成
+           EmptyState「没有匹配的用户」+ 「清空筛选」CTA;避免空表身视觉
+           空洞。true 空态(无 user 且无 filter)走原本的「还没有用户」。 -->
+      <div v-if="users.length > 0" class="users-shell users-table-card">
         <table class="users-table">
           <thead>
             <tr>
@@ -597,12 +656,18 @@ watch(activeTab, (t) => {
           </tbody>
         </table>
       </div>
-      <EmptyState v-else-if="!hasActiveFilter() && !usersLoading" icon="group" title="还没有用户" hint="用户首次登录后会出现在这里。" size="sm" />
       <EmptyState
-        v-else
+        v-else-if="!usersLoading && !hasActiveFilter()"
+        icon="group"
+        title="还没有用户"
+        hint="用户首次登录后会出现在这里。"
+        size="sm"
+      />
+      <EmptyState
+        v-else-if="hasActiveFilter()"
         icon="search_off"
         title="没有匹配的用户"
-        hint="试着调整搜索关键词或清空筛选条件"
+        hint="试着调整上方筛选条件,或清空全部重新来过。"
         size="sm"
       >
         <button type="button" class="btn ghost" @click="clearUserFilters">清空筛选</button>
@@ -1136,6 +1201,88 @@ watch(activeTab, (t) => {
 }
 .clear-filters:hover { background: var(--bg-subtle); color: var(--text-1); }
 .clear-filters .material-symbols-outlined { font-size: var(--icon-md, 16px); }
+
+/* Active filter chip strip (5.4) — currently-applied filters as
+   removable chips. Visually distinct from the toolbar above (softer
+   bg + top divider) but inside the same shell so the strip stacks
+   cleanly below the toolbar in the same card.  The × inside each
+   chip signals "removable" with the brand-danger color on hover;
+   clicking the chip body or × both remove the filter. */
+.active-filters-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: var(--accent-softer);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.af-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  user-select: none;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  height: 26px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  font-size: 12px;
+  font-family: var(--font-sans, inherit);
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+.filter-chip:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+.filter-chip-prefix {
+  color: var(--text-3);
+  font-weight: 500;
+}
+.filter-chip-value {
+  color: var(--text-1);
+  font-weight: 600;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-chip-x {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text-3);
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.filter-chip:hover .filter-chip-x {
+  color: var(--danger);
+}
+.filter-chip-x:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.filter-chip-x .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* Spacing between toolbar card and table card when both visible. */
+.users-table-card {
+  margin-top: 12px;
+}
 
 /* Group cards */
 
