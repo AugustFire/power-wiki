@@ -13,6 +13,11 @@
  * Stats per space come straight off the Space DTO (pageCount /
  * accessGroupIds are server-aggregated; see `getSpacePageStats` in
  * `apps/api/src/lib/spaceStats.ts`).
+ *
+ * 5.14: 「空空间」/「未授权」两个 StatBlock 改为 RouterLink 跳到
+ * /manager/spaces?filter=empty|unauthorized;SpacesView 接收 query 并
+ * 应用客户端 filter + active filter chip。count === 0 时降级为纯展示,
+ * 避免跳进永远空的结果页。
  */
 import { computed } from 'vue'
 import { useSpacesStore } from '@/stores/spaces'
@@ -65,16 +70,46 @@ const biggestSpace = computed(() => {
 
     <div class="section">
       <div class="section-title">需要关注</div>
+      <!-- 5.14 drilldown:count > 0 时整块可点,跳到 SpacesView 带 filter query;
+           count === 0 时降级为纯展示(跟 PeopleContextPanel 一致)。 -->
+      <RouterLink
+        v-if="emptySpacesCount > 0"
+        :to="{ path: '/manager/spaces', query: { filter: 'empty' } }"
+        class="stat-link stat-link-warning"
+      >
+        <StatBlock
+          :value="emptySpacesCount"
+          label="空空间"
+          hint="可删除以整理"
+          tone="warning"
+        />
+        <span class="material-symbols-outlined stat-link-arrow">chevron_right</span>
+      </RouterLink>
       <StatBlock
+        v-else
         :value="emptySpacesCount"
         label="空空间"
-        :hint="emptySpacesCount > 0 ? '可删除以整理' : '无'"
+        hint="无"
         tone="warning"
       />
+      <RouterLink
+        v-if="unauthorizedSpacesCount > 0"
+        :to="{ path: '/manager/spaces', query: { filter: 'unauthorized' } }"
+        class="stat-link stat-link-danger"
+      >
+        <StatBlock
+          :value="unauthorizedSpacesCount"
+          label="未授权"
+          hint="只有管理员可访问"
+          tone="danger"
+        />
+        <span class="material-symbols-outlined stat-link-arrow">chevron_right</span>
+      </RouterLink>
       <StatBlock
+        v-else
         :value="unauthorizedSpacesCount"
         label="未授权"
-        :hint="unauthorizedSpacesCount > 0 ? '只有管理员可访问' : '无'"
+        hint="无"
         tone="danger"
       />
     </div>
@@ -117,6 +152,47 @@ const biggestSpace = computed(() => {
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* 5.14 drilldown — RouterLink wrapper gives the StatBlock an "actionable"
+   affordance: hover background shift + chevron fade-in. arrow 默认 opacity 0
+   避免跟普通 stat 视觉混淆。 */
+.stat-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: var(--radius-md, 4px);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.stat-link:hover {
+  background: var(--bg-canvas);
+}
+.stat-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.stat-link-arrow {
+  font-size: 18px;
+  color: var(--text-3);
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.stat-link-warning:hover .stat-link-arrow { color: var(--warning); }
+.stat-link-danger:hover .stat-link-arrow { color: var(--danger); }
+.stat-link:hover .stat-link-arrow,
+.stat-link:focus-visible .stat-link-arrow {
+  opacity: 1;
+  transform: translateX(0);
 }
 .bs-card {
   display: flex;

@@ -324,6 +324,10 @@ watch(
           title="你在此空间只有只读权限"
         >lock</span>
         <span class="active-count">{{ activePageCount }}</span>
+        <!-- 1.14 hover 反馈:右侧 chevron 默认 opacity 0,hover/focus 时淡入 +
+             accent 色 —— 「这能点跳走」的 affordance 信号。比单纯换 bg
+             颜色强,但不抢「我的工作台」+ page tree active 的视觉重量。 -->
+        <span class="material-symbols-outlined quick-nav-arrow">chevron_right</span>
       </button>
     </div>
 
@@ -484,6 +488,27 @@ watch(
    「你点击它会跳到该空间 home」这件事交由 hover:bg-subtle 反馈
    (跟其它 sidebar row 一致);不需要常驻竖线作为"可点击性"提示。 */
 .quick-nav-active .material-symbols-outlined { color: var(--text-3); }
+/* 1.14 hover affordance — chevron 默认 opacity 0,hover/focus 时淡入。
+   用 chevron 而不是单纯加 bg 色,因为 affordance 要传达的是「跳到别处」,
+   不是「选中态」。accent 色 hover 时填上,跟 sticky 顶「我的工作台」
+   accent 主色视觉一致。 */
+.quick-nav-arrow {
+  font-size: 16px !important;
+  color: var(--text-3);
+  flex-shrink: 0;
+  margin-left: 2px;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+.quick-nav-item:hover .quick-nav-arrow,
+.quick-nav-item:focus-visible .quick-nav-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--accent);
+}
 .active-name {
   flex: 1;
   overflow: hidden;

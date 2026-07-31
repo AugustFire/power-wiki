@@ -14,7 +14,7 @@
  * (lookup users 表),方便 admin 知道某人的草稿空间属于谁。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
@@ -33,6 +33,7 @@ import type { User } from '@power-wiki/shared'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 
 const router = useRouter()
+const route = useRoute()
 const uiStore = useUiStore()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
@@ -88,6 +89,48 @@ async function loadMoreSpaces() {
 async function resetCurrentKind() {
   await currentList.value.reset()
 }
+
+/* 5.14 drilldown:接收 /manager/spaces?filter=empty|unauthorized。
+   仅在 panel 的两个 StatBlock 用了这两个值,作为白名单防止乱 query。
+   应用客户端过滤,跟 kind tab 是 AND 关系(共享空间 + 空 = 当前 tab
+   内空空间)。filter 变化时 reset 当前 kind 的列表 offset,避免分页
+   越界:limit=50 拿到的第 17 个 unfiltered 空间,filter 之后可能落
+   在 offset 之外。 */
+type FilterKey = '' | 'empty' | 'unauthorized'
+const VALID_FILTERS: ReadonlySet<FilterKey> = new Set(['', 'empty', 'unauthorized'])
+
+const activeFilter = computed<FilterKey>(() => {
+  const raw = String(route.query.filter ?? '')
+  return VALID_FILTERS.has(raw as FilterKey) ? (raw as FilterKey) : ''
+})
+
+const filteredVisibleSpaces = computed(() => {
+  const list = visibleSpaces.value
+  if (!activeFilter.value) return list
+  if (activeFilter.value === 'empty') {
+    return list.filter((s) => (s.pageCount ?? 0) === 0)
+  }
+  // unauthorized: 仅 group 授权为 0(跟 panel 计算口径一致;直接
+  // user grant 不算「未授权」—— 后端会接受 user grant + 0 group)。
+  return list.filter((s) => (s.accessGroupIds?.length ?? 0) === 0)
+})
+
+function clearFilter() {
+  void router.replace({ query: { ...route.query, filter: undefined } })
+}
+
+const filterChipLabel = computed(() => {
+  switch (activeFilter.value) {
+    case 'empty': return '空空间'
+    case 'unauthorized': return '未授权'
+    default: return ''
+  }
+})
+
+watch(activeFilter, (next) => {
+  // filter 切换 → 重置当前 kind 的 offset(沿用上面 5.14 设计注释里的理由)。
+  if (next) void resetCurrentKind()
+})
 
 // P1-1 bug fix:load() 已并行拉齐 shared + personal,不需要 lazy watch。
 // kindTab 切换纯客户端,数据已在 store 里。
@@ -343,6 +386,19 @@ function accessSummary(s: Space): AccessSummary {
 
     <div v-if="loadError" class="sv-error">{{ loadError }}</div>
 
+    <!-- 1.12: 个人空间管理语义区别 — 顶部 banner 解释 admin 不参与
+         成员 / 协作管理,因为个人空间是用户的私有草稿区,只读查看就够。
+         个人空间 tab 始终显示,跟 grid / empty state 都能搭配 —— 空态
+         那条「自动创建」提示跟 banner 是同一信息的两面,叠加不冗余反而
+         强化。团队空间 tab 不显示。 -->
+    <div v-if="kindTab === 'personal'" class="sv-personal-info">
+      <span class="material-symbols-outlined sv-personal-info-icon">cottage</span>
+      <span class="sv-personal-info-text">
+        <strong>个人空间是用户的私有草稿区</strong>
+        · 由用户首次登录自动创建 · 管理员只读查看所有者和页面,无法管理成员或协作设置
+      </span>
+    </div>
+
     <div v-if="showCreate" class="create-panel">
       <h2 class="cp-title">创建空间</h2>
 
@@ -399,6 +455,23 @@ function accessSummary(s: Space): AccessSummary {
       </div>
     </div>
 
+    <!-- 5.14 active filter chip — 跟 PeopleView active filter chips 一致:
+         显示当前生效的 ?filter= 值,点 × 移除 query 参数(用 router.replace
+         不留历史记录,避免「清除」也变成「后退」按一次才能撤)。 -->
+    <div v-if="activeFilter" class="sv-active-filters" aria-label="已应用的筛选">
+      <span class="sv-active-filters-label">筛选:</span>
+      <button type="button" class="sv-filter-chip" @click="clearFilter">
+        <span class="material-symbols-outlined sv-filter-chip-icon">
+          {{ activeFilter === 'empty' ? 'inbox' : 'lock' }}
+        </span>
+        <span>{{ filterChipLabel }}</span>
+        <span class="material-symbols-outlined sv-filter-chip-close">close</span>
+      </button>
+      <span class="sv-filter-result-count">
+        {{ filteredVisibleSpaces.length }} 个匹配
+      </span>
+    </div>
+
     <div v-if="loading && spaces.length === 0" class="sv-loading">加载中…</div>
     <EmptyState
       v-else-if="spaces.length === 0"
@@ -418,7 +491,20 @@ function accessSummary(s: Space): AccessSummary {
       </button>
     </EmptyState>
     <EmptyState
-      v-else-if="visibleSpaces.length === 0"
+      v-else-if="filteredVisibleSpaces.length === 0 && activeFilter"
+      :icon="activeFilter === 'empty' ? 'inbox' : 'lock'"
+      :title="`当前筛选下没有${filterChipLabel}`"
+      :hint="`「${filterChipLabel}」筛选在该 tab 下没有匹配项。`"
+      variant="no-results"
+      size="sm"
+    >
+      <button type="button" class="btn ghost" @click="clearFilter">
+        <span class="material-symbols-outlined">filter_alt_off</span>
+        <span>清除筛选</span>
+      </button>
+    </EmptyState>
+    <EmptyState
+      v-else-if="filteredVisibleSpaces.length === 0"
       :icon="kindTab === 'shared' ? 'workspaces' : 'cottage'"
       :title="kindTab === 'shared' ? '还没有团队空间' : '还没有个人空间'"
       :hint="kindTab === 'shared'
@@ -429,7 +515,7 @@ function accessSummary(s: Space): AccessSummary {
     />
     <div v-else class="sv-grid">
       <div
-        v-for="s in visibleSpaces"
+        v-for="s in filteredVisibleSpaces"
         :key="s.id"
         class="sv-card"
         :class="{ 'is-archived': s.archivedAt }"
@@ -486,14 +572,19 @@ function accessSummary(s: Space): AccessSummary {
             <span class="scs-value">{{ s.childPageCount ?? 0 }}</span>
             <span class="scs-label">子页</span>
           </div>
-          <div class="sc-stat">
-            <span class="scs-value">{{ s.accessGroupIds?.length ?? 0 }}</span>
-            <span class="scs-label">授权组</span>
-          </div>
-          <div class="sc-stat">
-            <span class="scs-value">{{ s.accessGrants?.users.length ?? 0 }}</span>
-            <span class="scs-label">授权用户</span>
-          </div>
+          <!-- 1.12: 团队空间才显示「授权组 / 授权用户」 — 个人空间没有
+               access control(仅所有者可见),这两项恒为 0,显示出来只在
+               视觉上重复 owner row。 -->
+          <template v-if="s.kind === 'shared'">
+            <div class="sc-stat">
+              <span class="scs-value">{{ s.accessGroupIds?.length ?? 0 }}</span>
+              <span class="scs-label">授权组</span>
+            </div>
+            <div class="sc-stat">
+              <span class="scs-value">{{ s.accessGrants?.users.length ?? 0 }}</span>
+              <span class="scs-label">授权用户</span>
+            </div>
+          </template>
           <div class="sc-stat">
             <span class="scs-value">{{ s.lastPageUpdatedAt ? relativeTime(s.lastPageUpdatedAt) : '—' }}</span>
             <span class="scs-label">最近更新</span>
@@ -504,16 +595,14 @@ function accessSummary(s: Space): AccessSummary {
           </div>
         </div>
 
-        <!-- 授权范围 = 授权组 ∪ 个人授权用户。空状态只在两者都 0 时
-             触发 —— 单有任一项都视为「有授权」。个人空间的 pg-* 自动组
-             已在 adminSpaces.ts 过滤,所以纯 personal 卡仍会走「仅所有者
-             可见」空态。 -->
-        <div class="sc-access">
+        <!-- 1.12: 团队空间才显示「授权范围」行 — 个人空间只读无 access
+             control,授权范围恒为「仅所有者可见」,跟 owner row 信息重复,
+             隐藏省垂直空间并视觉强化 personal ≠ team。授权范围 = 授权组 ∪
+             个人授权用户;空状态只在两者都 0 时触发,显示「无授权」。 -->
+        <div v-if="s.kind === 'shared'" class="sc-access">
           <span class="sc-access-label">授权范围:</span>
           <template v-if="accessSummary(s).groupIds.length + accessSummary(s).users.length === 0">
-            <span class="sc-access-empty">
-              {{ s.kind === 'personal' ? '仅所有者可见' : '无授权 — 只有管理员可访问' }}
-            </span>
+            <span class="sc-access-empty">无授权 — 只有管理员可访问</span>
           </template>
           <div v-else class="sc-access-avatars">
             <span
@@ -670,6 +759,85 @@ function accessSummary(s: Space): AccessSummary {
   border-radius: var(--radius-md, 4px);
   font-size: 14px;
   margin-bottom: 16px;
+}
+
+/* 1.12: 个人空间 tab 顶部 banner — 跟 SpaceEditView.se-info 同款视觉
+   语言(accent-soft 底 + accent 文字 + subtle border)。让 admin 一进
+   personal tab 立即看到「这里不能管理成员」,避免去找团队空间专用的
+   功能按钮(归档 / 授权 / 成员)。`cottage` icon 跟空态 icon 保持一致,
+   视觉上锚定个人空间主题。 */
+.sv-personal-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--radius-md, 4px);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.sv-personal-info-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.sv-personal-info-text strong { font-weight: 600; }
+
+/* 5.14 active filter chip — 跟 PeopleView active filters 区视觉一致 */
+.sv-active-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+}
+.sv-active-filters-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sv-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill, 999px);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-out);
+}
+.sv-filter-chip:hover {
+  filter: brightness(0.96);
+}
+.sv-filter-chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.sv-filter-chip-icon { font-size: 14px; }
+.sv-filter-chip-close {
+  font-size: 14px;
+  margin-left: 2px;
+  color: var(--accent);
+  opacity: 0.65;
+}
+.sv-filter-chip:hover .sv-filter-chip-close { opacity: 1; }
+.sv-filter-result-count {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-left: auto;
 }
 
 .sv-loading {
