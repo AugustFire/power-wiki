@@ -15,7 +15,7 @@ import PageWatchButton from '@/components/page/PageWatchButton.vue'
 import PageRestrictionsDialog from '@/components/page/PageRestrictionsDialog.vue'
 import ShareDialog from '@/components/page/ShareDialog.vue'
 import CommentsSection from '@/components/comments/CommentsSection.vue'
-import ExportMenu from '@/components/editor/ExportMenu.vue'
+import PageMoreActionsMenu from '@/components/page/PageMoreActionsMenu.vue'
 import AttachmentLightbox from '@/components/page/AttachmentLightbox.vue'
 import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
@@ -34,6 +34,7 @@ import { htmlToJson } from '@/editor/htmlToJson'
 import { charCount } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { useConfirm } from '@/composables/useConfirm'
 import { EMPTY_HTML } from '@/lib/constants'
 import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
 
@@ -45,6 +46,7 @@ const uiStore = useUiStore()
 const router = useRouter()
 const route = useRoute()
 const { recordVisit } = useRecentPages()
+const { confirm } = useConfirm()
 
 /**
  * AppShell provide 的右栏 DOM 引用 —— 直接给 Teleport 喂 HTMLElement,
@@ -616,6 +618,15 @@ const canEdit = computed(() => {
   if (me.id === p.authorId) return true
   return false
 })
+
+/**
+ * 移动 / 删除与编辑共用同一套写权限 gate(都是 page 级写操作)。
+ * 不重复定义条件 —— canEdit 已经覆盖 admin / viewerRole / 作者 /
+ * 归档 / 个人空间所有边界。
+ */
+const canMove = computed(() => canEdit.value)
+const canDelete = computed(() => canEdit.value)
+
 const shareOpen = ref(false)
 function onRestrictionsSaved(flags: {
   hasViewRestriction: boolean
@@ -626,6 +637,31 @@ function onRestrictionsSaved(flags: {
     hasViewRestriction: flags.hasViewRestriction,
     hasEditRestriction: flags.hasEditRestriction,
   })
+}
+
+/**
+ * 顶栏 ⋮ → 删除链路 —— 镜像 PageTree.deletePage 但**不**预检
+ * liveDescendantCount:顶栏用户对页面树结构无直观感知,删父页导致
+ * 子页一并进回收站的代价不可见,不如依赖 server 409 + banner 兜底
+ * (PageTree 行级点击保留 precheck 是因为树视图能直接看到父子关系)。
+ */
+async function onDelete() {
+  if (!page.value) return
+  const ok = await confirm({
+    title: `删除「${page.value.title}」?`,
+    message: '页面将进入回收站,可联系管理员恢复。',
+    danger: true,
+    confirmText: '删除',
+    cancelText: '取消',
+  })
+  if (!ok) return
+  const wasCurrent = route.params.id === page.value.id
+  try {
+    await pagesStore.softDeletePage(page.value.id)
+  } catch {
+    return
+  }
+  if (wasCurrent) router.push('/')
 }
 
 function onAttachmentImgClick(e: MouseEvent) {
@@ -659,58 +695,37 @@ watch(
     <ScrollProgress />
     <Breadcrumb :segments="breadcrumbSegments" />
     <PageActions>
-<!--        <button-->
-<!--          v-if="page"-->
-<!--          class="btn ghost"-->
-<!--          type="button"-->
-<!--          aria-label="复制页面"-->
-<!--          title="复制页面"-->
-<!--          @click="onDuplicate"-->
-<!--        >-->
-<!--          <span class="material-symbols-outlined icon-lg">content_copy</span>-->
-<!--        </button>-->
-        <ExportMenu v-if="page" :page-id="page.id" />
-        <RouterLink
-          v-if="page"
-          :to="`/p/${page.id}/history`"
-          class="btn version-link"
-          :title="`查看 ${page.title} 的版本历史`"
-        >
-          <span class="material-symbols-outlined icon-md">history</span>
-          页面历史
-        </RouterLink>
-        <!-- M13 👁 关注按钮 —— 位置贴 design/wiki-read.html:311 的 subheader
-             page-actions 行,跟「页面历史 / 编辑」同款 `.btn`,表达「订阅此页
-             通知」。个人空间无 watch 语义,直接不渲染。 -->
-        <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
-        <!-- Phase B 页面级限制 dialog 入口 —— 仅对页面有管理权的用户可见
-             (admin / 作者本人,见 canManageRestrictions)。Dialog 本身会
-             在后端拒绝时抛 404,所以即便这里的 gate 漏掉(未来 space-admin
-             不带 author 也想管),用户点开会得到友好的 404 提示。 -->
-        <button
-          v-if="page && canManageRestrictions"
-          class="btn"
-          type="button"
-          :title="`配置 ${page.title} 的查看 / 编辑限制`"
-          @click="restrictionsOpen = true"
-        >
-          <span class="material-symbols-outlined icon-md">lock</span>
-          限制
-        </button>
-        <button
-          v-if="page && canShare"
-          class="btn"
-          type="button"
-          :title="`创建 ${page.title} 的公开分享链接`"
-          @click="shareOpen = true"
-        >
-          <span class="material-symbols-outlined icon-md">share</span>
-          分享
-        </button>
-        <button v-if="canEdit" class="btn primary" @click="goEdit">
-          <span class="material-symbols-outlined icon-lg">edit</span>
-          编辑
-        </button>
+      <!-- 关注按钮 —— 个人空间无 watch 语义,直接不渲染。 -->
+      <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
+      <!-- 复制按钮:恢复模块 2 P0 的「复制」入口,onDuplicate() 已存在。 -->
+      <button
+        v-if="page"
+        class="btn"
+        type="button"
+        title="复制页面"
+        @click="onDuplicate"
+      >
+        <span class="material-symbols-outlined icon-md">content_copy</span>
+        复制
+      </button>
+      <!-- ⋮ 更多操作 —— 把现有 导出 / 历史 / 限制 / 分享 + 新增 移动 / 复制链接
+           / 删除 全部装进 popover。1280 视口下顶栏只剩 4 个元素,不再挤爆
+           subheader。 -->
+      <PageMoreActionsMenu
+        v-if="page"
+        :page="page"
+        :can-share="canShare"
+        :can-manage-restrictions="canManageRestrictions"
+        :can-move="canMove"
+        :can-delete="canDelete"
+        @restrictions="restrictionsOpen = true"
+        @share="shareOpen = true"
+        @delete="onDelete"
+      />
+      <button v-if="canEdit" class="btn primary" @click="goEdit">
+        <span class="material-symbols-outlined icon-lg">edit</span>
+        编辑
+      </button>
     </PageActions>
 
     <!-- Viewer 兜底 banner —— EditView 检测到无权限时,redirect 到当前
