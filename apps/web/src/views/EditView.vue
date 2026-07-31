@@ -485,6 +485,36 @@ async function closeEditor() {
   }
 }
 
+/**
+ * 离开编辑器时的二次确认 —— 捕获 auto-save 兜不住的边缘情况:
+ *   - 500ms 防抖窗口(刚敲完就点关闭,未 flush)
+ *   - 30s idle snapshot 边界(还在编辑中,未触发 checkpoint)
+ *   - 网络抖动(saveState='error',server 没收到)
+ *
+ * 文案分两态:
+ *   - error 态:强调「可能未落盘」+ danger 样式,按钮用「不保存离开」
+ *   - 其他态:常规提示,按钮用「保存并离开」
+ *
+ * 共用入口覆盖:顶栏「关闭」按钮 / sidebar 跨页跳转 / 浏览器 back,
+ * 一律走 onBeforeRouteLeave 拦截,closeEditor 不重复弹。
+ */
+async function confirmDirtyLeave(): Promise<boolean> {
+  if (!isDirty.value) return true
+
+  const seconds = idleSnapshotSeconds.value
+  const isError = saveState.value === 'error'
+
+  return confirm({
+    title: '离开编辑器?',
+    message: isError
+      ? `上次自动保存失败。最近 ${seconds} 秒内的修改可能未落盘,确认离开?`
+      : `最近 ${seconds} 秒内的修改已自动保存,确认离开?`,
+    confirmText: isError ? '不保存离开' : '保存并离开',
+    cancelText: '取消',
+    danger: isError,
+  })
+}
+
 function onBeforeUnload(e: BeforeUnloadEvent) {
   if (isDirty.value) {
     e.preventDefault()
@@ -611,6 +641,10 @@ async function flushPendingSave(): Promise<void> {
 }
 
 onBeforeRouteLeave(async (_to, _from) => {
+  if (isDirty.value) {
+    const ok = await confirmDirtyLeave()
+    if (!ok) return false
+  }
   await flushPendingSave()
   return true
 })
