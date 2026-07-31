@@ -69,6 +69,8 @@ const spaceById = computed<Map<string, Space>>(() => {
 })
 const hasMentions = computed(() => (payload.value?.mentions.length ?? 0) > 0)
 const hasCreated = computed(() => (payload.value?.created.length ?? 0) > 0)
+const hasPersonalSpace = computed(() => (payload.value?.personalSpace.length ?? 0) > 0)
+const hasWatched = computed(() => (payload.value?.watched.length ?? 0) > 0)
 const profileSummary = computed(() => {
   const mentions = payload.value?.mentions.length ?? 0
   const created = payload.value?.created.length ?? 0
@@ -95,6 +97,24 @@ const recentItems = computed(() => recentList.value.map((entry) => {
     alive: !!page && !page.deletedAt,
   }
 }))
+
+/* personalSpaceName / personalSpaceColor —— 「我在个人空间起草的」section
+ * row 的 space chip 用用户自己的个人空间(所有 row 都来自同一空间,
+ * 没有跨空间)。从 store 拿空间元数据,store 还没 init 时 fallback 到
+ * 字面量「个人空间」+ 灰色;前者是 hot path,后者是 loading 兜底。*/
+const personalSpaceName = computed(() => personalSpace.value?.name ?? '个人空间')
+const personalSpaceColor = computed(() => personalSpace.value?.color ?? 'var(--text-3)')
+
+/* watchedPages —— 「我关注的页面」section 渲染源。Audit 5.1 期望
+ * 「按 updatedAt desc」语义(用户最关心的「关注页最近发生了什么」),
+ * 但后端 user_watched_pages.watchedAt 排序是「按我加入关注的时间」,
+ * 跟「页面新鲜度」不一样。前端这里 client-side 按 updatedAt 重排,
+ * 跟 "created" / "personalSpace" 两节(updatedAt DESC)的语义对齐。
+ * spread + sort 避免修改 readonly payload 数组。*/
+const watchedPages = computed<PageNode[]>(() => {
+  const list = payload.value?.watched ?? []
+  return [...list].sort((a, b) => b.updatedAt - a.updatedAt)
+})
 
 function describeSpace(id: string | null | undefined): {
   name: string
@@ -127,7 +147,13 @@ async function load(): Promise<void> {
 onMounted(() => { void load() })
 
 function openPage(pageId: string): void {
+  // 跨 section 查找:任一 dashboard 数组里能找到就用其 spaceId 切 active;
+  // 找不到再 fall back 到 pagesStore(可能是 pages store 缓存 / syncFromServer
+  // 期间已经 preloaded 的页面)。activeSpace 不一致时设上,确保 PageTree
+  // 能正确显示当前页面所在空间。
   const page = payload.value?.created.find((entry) => entry.id === pageId)
+    ?? payload.value?.personalSpace.find((entry) => entry.id === pageId)
+    ?? payload.value?.watched.find((entry) => entry.id === pageId)
     ?? pagesStore.getPage(pageId)
   if (page?.spaceId && spacesStore.activeSpaceId.value !== page.spaceId) {
     spacesStore.setActiveSpace(page.spaceId)
@@ -485,6 +511,104 @@ function relativeTime(timestamp: number): string {
             size="sm"
           />
         </section>
+
+        <!-- ─── 5.1 P0 · personalSpace section ───────────────────────
+             渲染 payload.personalSpace(用户在自己个人空间里的最近编辑
+             页面,updatedAt DESC)。所有 row 都来自用户的同一个 personal
+             space,所以 spaceName 固定是「个人空间」+ 用户空间色,row 视觉
+             跟 .shared-spaces 区分(personal 空间色 + 锁形 icon,不是共享
+             空间的有色 chip)。`@mouseenter="ensurePageLoaded"` 提前
+             拉父链,让 PageTree 在 ReadView 落地时已就位。 -->
+        <section class="personal-section">
+          <header class="section-head">
+            <h2 class="section-title">
+              <span class="material-symbols-outlined section-icon personal-space-icon">lock_person</span>
+              我在个人空间起草的
+            </h2>
+            <span class="section-meta">最近 {{ payload?.personalSpace.length ?? 0 }} 个</span>
+          </header>
+          <div v-if="loading && !payload" class="section-loading">
+            <div v-for="index in 3" :key="index" class="row-skeleton">
+              <Skeleton :width="32" :height="32" />
+              <div class="row-skeleton-text">
+                <Skeleton :width="`${50 + index * 7}%`" :height="14" />
+                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+              </div>
+            </div>
+          </div>
+          <ul v-else-if="hasPersonalSpace" class="section-list">
+            <li
+              v-for="page in payload!.personalSpace"
+              :key="page.id"
+              @mouseenter="ensurePageLoaded(page)"
+            >
+              <DashboardCard
+                variant="page"
+                :page="page"
+                :space-name="personalSpaceName"
+                :space-color="personalSpaceColor"
+                space-kind="personal"
+                @open-page="openPage"
+              />
+            </li>
+          </ul>
+          <EmptyState
+            v-else
+            icon="lock_person"
+            title="还没有个人草稿"
+            hint="在个人空间写点东西,会按更新时间出现在这里。"
+            size="sm"
+          />
+        </section>
+
+        <!-- ─── 5.1 P0 · watched section ───────────────────────────
+             渲染 payload.watched(用户关注页的最新编辑,按 updatedAt DESC
+             —— 已在 script 端 client-side 重排,见 watchedPages)。
+             row 跟 created 一样跨空间(space chip 跟每个 page 走),
+             唯一差别是 hover 进 row 时 DashboardCard 自动用 chevron_right
+             暗示「点开看」。EmptyState 文案明确告诉用户「关注按钮在
+             ReadView 顶栏」,让首次用户找到入口。 -->
+        <section class="personal-section">
+          <header class="section-head">
+            <h2 class="section-title">
+              <span class="material-symbols-outlined section-icon watched-icon">notifications_active</span>
+              我关注的页面
+            </h2>
+            <span class="section-meta">最近 {{ watchedPages.length }} 个</span>
+          </header>
+          <div v-if="loading && !payload" class="section-loading">
+            <div v-for="index in 3" :key="index" class="row-skeleton">
+              <Skeleton :width="32" :height="32" />
+              <div class="row-skeleton-text">
+                <Skeleton :width="`${50 + index * 7}%`" :height="14" />
+                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+              </div>
+            </div>
+          </div>
+          <ul v-else-if="hasWatched" class="section-list">
+            <li
+              v-for="page in watchedPages"
+              :key="page.id"
+              @mouseenter="ensurePageLoaded(page)"
+            >
+              <DashboardCard
+                variant="page"
+                :page="page"
+                :space-name="describeSpace(page.spaceId).name"
+                :space-color="describeSpace(page.spaceId).color"
+                :space-kind="describeSpace(page.spaceId).kind"
+                @open-page="openPage"
+              />
+            </li>
+          </ul>
+          <EmptyState
+            v-else
+            icon="notifications_off"
+            title="还没有关注任何页面"
+            hint="打开任一页,点顶栏的「铃铛」按钮,会出现在这里。"
+            size="sm"
+          />
+        </section>
       </div>
     </div>
   </div>
@@ -623,6 +747,12 @@ function relativeTime(timestamp: number): string {
   font-size: 20px !important;
 }
 .mention-icon { color: var(--danger); }
+/* 5.1 P0 · personalSpace / watched section 配色:
+   - personalSpace 用 accent(跟 shared-spaces-section 平行,两组都是
+     「你的空间」概念,保持视觉权重);
+   - watched 用默认 text-2(信息浏览类,跟 created / recent 同节奏)。*/
+.personal-space-icon { color: var(--accent); }
+.watched-icon { color: var(--text-2); }
 .section-meta {
   padding: 2px 8px;
   border-radius: 10px;
