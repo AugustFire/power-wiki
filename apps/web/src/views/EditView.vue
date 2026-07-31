@@ -25,6 +25,7 @@ import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import type { PageNode } from '@power-wiki/shared'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
+import { formatRelativeTime } from '@/lib/relativeTime'
 import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -255,6 +256,58 @@ const bylineCreatedAt = computed(() => {
   const ts = page.value?.createdAt
   const d = typeof ts === 'number' ? new Date(ts) : new Date()
   return d.toLocaleDateString('zh-CN')
+})
+
+/**
+ * byline 「最后编辑者」展示名 —— 跟 ReadView.editorDisplay 同一套优先级
+ * (updatedByName → authorName → '我' → '未知作者'),保证两个 view 切换时
+ * byline 显示的「人」一致,消除模块 2 P0 (2.3)「EditView 说 author / ReadView
+ * 说最后编辑者」的语义冲突。
+ */
+const editorDisplay = computed(() => {
+  const p = page.value
+  if (!p) return ''
+  if (p.updatedByName) return p.updatedByName
+  if (p.authorName) return p.authorName
+  if (p.authorId === 'me') return '我'
+  return '未知作者'
+})
+
+const editorAvatarColor = computed(
+  () => page.value?.updatedByColor ?? page.value?.authorColor ?? 'var(--text-3)',
+)
+
+/**
+ * 「由 Y 创建」副行展示名 —— author 优先,'me' → '我',已删 → '未知作者'。
+ * 仅在 showAuthorSuffix 为 true 时渲染(authorId !== updatedById)。
+ */
+const authorDisplay = computed(() => {
+  const p = page.value
+  if (!p) return ''
+  if (p.authorName) return p.authorName
+  if (p.authorId === 'me') return '我'
+  return '未知作者'
+})
+
+/**
+ * 副行渲染条件:updatedBy 跟 authorId 不同(被他人编辑过 / 自己编辑过他人页)。
+ * 按 user.id 比较规避重名 / 改名;'me' 跟任何真实 id 都不等,所以老 seed 页
+ * (updatedBy 回填成 'me' 后又被人改 → updatedBy 变成真实 id)也命中。
+ */
+const showAuthorSuffix = computed(() => {
+  const p = page.value
+  if (!p) return false
+  if (p.updatedBy == null) return true
+  return p.updatedBy !== p.authorId
+})
+
+/**
+ * byline 「最后编辑于 X」—— 走 formatRelativeTime 跟 ReadView 一致,
+ * 远期 (> 30d) 自动降级为 zh-CN locale 日期。
+ */
+const bylineUpdatedAt = computed(() => {
+  const ts = page.value?.updatedAt
+  return typeof ts === 'number' ? formatRelativeTime(ts) : ''
 })
 
 function hydrateExistingPage(p: PageNode): void {
@@ -686,11 +739,12 @@ onBeforeUnmount(() => {
             :placeholder="DEFAULT_TITLE"
           />
 
-          <div class="edit-byline">
-            <UserAvatar :size="24" :label="page?.authorName ?? page?.authorId ?? '我'" :avatar-kind="page?.authorAvatarKind ?? null" :avatar-ref="page?.authorAvatarRef ?? null" :user-id="page?.authorId ?? null" />
-            <span><strong>{{ page?.authorName ?? '我' }}</strong> · 创建于 {{ bylineCreatedAt }}</span>
-<span class="byline-hint">·</span>
-            <span class="byline-hint">输入 <code>/</code> 唤起斜杠菜单</span>
+          <div v-if="page" class="edit-byline">
+            <UserAvatar :size="24" :color="editorAvatarColor" :label="editorDisplay" :avatar-kind="page.updatedByAvatarKind ?? page.authorAvatarKind ?? null" :avatar-ref="page.updatedByAvatarRef ?? page.authorAvatarRef ?? null" :user-id="page.updatedBy ?? page.authorId ?? null" />
+            <span><strong>{{ editorDisplay }}</strong> · 最后编辑于 {{ bylineUpdatedAt }}</span>
+          </div>
+          <div v-if="showAuthorSuffix" class="edit-byline-sub">
+            由 {{ authorDisplay }} 创建 · {{ bylineCreatedAt }}
           </div>
 
           <UploadStatus />
@@ -830,6 +884,15 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 由 Y 创建 副行 —— 仅当 author ≠ 最后编辑者时显示,避免冗余。
+   top 0 让 byline 的 margin-bottom 自然撑开间距;bottom 8px 跟 UploadStatus 留呼吸。 */
+.edit-byline-sub {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0 0 8px;
+  padding-left: 32px;
 }
 
 .edit-footer .footer-meta {
