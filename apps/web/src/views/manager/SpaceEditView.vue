@@ -1563,10 +1563,10 @@ function formatDate(ts: number): string {
 </template>
 
 <style scoped>
-/* max-width: 1680 + margin auto 对齐 .content-inner(components.css:485)
+/* max-width: 1800 + margin auto 对齐 .content-inner(components.css:485)
    —— 2K 屏下「访问控制」两列(用户组 / 个人)自然撑开,小屏不挤压。 */
 .space-edit {
-  max-width: 1680px;
+  max-width: 1800px;
   margin: 0 auto;
   padding-bottom: 80px;
   width: 100%;

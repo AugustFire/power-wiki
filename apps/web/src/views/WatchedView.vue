@@ -180,7 +180,7 @@ function spaceChip(p: PageNode): { name: string; color: string; isPersonal: bool
 </template>
 
 <style scoped>
-.watched-page { padding-top: 24px; max-width: 880px; }
+.watched-page { padding-top: 24px; max-width: var(--content-max-wide); }
 
 .page-title {
   font-size: 28px;

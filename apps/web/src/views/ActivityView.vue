@@ -286,7 +286,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
 .activity-page {
   padding-top: 24px;
   padding-bottom: 64px;
-  max-width: 960px;
+  max-width: var(--content-max-wide);
 }
 .activity-header {
   display: flex;

@@ -534,7 +534,7 @@ const colorPresets = [
 </template>
 
 <style scoped>
-.user-edit { max-width: 1000px; }
+.user-edit { max-width: 1200px; }
 
 /* 旧 .ue-breadcrumb / .ue-bc-sep / .ue-bc-current 一律删除(P2 收口):
    UserEditView 现在用统一 <Breadcrumb variant="inline">。 */
