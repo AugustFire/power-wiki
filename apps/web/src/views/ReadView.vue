@@ -234,6 +234,31 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 模块 4 P1 修复:跨空间深链进入页面时,主动 setActiveSpace,让 Sidebar /
+ * SpaceSwitcher / breadcrumb 全部跟到目标空间。
+ *
+ * Confluence 跨空间深链面包屑首段会显示「在 X 空间」灰 chip,本仓库不复制
+ * 那段视觉(在面包屑 component 里再判跨空间 → 加重组件职责);此处直接切
+ * activeSpace,效果等价:用户视角下「我打开谁的空间,sidebar / switcher /
+ * 面包屑上下文都跟着走」。setActiveSpace 内部 idempotent,watch 即便在
+ * page 重 fetch 时反复触发也只走一次赋值。
+ *
+ * `immediate: true` 保证首次 mount 也会跑 —— 此时 page.value 可能还是
+ * `undefined`(`loadPageResource` in-flight),`page.value?.spaceId` 为
+ * `undefined`,被 if 拦掉,不抛错。loadPageResource → store → page.value
+ * 解析出后第二次触发,setActiveSpace 真正生效。
+ */
+watch(
+  () => page.value?.spaceId,
+  (sid) => {
+    if (sid && spacesStore.activeSpaceId.value !== sid) {
+      spacesStore.setActiveSpace(sid)
+    }
+  },
+  { immediate: true },
+)
+
 /** 当前页是否在个人空间 —— 个人空间是用户私有草稿区,不暴露关注入口
  * (无 watch 语义,也不向别人推送通知)。activeSpaceId 用作兜底,这样即使
  * page 还没加载完也能正确隐藏按钮。 */

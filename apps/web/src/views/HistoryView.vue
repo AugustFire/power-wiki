@@ -21,6 +21,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
 import VersionList from '@/components/page/VersionList.vue'
 import VersionDiffView from '@/components/page/VersionDiffView.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -33,9 +34,29 @@ import type { PageVersion } from '@power-wiki/shared'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
+const spacesStore = useSpacesStore()
 const versionsComposable = usePageVersions()
 
 const page = computed(() => pagesStore.getPage(props.id))
+
+/**
+ * 模块 4 P1 修复:跨空间深链进入历史视图也走同一套 setActiveSpace,跟
+ * ReadView / EditView 同步。HistoryView 的 page 是从 store 直接取
+ * (`pagesStore.getPage`),通常在路由进入前 sidebar 已 fetch 过该空间,
+ * `page.value.spaceId` 立即可读,`immediate: true` 就能触发。
+ *
+ * `setActiveSpace` 内部 idempotent,即便用户在历史视图内点子页跳转
+ * (`props.id` 变)再触发,也不会写多余的 reactive 翻转。
+ */
+watch(
+  () => page.value?.spaceId,
+  (sid) => {
+    if (sid && spacesStore.activeSpaceId.value !== sid) {
+      spacesStore.setActiveSpace(sid)
+    }
+  },
+  { immediate: true },
+)
 
 /** 面包屑 = 我的知识库 / <祖辈链> / <页面名> / 版本历史。页面名那段是链接,
  *  兼作「返回页面」通道,代替原来 left-actions 的「← 返回页面」按钮

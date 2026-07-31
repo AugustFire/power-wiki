@@ -2,6 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
+import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
 import { api, ApiError, invalidatePath } from '@/lib/api'
 import TocPanel from '@/components/layout/TocPanel.vue'
@@ -33,6 +34,7 @@ type AnyEditor = any
 
 const props = defineProps<{ id?: string; parentId?: string | null }>()
 const pagesStore = usePagesStore()
+const spacesStore = useSpacesStore()
 const authStore = useAuthStore()
 const router = useRouter()
 const uiStore = useUiStore()
@@ -148,6 +150,27 @@ const parentPage = computed(() => {
   if (!pid) return null
   return pagesStore.getPage(pid) ?? null
 })
+
+/**
+ * 模块 4 P1 修复:跨空间深链进入编辑视图时主动 setActiveSpace,跟
+ * ReadView / HistoryView 同套 —— 让 Sidebar / SpaceSwitcher / breadcrumb
+ * 在三个视图之间保持一致。EditView 的特殊点:`page` 解析略晚于路由进入
+ * (onMounted await api.pages.get),`immediate: true` 首次触发时
+ * `page.value` 可能还是 undefined,被 if 拦掉;等 onMounted 把 fetched 写
+ * 进 store 后第二次触发,setActiveSpace 生效。
+ *
+ * 新建分支(`props.id` 为空,`localId` 是 client nanoid)不会进 watch
+ * 触发条件,正确:没有 pageId → 没有归属空间 → 不应该切 activeSpace。
+ */
+watch(
+  () => page.value?.spaceId,
+  (sid) => {
+    if (sid && spacesStore.activeSpaceId.value !== sid) {
+      spacesStore.setActiveSpace(sid)
+    }
+  },
+  { immediate: true },
+)
 
 /* Phase B 页面级限制 dialog —— EditView 始终有权能编辑,就一定有 canManage
  * 三选一(作者 / space-admin / global admin),所以这里不用启发式 gate,
