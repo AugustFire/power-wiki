@@ -541,6 +541,7 @@ async function scheduleAutoSave() {
  *  永远静默,version 只在 idle / route leave 这种机器化边界打。
  *  用户偏好:不提供手动「保存为版本」按钮。 */
 const IDLE_SNAPSHOT_MS = 30_000
+const idleSnapshotSeconds = computed(() => IDLE_SNAPSHOT_MS / 1000)
 let idleSnapshotTimer: number | null = null
 const hasUnsnapshottedEdits = ref(false)
 
@@ -710,7 +711,10 @@ onBeforeUnmount(() => {
           <span class="material-symbols-outlined icon-md">share</span>
           分享
         </button>
-        <button class="btn ghost" type="button" @click="closeEditor">关闭</button>
+        <button class="btn ghost" type="button" :title="`关闭编辑器 · 自动保存已兜底最近 ${idleSnapshotSeconds} 秒内的修改`" @click="closeEditor">
+          <span class="material-symbols-outlined icon-md">cloud_done</span>
+          关闭
+        </button>
     </PageActions>
 
     <!-- 专题 12:TOC 折叠手柄 —— 只在 tocCollapsed 时显示。
