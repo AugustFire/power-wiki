@@ -956,20 +956,23 @@
 .subpage-row .label { flex: 1; font-weight: 500; }
 .subpage-row .updated { font-size: 12px; color: var(--text-3); }
 
-/* like button + 头像组 —— 放在 Labels 之下、CommentsSection 之上。
-   左对齐,跟 .labels 同 32px top margin + 同 4px gap,视觉上跟标签条
-   同一类「行内元数据」。无气泡、无 border。
-   关键:
-   - 按钮**没有**水平 padding —— 👍 图标直接贴在 .page-reactions
-     的左边缘,跟 .label-leading-icon 起始位置对齐。
-   - margin-bottom 设为 0,让点赞行紧贴下方的 comments-section
-     border-top 分割线(56px margin-top 是 comments 区自己的呼吸空间,
-     不用再叠加 32px 上去)。 */
+/* like button + 头像组 —— 模块 2 P1 (2.8 + 2.11) 改造:
+   1. reactions 不再独立成 section,挂在 byline 行最末(作者 / 时间 /
+      字数之后),跟左侧 metadata 一起左流。最初考虑过 margin-left:auto
+      把 reactions 推到右端作"两端对齐",但实测标题靠左,byline 反而铺
+      满整行会显得割裂;统一靠左后,头部整体节奏一致。
+   2. 点赞按钮带短 label(`赞` / `已赞`),解决 2.11 doc 描述的"裸 thumb-up
+      friction"。inactive 单字 `赞`,active 切 `已赞`(icon 翻 filled + label
+      跟切 + 数字作 note),三层反馈让状态切换清晰。
+
+   按钮**没有**水平 padding —— 👍 图标直接贴 .page-reactions 左边缘,
+   跟 byline 内其他元素的视觉起点对齐。byline 自带 margin-bottom:24px
+   跟下方 .prose 保持 24px 间距,不需要这一层再加 margin。 */
 .page-reactions {
     display: flex;
     align-items: center;
     gap: 4px;
-    margin: 32px 0 0;
+    margin: 0;
 }
 .page-reactions .like-button {
     display: inline-flex;
@@ -978,23 +981,41 @@
     padding: 2px 0;
     background: transparent;
     border: none;
-    color: var(--text-2);
-    font-size: 14px;
-    font-weight: 500;
     cursor: pointer;
     border-radius: 3px;
     transition: background-color var(--duration-fast) var(--ease-out),
         color var(--duration-fast) var(--ease-out);
     user-select: none;
+    /* 字号 / 字重显式 inherit —— base.css 的 button reset 只写了
+       font-family: inherit,font-size / font-weight 仍是浏览器 UA 默认
+       (Chrome 13.333px),比 byline 的 13px 大出可见的一档。color 靠
+       --text-3 级联自然继承。byline 是统一的轻量 metadata 文字,点赞
+       按钮挂在末尾不换色 / 字号 / 字重;active / hover 只用颜色提示交互。 */
     font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+}
+/* 2.11 inline label —— 收敛到一字:active 用 `已赞`,inactive 用 `赞`。
+   颜色跟字号全靠 button / byline 级联,这里是清空层(只声明 color:
+   inherit 是为了让 active 翻色能透传到 label 文本)。font-weight 不再
+   单独设 600 —— 跟 byline 整体 400 保持一致。 */
+.page-reactions .like-label {
+    color: inherit;
+}
+.page-reactions .like-sep {
+    color: var(--border-strong);
+    margin: 0 2px;
+    user-select: none;
 }
 .page-reactions .like-button:hover {
+    /* 仅 bg 切换,文字色不再变 —— 跟 hover 状态前的 byline 视觉一致,
+       否则 hover 一瞬会让字色跳到黑,跟周围 metadata 文字节奏脱节。 */
     background: var(--bg-subtle);
-    color: var(--text);
 }
 .page-reactions .like-button.active {
     color: var(--accent);
-    font-weight: 600;
+    /* font-weight 不用 600 —— 跟 byline 整体字重一致,active 反馈靠
+       accent 色 + icon filled 翻转 + label 切 "已赞" 三层已经够清晰。 */
 }
 .page-reactions .like-button.active:hover {
     background: var(--accent-soft);

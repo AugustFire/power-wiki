@@ -139,7 +139,7 @@ async function removeLabel(label: string) {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 32px 0;
+  margin: 24px 0;
   align-items: center;
 }
 

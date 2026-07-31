@@ -917,6 +917,50 @@ watch(
                 <span class="dot">·</span>
                 <span>{{ charCount(page.contentHTML) }} 字</span>
               </template>
+              <!-- 跟前几个 metadata 项一样,跟 reactions 之间用 `.dot` 中点
+                   分隔 —— 让 byline gap 节奏(reactions 与"字数" / "时间"
+                   间距)跟"作者 → 时间 → 字数"内部间隔统一。 -->
+              <span v-if="page" class="dot">·</span>
+
+              <!-- 模块 2 P1 (2.8 + 2.11) reactions 接在 byline 末尾、随 metadata
+                   自然左流(不 margin-left:auto 右推)—— 标题左对齐,读者反馈
+                   紧跟在"作者 / 时间 / 字数"之后,视线不用横跨整行。0 垂直新增,
+                   body 紧贴 byline(原来 reactions 独占底部 section)。
+                   字号 / 颜色 / 字重全部继承 .page-byline,不做局部覆盖。
+
+                   短文案(label 收敛到一个字):
+                     - inactive:`👍 赞`
+                     - active:`👍 已赞 · N`(N>0);`👍 已赞`(N=0 兜底)
+                   中文互联网习惯用法(微信 / 微博 / 知乎 / 掘金),比"觉得有用"
+                   更短更直接,但依旧用 inline 文字解决 2.11 的裸 thumb-up 痛点
+                   (新用户一眼看出这是赞)。 active 切"已赞"是双重反馈:icon 翻
+                   filled + label 跟切 + count 浮出。 -->
+              <div v-if="page" class="page-reactions">
+                <button
+                  type="button"
+                  class="like-button"
+                  :class="{ active: page.likedByMe === true, popping }"
+                  :disabled="togglingLike"
+                  :aria-pressed="page.likedByMe === true"
+                  :aria-label="page.likedByMe ? '取消点赞' : '给作者点个赞'"
+                  :title="page.likedByMe ? '已赞 · 再点取消' : '赞'"
+                  @click="onToggleLike"
+                >
+                  <span class="like-icon-wrap" aria-hidden="true">
+                    <span class="material-symbols-outlined like-icon like-icon--outlined">thumb_up</span>
+                    <span class="material-symbols-outlined like-icon like-icon--filled">thumb_up</span>
+                  </span>
+                  <span v-if="page.likedByMe" class="like-label">已赞</span>
+                  <span v-else class="like-label">赞</span>
+                  <!-- 数字始终放 label 后面(N>0 才显示,避免 "已赞 · 0");label
+                       切换是 active/inactive 的强反馈,数字作 note。 -->
+                  <template v-if="page.likedByMe && (page.likesCount ?? 0) > 0">
+                    <span class="like-sep">·</span>
+                    <span :key="page.likesCount ?? 0" class="like-count">{{ page.likesCount ?? 0 }}</span>
+                  </template>
+                </button>
+                <WhoLikedList :page="page" />
+              </div>
             </div>
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>
@@ -935,33 +979,18 @@ watch(
               </div>
             </div>
 
-            <!-- 附件汇总:放在 Labels 之上,与 page-reactions / subpages
-                 同级。count=0 时整个 section 不渲染,无视觉干扰。 -->
-            <AttachmentsSection v-if="page" :page-id="page.id" />
+            <!-- 模块 2 P1 (2.8) 重排 metadata 顺序:Confluence 风格
+                 正文 → Labels(一级 metadata)→ Attachments → Children →
+                 Comments。Labels / Attachments 间距统一 24px(原 Labels 32 /
+                 Attachments 24 不齐)。Reactions 整组上移到 byline 子行
+                 (见上面 .page-reactions),不留底部独立 section。 -->
 
-            <!-- 点赞区:放在正文下方(Labels 之上),左对齐,跟 .labels
-                 同 margin / 同左起点,视觉上跟标签条同一类"行内元数据"。 -->
+            <!-- 标签条:一级 metadata,先于附件。 -->
             <LabelPills v-if="page" :page="page" />
 
-            <div v-if="page" class="page-reactions">
-              <button
-                type="button"
-                class="like-button"
-                :class="{ active: page.likedByMe === true, popping }"
-                :disabled="togglingLike"
-                :aria-pressed="page.likedByMe === true"
-                :title="page.likedByMe ? '取消点赞' : '赞一下'"
-                @click="onToggleLike"
-              >
-                <span class="like-icon-wrap" aria-hidden="true">
-                  <span class="material-symbols-outlined like-icon like-icon--outlined">thumb_up</span>
-                  <span class="material-symbols-outlined like-icon like-icon--filled">thumb_up</span>
-                </span>
-                <!-- :key 触发 remount,likesCount 变化时 likes-count-pop 重跑 -->
-                <span :key="page.likesCount ?? 0" class="like-count">{{ page.likesCount ?? 0 }}</span>
-              </button>
-              <WhoLikedList :page="page" />
-            </div>
+            <!-- 附件汇总:二级 metadata,放在 Labels 之下。count=0 时整段
+                 不渲染,无视觉干扰。 -->
+            <AttachmentsSection v-if="page" :page-id="page.id" />
 
             <div v-if="subPages.length > 0" class="subpages">
               <div class="subpages-title">
@@ -1045,9 +1074,13 @@ watch(
 <style scoped>
 .read-page { padding-top: 24px; }
 
-/* M2: 空内容占位 —— Confluence 风格的居中提示块,跟 page-reactions 之
+/* M2: 空内容占位 —— Confluence 风格的居中提示块,跟上方 .prose 之
    间留 32px 视觉缓冲。文字 + icon 上下结构居中,跟设计基准同款柔和
-   色 + bg-subtle 容器,避免大空白块让 reader 误以为页面坏了。 */
+   色 + bg-subtle 容器,避免大空白块让 reader 误以为页面坏了。
+   模块 2 P1 (2.8):空内容占位下方紧跟 LabelPills(一级 metadata),
+   Labels margin-top:24px 节律跟 placeholder 自带 margin-top:32px
+   合计 56px,跟"主要内容区"(正文 / 空态)和"metadata 区"(标签 / 附件)
+   自然分界。 */
 .empty-content-placeholder {
   display: flex;
   flex-direction: column;
