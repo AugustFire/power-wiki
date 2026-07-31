@@ -449,7 +449,7 @@ function expiresLabel(s: ShareRow): string {
 .btn.copied:hover {
   background: var(--success);
   border-color: var(--success);
-  color: #fff;
+  color: var(--text-invert);
 }
 
 /* ── create section ── */

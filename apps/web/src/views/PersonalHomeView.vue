@@ -27,7 +27,7 @@ import type { DashboardPayload, PageNode, Space, SpaceRole } from '@power-wiki/s
  * SpaceMembersTab 对齐(role pill 配色一致),但只展示自己一行。
  *
  * **只展示 shared/team 空间** — personal 空间已经通过 cover 里的
- * 「进入个人空间 →」link 暴露,再列一份等于重复;section 的语义是
+ * 「查看我的草稿 →」入口体现,再列一份等于重复;section 的语义是
  * 「我在哪些团队空间、各自什么角色」,不是「我的全部空间」。
  *
  * 数据 0 改动:`GET /api/spaces` 已经给每条 space 注入 `viewerRole`
@@ -207,17 +207,12 @@ async function createPersonalPage(): Promise<void> {
   }
 }
 
-function goPersonalSpace(): void {
-  const space = personalSpace.value
-  if (!space) return
-  spacesStore.setActiveSpace(space.id)
-  if (router.currentRoute.value.path !== '/') {
-    void router.push('/')
-  }
+function goPersonalDrafts(): void {
+  document.getElementById('personal-drafts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 /* goToSpace — 「我的空间与角色」section 的进入按钮 handler。
- * 跟 goPersonalSpace 同形态(setActiveSpace + 跳 /),泛化到任意 space。
+ * 统一切换 active space 并回到空间首页,泛化到任意 space。
  * 不预加载 pages roots:`/` 路由的 SpaceHomeView 挂载时会自己拉,
  * 不需要 dashboard 路径额外触发一次请求(避免双跳抖动)。*/
 function goToSpace(space: Space): void {
@@ -322,10 +317,10 @@ function relativeTime(timestamp: number): string {
             v-if="personalSpace"
             type="button"
             class="profile-space-link"
-            @click="goPersonalSpace"
+            @click="goPersonalDrafts"
           >
             <span class="material-symbols-outlined">lock_person</span>
-            <span>进入个人空间 →</span>
+            <span>查看我的草稿 →</span>
           </button>
         </div>
       </header>
@@ -519,7 +514,7 @@ function relativeTime(timestamp: number): string {
              跟 .shared-spaces 区分(personal 空间色 + 锁形 icon,不是共享
              空间的有色 chip)。`@mouseenter="ensurePageLoaded"` 提前
              拉父链,让 PageTree 在 ReadView 落地时已就位。 -->
-        <section class="personal-section">
+        <section id="personal-drafts" class="personal-section personal-drafts-section">
           <header class="section-head">
             <h2 class="section-title">
               <span class="material-symbols-outlined section-icon personal-space-icon">lock_person</span>
@@ -662,12 +657,8 @@ function relativeTime(timestamp: number): string {
   line-height: 1.55;
 }
 
-/* 「进入个人空间 →」— cover 内的 inline link,把"工作台"跟"个人空间
- * 容器视图"两个产品连起来。视觉上做成 tertiary 链接(text-2 → accent
- * on hover),跟 .profile-summary 同字号但更轻量;cover 右上已经没有
- * 主 CTA,这个 link 是唯一的导航出口(从 /me 进 personal space 的入口),
- * 颜色比之前的 text-2 略深一点(text-2 → text-1 默认色)让链接可见度
- * 跟上提升。lock_person icon 跟 SpaceSwitcher 触发器徽章复用。*/
+/* 「查看我的草稿 →」— cover 内的 inline link,定位到下方个人草稿 section。
+ * 不再重复触发进入个人空间的 / 路由,让 cover 入口承担明确的内容导航。 */
 .profile-space-link {
   display: inline-flex;
   align-items: center;
@@ -687,6 +678,9 @@ function relativeTime(timestamp: number): string {
 .profile-space-link .material-symbols-outlined {
   font-size: 15px !important;
   color: inherit;
+}
+.personal-drafts-section {
+  scroll-margin-top: calc(var(--topbar-h) + var(--sub-h) + var(--space-4));
 }
 .personal-home-error {
   display: flex;

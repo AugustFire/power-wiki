@@ -161,7 +161,7 @@ watch(url, () => {
 .lp-btn:hover { background: var(--bg-subtle); }
 .lp-btn.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-invert);
   border-color: var(--accent);
 }
 .lp-btn.primary:hover { background: var(--accent-hover); }

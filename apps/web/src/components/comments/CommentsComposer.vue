@@ -188,7 +188,7 @@ function onCancel(): void {
 }
 .cc-submit {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-invert);
 }
 .cc-submit:hover:not([disabled]) {
   background: var(--accent-hover);

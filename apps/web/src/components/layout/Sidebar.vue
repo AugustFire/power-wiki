@@ -341,6 +341,7 @@ watch(
         label="此空间的页面"
         :count="activePageCount"
         :collapsed="pagesCollapsed"
+        :collapsible="tree.length > 0 || treeLoading"
         @toggle="togglePagesSection"
       />
       <template v-if="!pagesCollapsed">
@@ -542,11 +543,9 @@ watch(
 }
 
 .tree-empty {
-  /* EmptyState 自带 padding 28px 16px,挤压 row 视觉。P1-9 (sidebar polish)
-     收紧:EmptyState 内部 padding 改为 8px,左对齐 + icon 紧随其后,让
-     "还没有页面"跟 row 文字起点(X=20)对齐,跟 watched-empty
-     的 0 8px 同款节奏。 */
-  margin-top: 4px;
+  /* 4.8 — 空态紧贴 section header;EmptyState 自带的 8px 内间距已经
+     提供最小呼吸空间,不再额外制造一个看起来像空 block 的顶部断层。 */
+  margin-top: 0;
 }
 /* P1-9: 加载中分支 —— 跟 watched-empty 同款 28px / 12px / 0 8px / text-3,
    跟 row 文字起点对齐。 */

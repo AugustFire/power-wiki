@@ -251,7 +251,7 @@ function relTime(ts: number): string {
   padding: 0 4px;
   border-radius: 7px;
   background: var(--danger);
-  color: #fff;
+  color: var(--text-invert);
   font-size: 10px;
   font-weight: 700;
   line-height: 14px;
@@ -313,7 +313,7 @@ function relTime(ts: number): string {
 }
 .nd-tab.is-active .nd-tab-count {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-invert);
 }
 
 .nd-list {
@@ -357,7 +357,7 @@ function relTime(ts: number): string {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  color: #fff;
+  color: var(--text-invert);
   font-size: 13px;
   font-weight: 600;
   display: inline-flex;

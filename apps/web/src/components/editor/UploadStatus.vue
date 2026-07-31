@@ -234,7 +234,7 @@ const visible = computed(() => store.list.length > 0)
   white-space: nowrap;
 }
 .us-retry:hover {
-  background: #fff;
+  background: var(--bg);
 }
 .us-retry .material-symbols-outlined {
   font-size: 14px;

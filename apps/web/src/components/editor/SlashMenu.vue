@@ -1117,7 +1117,7 @@ function onAtPickerKey(e: KeyboardEvent) {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  color: #fff;
+  color: var(--text-invert);
   font-size: 11px;
   font-weight: 600;
   display: inline-flex;

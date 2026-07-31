@@ -116,7 +116,7 @@ watch(
   justify-content: center;
   background: rgba(255, 255, 255, 0.1);
   border: 0;
-  color: #fff;
+  color: var(--text-invert);
   border-radius: 50%;
   cursor: pointer;
   transition: background-color var(--duration-fast) ease;

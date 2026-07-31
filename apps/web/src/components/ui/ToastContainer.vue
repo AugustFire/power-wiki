@@ -189,7 +189,7 @@ function iconFor(kind: Toast['kind']): string {
   transition: background 80ms ease;
 }
 .toast-action:hover {
-  background: #fff;
+  background: var(--bg);
 }
 .toast-action:active {
   background: rgba(255, 255, 255, 0.7);

@@ -588,7 +588,7 @@ function onEditKeydown(ev: KeyboardEvent): void {
 }
 .ci-edit-save {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-invert);
 }
 .ci-edit-save:hover:not([disabled]) {
   background: var(--accent-hover);
