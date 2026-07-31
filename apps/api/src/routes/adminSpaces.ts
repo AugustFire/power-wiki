@@ -107,10 +107,20 @@ async function getAccessGroupIds(spaceId: string): Promise<string[]> {
   return rows.map((r) => r.groupId)
 }
 
-/** Count pages in a space — used by GET single + admin list. */
+/**
+ * Count **live** (non-trashed) pages in a space — used by DELETE guard.
+ *
+ * 口径必须跟 `Space.pageCount` (lib/spaceStats.ts,过滤器 `isNull(deletedAt)`)
+ * 对齐 —— 否则客户端显示「0 页」但 DELETE 返 409「还有 N 个页面」,管理员会
+ * 误判这是 bug 或后端隐藏了 trash 计数。前端 cache miss / 网络重试 / 用
+ * 旧 list 点删除都会触发。
+ *
+ * 保留 raw SQL 是因为这是单 cell COUNT,走 Drizzle builder 等价路径需要
+ * 引入 pages table import + isNull helper,收益抵不过改造面。
+ */
 async function countPagesInSpace(spaceId: string): Promise<number> {
   const result = await db.execute<{ count: number }>(
-    sql`SELECT COUNT(*)::int AS count FROM pages WHERE space_id = ${spaceId}`,
+    sql`SELECT COUNT(*)::int AS count FROM pages WHERE space_id = ${spaceId} AND deleted_at IS NULL`,
   )
   return result.rows[0]?.count ?? 0
 }

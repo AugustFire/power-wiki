@@ -576,11 +576,19 @@ function accessSummary(s: Space): AccessSummary {
             >
               <span class="material-symbols-outlined">unarchive</span>
             </button>
+            <!-- 删除 — pageCount > 0 时 client-side disable(server 也会 409
+                 兜底,见 adminSpaces.ts:302),tooltip 给出明确指引。归档空间
+                 仍允许删除(归档案本身是降级冗余态,无需强制 unarchive→delete
+                 两步);只是当 pageCount > 0 时同样 disable,因为空间里有活页
+                 就跟活跃空间一样需要先清理。 -->
             <button
               v-if="s.kind !== 'personal'"
               type="button"
               class="ra-btn ra-btn-danger"
-              title="删除"
+              :disabled="(s.pageCount ?? 0) > 0"
+              :title="(s.pageCount ?? 0) > 0
+                ? `还有 ${s.pageCount} 个页面,请先移走或删除`
+                : '删除空间'"
               @click.stop="onDelete(s)"
             >
               <span class="material-symbols-outlined">delete</span>
@@ -976,7 +984,23 @@ function accessSummary(s: Space): AccessSummary {
   justify-content: center;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.ra-btn:hover { background: var(--danger-soft); color: var(--danger); }
+/* 中性 hover — 归档/恢复走这条 */
+.ra-btn:hover { background: var(--bg-subtle); color: var(--text-2); }
+/* 危险 hover — 仅 delete 走这条(.ra-btn-danger)。原版本所有 .ra-btn 都
+   走 danger 色,把"归档"和"删除"的视觉权重拉平,导致归档看起来比实际更
+   危险。Modifier 把颜色绑到真正不可逆的动作上,跟 .btn.danger 的视觉
+   约定对齐。 */
+.ra-btn.ra-btn-danger:hover { background: var(--danger-soft); color: var(--danger); }
+/* disabled 状态 —— 不允许 hover 跳色、整按钮半透明、cursor 改 not-allowed,
+   跟 button reset 一致(:disabled 仍接收 :hover 事件,故需要 :hover override
+   一并覆盖回中性 — 否则 hover 仍会变红,但 click 已 dead,体验更糟)。 */
+.ra-btn:disabled,
+.ra-btn:disabled:hover {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-3);
+}
 .ra-btn .material-symbols-outlined { font-size: 18px; }
 /* 进入箭头 = 主操作入口,跟左侧管理按钮(归档/删除)分隔开。
    hover 时变 accent 色块,跟卡片整体 hover 联动。 */
