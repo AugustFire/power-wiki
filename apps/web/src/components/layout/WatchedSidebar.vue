@@ -122,14 +122,12 @@ function goPage(pageId: string) {
       label="此空间的关注"
       :count="hasItems ? items.length : null"
       :collapsed="collapsed"
+      :collapsible="hasItems"
       @toggle="toggle"
     />
 
-    <template v-if="expanded">
-      <div v-if="loading && !hasItems" class="watched-empty">加载中…</div>
-      <div v-else-if="!hasItems" class="watched-empty">暂无关注</div>
-
-      <div v-else class="watched-list">
+    <template v-if="expanded && hasItems">
+      <div class="watched-list">
         <button
           v-for="p in items"
           :key="p.id"
@@ -158,16 +156,11 @@ function goPage(pageId: string) {
 /* 标题栏样式全部搬进 SidebarSectionHeader.vue —— 两块 section 共用一份,
    不再在这里覆写 .sidebar-section-title。 */
 
-/* Empty state —— padding 0 8px 0 20px 让"暂无关注"跟 watched-row 文字
-   起点对齐(2026-07-29:跟 tree-row 缩进一起右移,确保 empty state 跟 row
-   同 X 起点)。 */
-.watched-empty {
-  min-height: 28px;
-  line-height: 28px;
-  padding: 0 8px 0 20px;
-  font-size: 12px;
-  color: var(--text-3);
-}
+/* 2026-07-30:空态不再渲染行 ——「此空间的关注」0 条时把 header 切到非
+   折叠态(div + 无 chevron),下面的 .watched-list 整个不挂载;用户看到
+   的就是「section 标题 + 紧贴下面的下一个 section」,没有「暂无关注」
+   占位行。空态本身留给用户「现在还没关注」的暗示是「没展开也没东西」,
+   比一行 placeholder 信息密度更高(没多余文字,空白本身就是信号)。 */
 
 .watched-list {
   display: flex;

@@ -15,17 +15,22 @@ defineProps<{
   label: string
   count?: number | null
   collapsed: boolean
+  /** 设为 false 时不渲染 chevron、不响应 click —— 用于「本 section 不可
+   *  折叠」的场景(目前是「此空间的关注」空态:0 条时既不能展开也
+   *  没有可看内容,chevron 留着只会让用户期望一个展开反馈)。 */
+  collapsible?: boolean
 }>()
 
-defineEmits<{ toggle: [] }>()
+const emit = defineEmits<{ toggle: [] }>()
 </script>
 
 <template>
-  <button
-    type="button"
+  <component
+    :is="collapsible === false ? 'div' : 'button'"
+    :type="collapsible === false ? undefined : 'button'"
     class="sidebar-section-title section-toggle"
-    :aria-expanded="!collapsed"
-    @click="$emit('toggle')"
+    :aria-expanded="collapsible === false ? undefined : !collapsed"
+    @click="collapsible === false ? undefined : emit('toggle')"
   >
     <span class="section-label">
       <span class="material-symbols-outlined section-icon">{{ icon }}</span>
@@ -33,10 +38,11 @@ defineEmits<{ toggle: [] }>()
       <span v-if="count != null" class="count">{{ count }}</span>
     </span>
     <span
+      v-if="collapsible !== false"
       class="material-symbols-outlined chevron"
       :class="{ 'chevron-collapsed': collapsed }"
     >expand_more</span>
-  </button>
+  </component>
 </template>
 
 <style scoped>
@@ -53,7 +59,12 @@ defineEmits<{ toggle: [] }>()
   color: inherit;
 }
 .section-toggle:hover {
-  /* 只加深底色,不升字色 —— label 的 hover 是「可点」提示,不是激活态。 */
+  /* 只在可折叠时加深底色 —— 非折叠态(div 渲染)不响应 hover,避免出现
+     「看着像可点,点又没反应」的悬停视觉。 */
+  cursor: pointer;
+  background: transparent;
+}
+button.section-toggle:hover {
   background: var(--bg-subtle);
 }
 .section-toggle .chevron {

@@ -152,9 +152,12 @@ function excerpt(html: string): string {
     </Breadcrumb>
     <!-- page-actions 同样 Teleport 到 #app-subheader,与面包屑并列渲染,
          视觉上「页面名/操作按钮」左右两段,顺序由 CSS .app-subheader-content
-         下 .breadcrumb/.page-actions 的 order 锁死(见 components.css)。 -->
+         下 .breadcrumb/.page-actions 的 order 锁死(见 components.css)。
+         空间为空时不显示,空状态的「创建第一个页面」已经承担了主 CTA 职责;
+         同时空(连首页空状态图都画好了)再叠一个 subheader 按钮会让用户
+         在两个「+」之间挑,视觉冗余。 -->
     <div class="page-actions">
-      <button v-if="canCreateInSpace" class="btn primary" @click="createRoot">
+      <button v-if="canCreateInSpace && rootPages.length > 0" class="btn primary" @click="createRoot">
         <span class="material-symbols-outlined icon-lg">add</span>
         新建页面
       </button>
