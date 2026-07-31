@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterView, useRoute } from 'vue-router'
 import TopBar from '@/components/layout/TopBar.vue'
@@ -28,6 +28,59 @@ const isManagerLayout = computed(() => route.meta.appLayout === 'manager')
 const isWideWorkspace = computed(() => route.meta.workspaceWidth === 'wide')
 const isFlushContent = computed(() => route.meta.contentMode === 'flush')
 const hasToc = computed(() => route.meta.hasToc === true)
+
+/* ─── 4.11 · Banner coordination ────────────────────────────────────
+ * 原版把 offline-banner + error-banner 放在 document flow 里(40 + 24 px),
+ * 当 banner 出现时把整页 main / subheader / sidebar 全部下推 —— subheader
+ * 的 `position: sticky; top: var(--topbar-h)` 在用户滚到顶部时就会把
+ * 自身从自然 document 位置(--topbar-h + 64px)拉到 --topbar-h 位置,
+ * 视觉上跟 banner 重叠。同时 sidebar 的 `top: calc(--topbar-h + --sub-h)`
+ * 也不包含 banner 高度,sticky 切换瞬间留 64px 空白。
+ *
+ * 修法:banner 改 `position: fixed; top: 0`,从 document flow 抽出来,
+ * viewport 顶部固定。TopBar / Subheader / Sidebar / TOC / Layout 高度
+ * 全部加 `var(--banner-h)`,通过 CSS 变量级联(写在 :root)统一管理。
+ * AppShell 监测哪个 banner 出现,测出真实渲染高度写到 CSS 变量上。
+ *
+ * 互斥(4.P2.f):offline 优先于 error。同一时刻最多一个 banner,
+ * 避免堆叠把 viewport 顶部压到 ~74px 影响阅读区。offline 出现时常伴随
+ * 上一次未消的错误,error 提示信息此刻相对冗余,offline 已是更准确
+ * 的根因。
+ */
+const activeBanner = ref<'offline' | 'error' | null>(null)
+const offlineBannerEl = ref<HTMLElement | null>(null)
+const errorBannerEl = ref<HTMLElement | null>(null)
+const bannerHeight = ref(0)
+
+function recomputeBanner() {
+  if (!isOnline.value) activeBanner.value = 'offline'
+  else if (error.value) activeBanner.value = 'error'
+  else activeBanner.value = null
+}
+
+async function measureBanner() {
+  await nextTick()
+  const el = activeBanner.value === 'offline' ? offlineBannerEl.value
+    : activeBanner.value === 'error' ? errorBannerEl.value
+    : null
+  bannerHeight.value = el ? el.offsetHeight : 0
+}
+
+function applyBannerHeightVar() {
+  document.documentElement.style.setProperty('--banner-h', `${bannerHeight.value}px`)
+}
+
+onMounted(() => {
+  recomputeBanner()
+  watch([isOnline, error], recomputeBanner, { immediate: false })
+  watch(activeBanner, measureBanner, { immediate: true, flush: 'post' })
+  watch(bannerHeight, applyBannerHeightVar, { immediate: true, flush: 'post' })
+})
+
+onBeforeUnmount(() => {
+  // 登出 / 切到登录路由时清理,避免下次挂载残留 64px 占位
+  document.documentElement.style.removeProperty('--banner-h')
+})
 
 /**
  * 拿到 <div id="app-right-rail"> 的 DOM 引用,provide 给所有需要 Teleport
@@ -65,12 +118,12 @@ provide<Ref<HTMLElement | null>>('appSubheader', subheaderEl)
   <div class="app-shell">
     <TopBar />
 
-    <div v-if="!isOnline" class="offline-banner" role="status">
+    <div v-if="activeBanner === 'offline'" ref="offlineBannerEl" class="offline-banner" role="status">
       <span class="material-symbols-outlined ob-icon">wifi_off</span>
       <span class="ob-text">网络连接已断开,正在等待恢复…</span>
     </div>
 
-    <div v-if="error" class="error-banner" role="alert">
+    <div v-else-if="activeBanner === 'error'" ref="errorBannerEl" class="error-banner" role="alert">
       <span class="material-symbols-outlined eb-icon">error</span>
       <span class="eb-text">{{ error }}</span>
       <button type="button" class="eb-close" title="关闭" @click="uiStore.clearError()">
@@ -183,6 +236,14 @@ provide<Ref<HTMLElement | null>>('appSubheader', subheaderEl)
   color: var(--warning-text);
   font-size: var(--text-sm, 13px);
   border-bottom: 1px solid var(--warning);
+  /* 4.11 — banner 改 fixed,viewport 顶部常驻。z-index 高于 TopBar
+     (100),让 network 状态始终压过 brand + 切换器;TopBar 自然下沉
+     到 banner 下边缘(--topbar-h + --banner-h)。 */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 110;
 }
 .offline-banner .ob-icon {
   font-size: 18px;
@@ -197,6 +258,13 @@ provide<Ref<HTMLElement | null>>('appSubheader', subheaderEl)
   color: var(--danger);
   font-size: 14px;
   border-bottom: 1px solid var(--danger);
+  /* 4.11 — 同 offline,banner 改 fixed 跟 TopBar 错层;互斥(4.P2.f)
+     保证同一时刻只有一个 banner 在位。 */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 110;
 }
 .eb-icon { font-size: 20px; flex-shrink: 0; }
 .eb-text { flex: 1; }

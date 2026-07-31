@@ -117,6 +117,11 @@
     --toc-w:        240px;
     --context-w:    320px;
     --content-max:  1100px;
+    /* 4.11 — banner 实际渲染高度(offline ≈ 36 / error ≈ 42 / 都关 0)。
+       AppShell 在 mount 时测出真实 offsetHeight 写到 :root style 上;
+       topbar / subheader / sidebar / toc / layout 全部用这个变量来
+       决定 sticky 偏移和 100vh 减量。默认 0 = 无 banner 状态。 */
+    --banner-h:     0px;
     --content-max-wide: 2400px;
 
     /* Code highlight — 配 --bg-code 深底,Material 暗主题调色板 */

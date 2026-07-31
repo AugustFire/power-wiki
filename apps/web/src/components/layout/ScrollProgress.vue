@@ -184,10 +184,11 @@ watch(
 .scroll-progress {
   position: fixed;
   /* 贴在 subheader 的下边框上(不再横在 viewport 最顶)。ReadView 里
-   * subheader sticky 在 top:var(--topbar-h)、高 var(--sub-h),其下边缘在
-   * topbar-h + sub-h 处。bar 2px 高,top 减 2px 让 bar 底边与 subheader
-   * 底边对齐 —— 阅读进度像是 subheader 的下边框在变色。 */
-  top: calc(var(--topbar-h) + var(--sub-h) - 2px);
+   * subheader sticky 在 top:calc(var(--topbar-h) + var(--banner-h)),
+   * 高 var(--sub-h),其下边缘在 topbar-h + sub-h + banner-h 处。bar
+   * 2px 高,top 减 2px 让 bar 底边与 subheader 底边对齐 —— 阅读进度
+   * 像是 subheader 的下边框在变色。 */
+  top: calc(var(--topbar-h) + var(--sub-h) + var(--banner-h) - 2px);
   left: 0;
   right: 0;
   height: 2px;

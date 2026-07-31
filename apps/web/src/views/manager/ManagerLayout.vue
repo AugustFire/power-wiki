@@ -106,7 +106,7 @@ const breadcrumbSegments = computed(() => {
  * content needs to be richer (PeopleContextPanel adds 最近登录 + 最近
  * 活动 to fill the space).
  */
-.manager-shell { min-height: calc(100vh - var(--topbar-h)); }
+.manager-shell { min-height: calc(100vh - var(--topbar-h) - var(--banner-h)); }
 
 .manager-grid {
   display: grid;
@@ -115,7 +115,10 @@ const breadcrumbSegments = computed(() => {
      `.content-inner` — i.e. the manager page's content area is the
      same width AND position as ReadView/EditView's content area. */
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--context-w);
-  height: calc(100vh - var(--topbar-h) - var(--sub-h));
+  /* 4.11 — 100vh 减项加 --banner-h,manager 路由也走 AppShell 的
+     banner;banner 出现时 grid 高度相应缩短,subnav / content /
+     right-context panel 不会延伸到 banner 下面。 */
+  height: calc(100vh - var(--topbar-h) - var(--sub-h) - var(--banner-h));
   background: var(--bg-canvas);
 }
 

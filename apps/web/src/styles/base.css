@@ -7,7 +7,9 @@
 
 html {
     scroll-behavior: smooth;
-    scroll-padding-top: calc(var(--topbar-h) + var(--sub-h) + 24px);
+    /* 4.11 — 锚点跳转时把目标行放在 (banner + topbar + subheader) 之下,
+       banner 出现时也能正确错开 banner 高度,不会被 banner 遮。 */
+    scroll-padding-top: calc(var(--topbar-h) + var(--sub-h) + var(--banner-h) + 24px);
 }
 
 body {

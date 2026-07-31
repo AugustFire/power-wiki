@@ -29,8 +29,11 @@
     grid-template-columns: 1fr 600px 1fr;
     align-items: center;
     padding: 0 20px;
+    /* 4.11 — top: var(--banner-h) 让 banner fixed 在 viewport 顶
+       0 时,TopBar 下移到 banner 下边缘(自然不重叠);banner 关闭
+       (--banner-h: 0)时 TopBar 回到 top: 0,行为完全等同修前。 */
     position: sticky;
-    top: 0;
+    top: var(--banner-h);
     z-index: 100;
     gap: 16px;
 }
@@ -119,8 +122,11 @@
     display: flex;
     align-items: center;
     padding: 0 24px;
+    /* 4.11 — sticky top 加 banner-h 变量;banner fixed 在 viewport
+       顶 0,TopBar 下移到 banner 下边缘,subheader 顺势下移到 TopBar
+       之下,banner / TopBar / Subheader 三段自然堆叠不重叠。 */
     position: sticky;
-    top: var(--topbar-h);
+    top: calc(var(--topbar-h) + var(--banner-h));
     z-index: 99;
 }
 .breadcrumb {
@@ -219,7 +225,11 @@
 .app-shell .layout {
     display: grid;
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
-    height: calc(100vh - var(--topbar-h) - var(--sub-h));
+    /* 4.11 — 100vh 减项加 --banner-h;banner 出现时整 grid 高度缩短
+       banner 高度,sidebar / toc / content 全部不会延伸到 banner 下面
+       (修前 grid 高度仍按 100vh - topbar - sub 算,banner 把 main
+       整体下推 64px 后 sidebar sticky 顶端突然多 64px 空白)。 */
+    height: calc(100vh - var(--topbar-h) - var(--sub-h) - var(--banner-h));
     /* TOC 折叠 —— 第三列 240→0 时整 grid 平滑过渡,避免内容列硬切。 */
     transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -280,9 +290,13 @@
        sticky 顶部区自身还有 padding: 4px 0 12px 做内间距,叠加后视觉
        密度仍正常。 */
     padding: 16px 12px;
+    /* 4.11 — sticky top / 高度加 --banner-h;banner fixed 在 viewport
+       顶 0 不会推动 main / sidebar 移动,但 sidebar 仍要知道 banner 占
+       了多少顶部空间 —— 否则 sticky 顶端会跟 banner 重叠 + 高度多算
+       64px 让 sidebar 延伸到 viewport 底部以下,出滚动条。 */
     position: sticky;
-    top: calc(var(--topbar-h) + var(--sub-h));
-    height: calc(100vh - var(--topbar-h) - var(--sub-h));
+    top: calc(var(--topbar-h) + var(--sub-h) + var(--banner-h));
+    height: calc(100vh - var(--topbar-h) - var(--sub-h) - var(--banner-h));
     overflow-y: auto;
 }
 
@@ -1131,9 +1145,10 @@
    ========================= */
 .toc-panel {
     padding: 32px 24px;
+    /* 4.11 — sticky top / 高度加 --banner-h(同 sidebar)。 */
     position: sticky;
-    top: calc(var(--topbar-h) + var(--sub-h));
-    height: calc(100vh - var(--topbar-h) - var(--sub-h));
+    top: calc(var(--topbar-h) + var(--sub-h) + var(--banner-h));
+    height: calc(100vh - var(--topbar-h) - var(--sub-h) - var(--banner-h));
     overflow-y: auto;
     /* 跟左侧 sidebar 同色(--bg-sidebar),让左右两栏视觉对齐、主体内容列
      * 居中凸出在 --bg-canvas 上。原本跟 body(--bg-canvas)同色时,TOC 与
@@ -1287,7 +1302,7 @@
     justify-content: center;
     padding: 96px 32px;
     text-align: center;
-    min-height: calc(100vh - var(--topbar-h) - var(--sub-h));
+    min-height: calc(100vh - var(--topbar-h) - var(--sub-h) - var(--banner-h));
 }
 .empty-icon {
     width: 80px; height: 80px;
