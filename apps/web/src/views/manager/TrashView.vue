@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * TrashView — Stage 5d.
  *
@@ -13,6 +13,7 @@
  * + table is the action surface.
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { debounce } from '@/lib/debounce'
 import { api, ApiError } from '@/lib/api'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -181,8 +182,10 @@ async function ensureAllUsersLoaded() {
 // — the onMounted hook below then re-picks the first shared space, and
 // the watch fires AGAIN. That's 2 redundant /api/pages/trash calls.
 // Instead: loadTrash runs only from onMounted + kindTab/space-id watchers.
+// P1-15 · loadTrash 现在透传 trashFilterParams(search / filter / sort);
+// 未改动时 = 全空对象 ≡ 不过滤(服务端 router 把空 q / undefined 视为不过滤)。
 async function loadTrashFor(id: string) {
-  if (id) await pagesStore.loadTrash(id)
+  if (id) await pagesStore.loadTrash(id, trashFilterParams.value)
 }
 
 onMounted(async () => {
@@ -214,45 +217,75 @@ watch(kindTab, () => {
 })
 
 watch(selectedSpaceId, (id) => {
-  // Skip the initial fire — onMounted already loaded trash for whatever
-  // selectedSpaceId resolved to. Subsequent changes (tab switch, user
-  // picker change) DO trigger reload.
-  if (id) void loadTrashFor(id)
+  // P1-15 · 切空间时清空选中 + 透传 filter 给后端(loadTrashFor
+  // 现在内部用 trashFilterParams,filter 由 watch search/dele/sort
+  // 别的 watch 触发,不需要每次重传)。
+  if (id) {
+    clearSelection()
+    void pagesStore.loadTrash(id, trashFilterParams.value)
+  }
 })
 
 /* ─── Filtered + sorted view of the store's trashed list ─── */
-const rows = computed(() => {
-  const all = pagesStore.trashed
-  const q = searchText.value.trim().toLowerCase()
-  const filtered = all.filter((p) => {
-    if (q && !(p.title || '').toLowerCase().includes(q)) return false
-    if (deletedByFilter.value === 'unknown') {
-      if (p.deletedBy != null) return false
-    } else if (deletedByFilter.value !== 'all') {
-      if (p.deletedBy !== deletedByFilter.value) return false
-    }
-    return true
-  })
-  const sorted = [...filtered]
-  switch (sortKey.value) {
-    case 'newest':
-      sorted.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
-      break
-    case 'oldest':
-      sorted.sort((a, b) => (a.deletedAt ?? 0) - (b.deletedAt ?? 0))
-      break
-    case 'title-asc':
-      sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-CN'))
-      break
-    case 'title-desc':
-      sorted.sort((a, b) => (b.title || '').localeCompare(a.title || '', 'zh-CN'))
-      break
+const rows = computed(() => pagesStore.trashed)
+/* P1-15 · 服务端化筛选 + 批量操作。rows 直接是 store.trashed
+ * (跟 store source of truth 同源),`pagesStore.trashTotal` 是
+ * 筛后总行数,`selectedIds` 跨页持续(切页 / 刷新清空)。
+ * searchText / deletedBy / sortKey 改动 → debouncedReloadTrash
+ * 250ms 后重新拉第一页。*/
+const totalTrash = computed(() => pagesStore.trashTotal || rows.value.length)
+const selectedIds = ref<Set<string>>(new Set())
+const batchBusy = ref(false)
+const selectedCount = computed(() => selectedIds.value.size)
+const allOnPageSelected = computed(() =>
+  rows.value.length > 0 && rows.value.every((r) => selectedIds.value.has(r.id)),
+)
+const someOnPageSelected = computed(() =>
+  rows.value.length > 0 && rows.value.some((r) => selectedIds.value.has(r.id)),
+)
+function toggleSelected(id: string): void {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+function toggleSelectAll(): void {
+  const next = new Set(selectedIds.value)
+  const ids = rows.value.map((r) => r.id)
+  const allSelected = ids.every((id) => next.has(id))
+  if (allSelected) {
+    for (const id of ids) next.delete(id)
+  } else {
+    for (const id of ids) next.add(id)
   }
-  return sorted
+  selectedIds.value = next
+}
+function clearSelection(): void {
+  selectedIds.value = new Set()
+}
+const trashFilterParams = computed(() => {
+  const sk = sortKey.value
+  const sb: 'deletedAt' | 'title' =
+    sk === 'title-asc' || sk === 'title-desc' ? 'title' : 'deletedAt'
+  const di: 'asc' | 'desc' =
+    sk === 'oldest' || sk === 'title-asc' ? 'asc' : 'desc'
+  return {
+    q: searchText.value.trim() || undefined,
+    deletedBy: deletedByFilter.value === 'all' ? undefined : deletedByFilter.value,
+    sortBy: sb,
+    dir: di,
+  }
+})
+const debouncedReloadTrash = debounce(() => {
+  if (!selectedSpaceId.value) return
+  void pagesStore.loadTrash(selectedSpaceId.value, trashFilterParams.value)
+}, 250)
+watch(searchText, () => debouncedReloadTrash())
+watch([deletedByFilter, sortKey], () => {
+  if (!selectedSpaceId.value) return
+  void pagesStore.loadTrash(selectedSpaceId.value, trashFilterParams.value)
 })
 
-/* Row-level busy state. A row is busy if it has a pending restore/purge
-   request in flight (so we can disable the buttons + dim the row). */
 function parentRow(node: { parentId: string | null }) {
   if (!node.parentId) return null
   return rows.value.find((row) => row.id === node.parentId) ?? pagesStore.getPage(node.parentId) ?? null
@@ -313,6 +346,98 @@ async function onPurge(id: string, title: string) {
     const after = new Set(busy.value)
     after.delete(id)
     busy.value = after
+  }
+}
+
+/* ─── P1-15 · 批量恢复 / 批量永久删除 ──────────────────────────────
+ * 没有 bulk 端点(避免后端事务化复杂度 + N 节点删除原子性边界 case)——
+ * 沿用单点 API,但在小批次内并发执行:
+ *   - restore:每页 / 每行的恢复都是独立 200/parent_trashed 响应,
+ *     Promise.allSettled 拿全部结果,failures 收集弹 toast。
+ *   - purge:循环调用 pagesStore.purgePage(id),admin 已确认意图
+ *     (用 confirm-dialog 集中确认),不再单条 confirm。
+ *
+ * 进度反馈:batchBusy 锁 UI,batchProgress 走 toast 文本(进/总)。
+ * 选中跨页持续,所以「选 N 个删 M 个」是分页敏感——只要后端真删了
+ * 前端本地 set 自然清理已删 ids(通过 pagesStore trash 列表刷新)。*/
+async function batchRestore(): Promise<void> {
+  if (selectedCount.value === 0 || batchBusy.value) return
+  batchBusy.value = true
+  const ids = [...selectedIds.value]
+  let ok = 0, fail = 0
+  const failedIds: string[] = []
+  // 串行:parent_trashed(409) 错乱序并发会互相阻塞;串行保证依赖链稳定。
+  for (const id of ids) {
+    try {
+      await pagesStore.restorePage(id)
+      ok++
+      const next = new Set(selectedIds.value)
+      next.delete(id)
+      selectedIds.value = next
+    } catch (e) {
+      fail++
+      failedIds.push(id)
+      const msg = e instanceof ApiError && e.code === 'parent_trashed'
+        ? '父页面尚未恢复'
+        : e instanceof Error ? e.message : '操作失败'
+      console.warn(`[trash] batch restore ${id} failed: ${msg}`)
+    }
+  }
+  batchBusy.value = false
+  uiStore.notify(
+    fail === 0
+      ? `已批量恢复 ${ok} 个页面`
+      : `批量恢复完成:${ok} 成功 / ${fail} 失败(可能是父级未恢复)`,
+  )
+  // 成功后 reload 一次拉最新服务端状态(rows 跟 trashTotal)
+  if (selectedSpaceId.value) {
+    await pagesStore.loadTrash(selectedSpaceId.value, trashFilterParams.value)
+  }
+}
+
+async function batchPurge(): Promise<void> {
+  if (selectedCount.value === 0 || batchBusy.value) return
+  // 列出可能受影响的范围:选中 ids + 它们的子页(被 purge 时一并消失)。
+  // 实际上子页不会出现在 trash 视图(只显示顶层),所以用户视角只有 N 个。
+  // 这里只警告「不可恢复」就够,具体 scope 由后端实际清扫面积决定。
+  const ok = await confirm({
+    title: `永久删除 ${selectedCount.value} 个页面?`,
+    message: '此操作不可恢复,将从数据库中物理删除这些页面及其所有已删除的子页面。',
+    details: [
+      '页面版本、标签、限制、分享、评论和附件关联会一并清理。',
+      '选中项之间互相独立的子级(若有)也会一起删除。',
+    ],
+    requireText: selectedCount.value > 1 ? '确认删除' : undefined,
+    confirmText: `永久删除 ${selectedCount.value} 个`,
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok) return
+  batchBusy.value = true
+  const ids = [...selectedIds.value]
+  let okCount = 0, failCount = 0
+  // 串行同样 — 减少行锁 + 后端 cascade 顺序错乱
+  for (const id of ids) {
+    try {
+      await pagesStore.purgePage(id)
+      okCount++
+      const next = new Set(selectedIds.value)
+      next.delete(id)
+      selectedIds.value = next
+    } catch (e) {
+      failCount++
+      const msg = e instanceof Error ? e.message : '操作失败'
+      console.warn(`[trash] batch purge ${id} failed: ${msg}`)
+    }
+  }
+  batchBusy.value = false
+  uiStore.notify(
+    failCount === 0
+      ? `已批量永久删除 ${okCount} 个页面`
+      : `批量删除完成:${okCount} 成功 / ${failCount} 失败`,
+  )
+  if (selectedSpaceId.value) {
+    await pagesStore.loadTrash(selectedSpaceId.value, trashFilterParams.value)
   }
 }
 </script>
@@ -481,6 +606,17 @@ async function onPurge(id: string, title: string) {
     <table v-else class="trash-table">
       <thead>
         <tr>
+          <th class="col-check">
+            <label class="trash-check">
+              <input
+                type="checkbox"
+                :checked="allOnPageSelected"
+                :indeterminate.prop="someOnPageSelected && !allOnPageSelected"
+                :disabled="rows.length === 0"
+                @change="toggleSelectAll"
+              />
+            </label>
+          </th>
           <th class="col-title">页面</th>
           <th class="col-by">删除者</th>
           <th class="col-when">删除时间</th>
@@ -491,8 +627,18 @@ async function onPurge(id: string, title: string) {
         <tr
           v-for="row in rows"
           :key="row.id"
-          :class="{ busy: busy.has(row.id) }"
+          :class="{ busy: busy.has(row.id), selected: selectedIds.has(row.id) }"
         >
+          <td class="col-check">
+            <label class="trash-check">
+              <input
+                type="checkbox"
+                :checked="selectedIds.has(row.id)"
+                :disabled="batchBusy"
+                @change="toggleSelected(row.id)"
+              />
+            </label>
+          </td>
           <td class="col-title">
             <div class="title-cell">
               <span class="material-symbols-outlined doc-icon" style="font-size:18px">description</span>
@@ -515,7 +661,7 @@ async function onPurge(id: string, title: string) {
           <td class="col-actions">
             <button
               class="row-btn restore"
-              :disabled="busy.has(row.id) || parentIsTrashed(row)"
+              :disabled="busy.has(row.id) || parentIsTrashed(row) || batchBusy"
               :title="parentIsTrashed(row) ? '请先恢复父级' : '恢复到原位置'"
               @click="onRestore(row.id)"
             >
@@ -524,7 +670,7 @@ async function onPurge(id: string, title: string) {
             </button>
             <button
               class="row-btn danger"
-              :disabled="busy.has(row.id)"
+              :disabled="busy.has(row.id) || batchBusy"
               title="永久删除(不可恢复)"
               @click="onPurge(row.id, row.title)"
             >
@@ -536,18 +682,60 @@ async function onPurge(id: string, title: string) {
       </tbody>
     </table>
 
-    <div v-if="rows.length > 0" class="load-more-row">
+    <!-- P1-15 · 选中计数 + 「加载更多」footer。counter 用 pagesStore.trashTotal
+         (服务端筛后总行数),不再是「rows.length」(loaded only)。
+         「加载更多」仍在(append,跟服务端的 cursor 一致,选中的 ids
+         跨页持续 —— 选中一条「首页父级」、一条「已加载到第 3 页」是合法 UX)。-->
+    <div v-if="rows.length > 0 || totalTrash > 0" class="load-more-row">
+      <span class="trash-counter">
+        显示 <strong>{{ rows.length }}</strong> / 共 <strong>{{ totalTrash }}</strong> 项
+      </span>
       <button
         v-if="pagesStore.trashHasMore"
         type="button"
         class="btn ghost load-more-btn"
         :disabled="pagesStore.trashLoadingMore"
-        @click="pagesStore.loadMoreTrash(selectedSpaceId)"
+        @click="pagesStore.loadMoreTrash(selectedSpaceId, trashFilterParams)"
       >
         {{ pagesStore.trashLoadingMore ? '加载中…' : '加载更多' }}
       </button>
       <div v-else class="load-more-end">— 已加载全部 —</div>
     </div>
+
+    <!-- P1-15 · batch action bar — fixed 底部,只在有选中时出现。
+         选中 N 个 + 列表交互无冲突:单独行的恢复 / 永久删除按钮
+         仍可用,这里只处理选中整批的快捷路径。整批恢复 / 删除 用
+         confirm dialog 二次确认(批量永久删除 requireText='确认删除'
+         强校验),防止误触。-->
+    <Transition name="batchbar">
+      <div v-if="selectedCount > 0" class="trash-batchbar" role="region" aria-label="批量操作">
+        <div class="trash-batchbar-info">
+          <span class="material-symbols-outlined">check_box</span>
+          <span>已选 <strong>{{ selectedCount }}</strong> 项</span>
+          <button type="button" class="trash-batchbar-clear" @click="clearSelection">清空选择</button>
+        </div>
+        <div class="trash-batchbar-actions">
+          <button
+            type="button"
+            class="row-btn restore"
+            :disabled="batchBusy"
+            @click="batchRestore"
+          >
+            <span class="material-symbols-outlined icon-sm">restore</span>
+            批量恢复 ({{ selectedCount }})
+          </button>
+          <button
+            type="button"
+            class="row-btn danger"
+            :disabled="batchBusy"
+            @click="batchPurge"
+          >
+            <span class="material-symbols-outlined icon-sm">delete_forever</span>
+            批量永久删除
+          </button>
+        </div>
+      </div>
+    </Transition>
     </div>
   </div>
 </template>
@@ -824,7 +1012,7 @@ async function onPurge(id: string, title: string) {
 .ret-save.is-saved {
   /* 已保存短暂确认色 — 用 Atlassian 绿,跟「创建」chip 同色,
      跟蓝主按钮拉开,减少「成功 vs 蓝主按钮」混淆 */
-  background: #36B37E;
+  background: var(--success);
 }
 .ret-save.is-saved:hover:not(:disabled) { filter: brightness(0.95); }
 .ret-save .icon-sm.is-loading {
@@ -851,11 +1039,63 @@ async function onPurge(id: string, title: string) {
 }
 .trash-table tr:last-child td { border-bottom: none; }
 .trash-table tr.busy { opacity: 0.6; }
+/* P1-15 · 选中行视觉 —— 跟原 Atlassian admin 表格「选中态」一致:
+ * accent-soft 浅蓝底 + 左侧 2px accent 竖线 + 表内全部 *-check checkbox
+ * 维持 accent 主色。hover 在选中行也覆盖默认底色,防止 hover 看起来像
+ * 取消选中(tr.tbody tr:hover:bg 太朴素)。*/
+.trash-table tr.selected {
+  background: var(--accent-soft);
+}
+.trash-table tr.selected:hover { background: var(--accent-soft); }
+.trash-table tr.selected td.col-check { position: relative; }
+.trash-table tr.selected td.col-check::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+/* P1-15 · checkbox 列 —— 32px 定宽,vertical center,跟后面 col-title
+ * 共享同一基线。checkbox 14×14 比 nav checkbox 略小,跟表格行高匹配。*/
+.col-check {
+  width: 32px;
+  text-align: center;
+  vertical-align: middle;
+  padding-left: 12px !important;
+  padding-right: 0 !important;
+}
+.trash-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.trash-check input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 .col-title { width: auto; }
 .col-by { width: 200px; color: var(--text-2); }
 .col-when { width: 160px; color: var(--text-2); }
 .col-actions { width: 200px; text-align: right; white-space: nowrap; }
+
+/* P1-15 · counter + load more footer —— counter 显示「已加载 X / 共 N」,
+ * 用 server 真实筛后总行数;load more 仍可点,append 后 counter 立即刷新
+ * (pagesStore.trashed 长度变化自动触发)。*/
+.trash-counter {
+  font-size: 13px;
+  color: var(--text-3);
+}
+.trash-counter strong {
+  color: var(--text-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 
 .title-cell {
   display: flex;
@@ -925,5 +1165,86 @@ async function onPurge(id: string, title: string) {
   font-size: 12px;
   color: var(--text-3);
   padding: 24px 0 8px;
+}
+
+/* P1-15 · batch action bar —— fixed 底部,sticky 在 footer 上方,
+ * 用 accent 半透明背景 + elevation shadow 显式「次要但即时」权重。
+ * 选中 N 项时滑入(Transition),无选中时折叠恢复视区,
+ * 不浪费空间。 2 个按钮复用已有 .row-btn 视觉(只是行级用),
+ * 这里 size 略放大到 28px 让底部动作更可见。*/
+.trash-batchbar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  margin: 16px 24px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 8px 24px rgba(9, 30, 66, 0.18);
+  font-size: 13px;
+  color: var(--text-1);
+}
+.trash-batchbar-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.trash-batchbar-info .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--accent);
+}
+.trash-batchbar-info strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.trash-batchbar-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 3px);
+  transition: color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+.trash-batchbar-clear:hover {
+  color: var(--text-1);
+  background: var(--bg-subtle);
+}
+.trash-batchbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.trash-batchbar-actions .row-btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* batchbar Transition — 滑入 + 淡入,跟 Vue 默认 .<name>-enter / -leave-to
+ * 规则对齐。*/
+.batchbar-enter-active,
+.batchbar-leave-active {
+  transition: transform 180ms var(--ease-out, ease),
+    opacity 180ms var(--ease-out, ease);
+}
+.batchbar-enter-from,
+.batchbar-leave-to {
+  transform: translateY(8px);
+  opacity: 0;
+}
+.batchbar-enter-to,
+.batchbar-leave-from {
+  transform: translateY(0);
+  opacity: 1;
 }
 </style>

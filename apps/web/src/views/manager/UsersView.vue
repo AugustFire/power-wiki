@@ -40,6 +40,19 @@ const {
   clearUserFilters,
   ensureUsersLoaded,
   upsertUser,
+  /* P1-13 · 分页状态 + 动作 —— 从 composable 暴露的派生 computed
+   * 直接消费。currentPage 是 1-based 显示值,totalPages 是页码上
+   * 限。goToPageUsers 接收 1-based UI 输入,内部 floor-convert。*/
+  usersCurrentPage,
+  usersTotalPages,
+  usersPageSize,
+  usersPageStart,
+  usersPageEnd,
+  usersHasPrevPage,
+  usersHasNextPage,
+  nextPageUsers,
+  prevPageUsers,
+  goToPageUsers,
 } = useManagerStats()
 
 const loadError = ref<string | null>(null)
@@ -243,6 +256,34 @@ function statusLabel(s: User['status']): { text: string; tone: 'good' | 'warn' |
 
 function roleLabel(r: User['role']): string {
   return r === 'admin' ? '管理员' : '普通用户'
+}
+
+/* P1-13 · 跳页输入框 —— 受控字符串 + Enter 提交,避免每次按数字
+ * 都触发 goToPageUsers(连续按 1 + 2 + 3 只想跳到 123,不是先 1 再 12
+ * 再 123)。失焦时如果 value 跟 currentPage 一致就不动,否则兜底
+ * 提交。校验:输入必须是 1..totalPages 整数,否则回写合法值。*/
+const jumpPageInput = ref('')
+watch(usersCurrentPage, (page) => {
+  /* 服务端响应回填:如果 input 失焦时仍为空 / 跟当前不一致,
+   * 把合法值塞回去。watch 是 lazy flush,所以用户输入期间不闪烁。*/
+  if (document.activeElement !== document.getElementById('uv-jump-page')) {
+    jumpPageInput.value = String(page)
+  }
+}, { immediate: true })
+function submitJumpPage(): void {
+  const trimmed = jumpPageInput.value.trim()
+  const target = Number.parseInt(trimmed, 10)
+  if (!Number.isFinite(target)) {
+    jumpPageInput.value = String(usersCurrentPage.value)
+    return
+  }
+  const clamped = Math.max(1, Math.min(target, usersTotalPages.value))
+  if (clamped !== target) {
+    jumpPageInput.value = String(clamped)
+  }
+  if (clamped !== usersCurrentPage.value) {
+    void goToPageUsers(clamped)
+  }
 }
 </script>
 
@@ -472,6 +513,60 @@ function roleLabel(r: User['role']): string {
         </tr>
       </tbody>
     </table>
+
+    <!-- P1-13 · 分页 footer —— table 下方独立一行。左侧 counter(显
+         示区间 + 总数;空状态写「—」、loading 写「加载中…」),中部跳页
+         input + 总页数,右侧 prev / next 两个 icon button。整块视觉重
+         量轻于 table row(14px 文本、text-3 底色),不抢表头。
+         hasMore 不再用 —— 改用 totalPages 派生。v-if users.length 让
+         「当前页没数据」也展示出来给管理员「哦,翻过头了」反馈。-->
+    <div v-if="usersTotal > 0 || usersLoading" class="users-pagination">
+      <div class="users-pagination-counter">
+        <template v-if="usersLoading && users.length === 0">
+          加载中…
+        </template>
+        <template v-else-if="usersTotal === 0">
+          共 0 条
+        </template>
+        <template v-else>
+          显示 <strong>{{ usersPageStart }}-{{ usersPageEnd }}</strong>
+          · 共 <strong>{{ usersTotal }}</strong> 条
+        </template>
+      </div>
+
+      <div class="users-pagination-jump">
+        <button
+          type="button"
+          class="pag-btn"
+          :disabled="!usersHasPrevPage || usersLoading"
+          title="上一页"
+          @click="prevPageUsers"
+        >
+          <span class="material-symbols-outlined">chevron_left</span>
+        </button>
+        <label class="pag-jump">
+          第 <input
+            id="uv-jump-page"
+            v-model="jumpPageInput"
+            type="text"
+            inputmode="numeric"
+            class="pag-jump-input"
+            :disabled="usersLoading"
+            @keydown.enter="submitJumpPage"
+            @blur="submitJumpPage"
+          /> 页 · 共 <strong>{{ usersTotalPages }}</strong> 页
+        </label>
+        <button
+          type="button"
+          class="pag-btn"
+          :disabled="!usersHasNextPage || usersLoading"
+          title="下一页"
+          @click="nextPageUsers"
+        >
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>
+    </div>
     </div>
     <div v-else-if="!hasActiveFilter() && !usersLoading" class="uv-empty">还没有用户。</div>
     <EmptyState
@@ -837,4 +932,95 @@ function roleLabel(r: User['role']): string {
 }
 .clear-filters:hover { background: var(--bg-subtle); color: var(--text-1); }
 .clear-filters .material-symbols-outlined { font-size: var(--icon-md, 16px); }
+
+/* ─── P1-13 · 分页 footer ──────────────────────────────────────────
+ * 视觉节奏:跟 table 平接,border-top 跟上方 thead 同 1px,内 padding
+ * 12 / 16 跟 td 一致,让视觉是「table 的延伸」而非额外控件区。布局
+ * flex space-between:左 counter,右 jump + prev / next。loading
+ * 态 counter 写「加载中…」,hover/focus 样式跟现有 ra-btn 同款。
+ * 「第 N 页」input 是 controlled string(不是 number),允许用户临时清
+ * 空后重新填,Enter / blur 才 commit。*/
+.users-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-canvas);
+  font-size: 13px;
+  color: var(--text-2);
+}
+.users-pagination-counter strong,
+.users-pagination-jump strong {
+  color: var(--text-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.users-pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pag-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--bg);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.pag-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+  color: var(--text-1);
+}
+.pag-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pag-btn .material-symbols-outlined {
+  font-size: 18px !important;
+  line-height: 1;
+}
+.pag-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+.pag-jump-input {
+  width: 44px;
+  height: 28px;
+  padding: 0 6px;
+  text-align: center;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+.pag-jump-input:hover { border-color: var(--border-strong); }
+.pag-jump-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.pag-jump-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 </style>

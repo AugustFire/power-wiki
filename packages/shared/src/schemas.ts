@@ -958,13 +958,16 @@ export const PaginatedQuerySchema = z.object({
   kind: z.enum(['shared', 'personal']).optional(),
 })
 
-/** 列表端点的统一响应包装。`limit`/`offset` 是实际生效值(无参 = items.length / 0)。 */
+/** 列表端点的统一响应包装。`limit`/`offset` 是实际生效值(无参 = items.length / 0)。
+ *  `total` 可选:P1-15 起 admin endpoints (groups/trash) 让后端返总行
+ *  数,UI 用作分页 footer 「共 N 项」。老接口不返 = undefined 客户端 fallback 到 items.length。*/
 export const PaginatedListSchema = <T extends z.ZodTypeAny>(item: T) =>
   z.object({
     items: z.array(item),
     limit: z.number(),
     offset: z.number(),
     hasMore: z.boolean(),
+    total: z.number().int().nonnegative().optional(),
   })
 
 /** Admin spaces list totals by the two tabs shown in SpacesView. */
@@ -1043,6 +1046,17 @@ export const AdminUsersListResponseSchema = z.object({
   systemStats: UserSystemStatsSchema,
 })
 
+/** P1-15 · 用户组 list 响应 —— 复用 PaginatedListSchema 加 `total` 一档,
+ * 让分页 footer 显示「共 N 项」(无 systemStats 维度,group 不像 user
+ * 有那么多 status / role 枚举需要 system-wide 概览)。 */
+export const AdminGroupsListResponseSchema = z.object({
+  items: z.array(UserGroupSchema),
+  limit: z.number(),
+  offset: z.number(),
+  hasMore: z.boolean(),
+  total: z.number().int().nonnegative(),
+})
+
 /* ---------- 类型推导(对外的 TS 类型) ---------- */
 
 export type PageNodeFromSchema = z.infer<typeof PageNodeSchema>
@@ -1053,7 +1067,15 @@ export type SpaceFromSchema = z.infer<typeof SpaceSchema>
 export type PaginatedQuery = z.infer<typeof PaginatedQuerySchema>
 export type ImportPageInput = z.infer<typeof ImportPageInputSchema>
 export type ImportPageResult = z.infer<typeof ImportPageResultSchema>
-export type Paginated<T> = { items: T[]; limit: number; offset: number; hasMore: boolean }
+export type Paginated<T> = {
+  items: T[]
+  limit: number
+  offset: number
+  hasMore: boolean
+  /** P1-15 · 可选「筛后总行数」—— 部分 admin 端点(groups / pages-trash)
+   * 会返 `total`,UI 用来「共 N 项」分页 footer。多数 list 端点不返 = undefined。 */
+  total?: number
+}
 export type CreatePageInput = z.infer<typeof CreatePageInputSchema>
 export type UpdatePageInput = z.infer<typeof UpdatePageInputSchema>
 export type MovePageInput = z.infer<typeof MovePageInputSchema>
@@ -1088,6 +1110,24 @@ export type SpaceGrants = z.infer<typeof SpaceGrantsSchema>
 export type SetSpacePermissionsInput = z.infer<typeof SetSpacePermissionsInputSchema>
 export type UpsertGroupGrantInput = z.infer<typeof UpsertGroupGrantInputSchema>
 export type UpsertUserGrantInput = z.infer<typeof UpsertUserGrantInputSchema>
+
+/** P1-14 · 用户在某 space 上的授权来源 —— 服务端推导,drive 用户详情
+ *  页直接展示「为什么这个人能访问这个空间」。kind 决定视觉路径:
+ *   - direct:个人直接授权 → 来源 chip 写「直接授权」 + 跳 SpaceMembersTab
+ *   - group:通过用户组 → 来源 chip 写组名 + 跳 GroupEditView
+ *   - legacy_group:同 group,但走旧 space_group_access 行(role 锁定 editor)
+ *   - owner:personal space sentinel —— 不进入任何 grant chain
+ *
+ *  role 字段对 owner 永远 'admin',legacy_group 永远 'editor',direct / group
+ *  走 grants 表的精确值。前端显示优先级:rank 从高到低,role 不变时多
+ *  source 同框展示。*/
+export const SpaceAccessSourceSchema = z.object({
+  kind: z.enum(['direct', 'group', 'legacy_group', 'owner']),
+  role: SpaceRoleSchema,
+  groupId: z.string().min(1).optional(),
+  groupName: z.string().optional(),
+})
+export type SpaceAccessSource = z.infer<typeof SpaceAccessSourceSchema>
 
 // Phase B — page-level restrictions
 export type PageRestrictionKind = z.infer<typeof PageRestrictionKindSchema>

@@ -241,6 +241,42 @@ const sharedSpacesRows = computed<Space[]>(() => {
   return [...active, ...archived]
 })
 
+/* ─── P1-9 · PersonalHomeView 折叠 / 分组 ─────────────────────────────
+ * 6 个 section 拆成 2 组 —— 「主」(always-visible,默认展开)与「次级」
+ * (折叠收起的低优先级信息)。复用 Sidebar.vue 已用的 uiStore 折叠设施
+ * (KEY 在 localStorage 持久化),跨刷新记得住。
+ *
+ * 默认态:
+ *   - 主:提到我 / 我在个人空间起草的 / 我关注的页面
+ *         这 3 块是用户今天最该看的内容(待办 / 草稿 / 关注更新)。
+ *         defaultCollapsed = false(展开)。
+ *   - 次级:共享空间与角色 / 我创建的 / 最近访问
+ *         这些偏身份/浏览信息,需要时点开看;常驻展开抢视觉。
+ *         defaultCollapsed = true(折叠)。
+ *
+ * key 命名:`ph-` 前缀避免与 Sidebar section 撞 KEY_SIDEBAR_SECTIONS
+ * 命名空间(uiStore 里只有一份 map,但 key 全局唯一即可,前缀是排错
+ * 时的可读性,不是隔离机制)。*/
+const SECTION_MENTIONS = 'ph-mentions'
+const SECTION_DRAFTS = 'ph-drafts'
+const SECTION_WATCHED = 'ph-watched'
+const SECTION_SHARED = 'ph-shared'
+const SECTION_CREATED = 'ph-created'
+const SECTION_RECENT = 'ph-recent'
+/* P1-9 · 次级分组的整体折叠态 —— 在「今天该看」三块下面,
+ * 点 `浏览与身份` 整块收起的对象。3 个子 section 各自还独立可折叠,
+ * 这个只负责最外层一键展开/收起,跟 sidebar 「此空间的页面」的
+ * group / item 二级折叠同构。*/
+const SECTION_GROUP_SECONDARY = 'ph-group-secondary'
+
+const mentionsCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_MENTIONS, false))
+const draftsCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_DRAFTS, false))
+const watchedCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_WATCHED, false))
+const sharedCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_SHARED, true))
+const createdCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_CREATED, true))
+const recentCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_RECENT, true))
+const secondaryCollapsed = computed(() => uiStore.isSectionCollapsed(SECTION_GROUP_SECONDARY, true))
+
 const isAdminUser = computed(() => auth.user?.role === 'admin')
 
 /* section meta 文案:普通用户「共 N 个」足够;admin 多挂一段「已归档 M 个」,
@@ -332,15 +368,217 @@ function relativeTime(timestamp: number): string {
       </div>
 
       <div class="personal-sections">
-        <section class="personal-section shared-spaces-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon">workspaces</span>
-              共享空间与角色
-            </h2>
-            <span class="section-meta">{{ sharedSpacesMeta }}</span>
-          </header>
-          <ul v-if="sharedSpacesRows.length > 0" class="ms-list">
+        <!-- P1-9 · 主分组:今天该看 —— @提到我 / 我的草稿 / 我关注的变化。
+             三块都默认展开,是用户进来个人首页最先想看的内容。次级分组
+             (共享空间 / 我创建的 / 最近访问)收在下面一个「浏览与身份」
+             折叠块里,默认折叠。 -->
+        <div class="personal-group personal-group-primary">
+          <div class="personal-group-label">
+            <span class="material-symbols-outlined">priority_high</span>
+            <span>今天该看</span>
+          </div>
+
+          <section class="personal-section">
+            <header class="section-head section-toggle-row">
+              <button
+                type="button"
+                class="section-toggle"
+                :aria-expanded="!mentionsCollapsed"
+                @click="uiStore.toggleSection(SECTION_MENTIONS, false)"
+              >
+                <h2 class="section-title">
+                  <span class="material-symbols-outlined section-icon mention-icon">alternate_email</span>
+                  @提到我
+                </h2>
+                <span class="section-meta">{{ payload?.mentions.length ?? 0 }} 条未读</span>
+                <span
+                  class="material-symbols-outlined section-chevron"
+                  :class="{ 'chevron-collapsed': mentionsCollapsed }"
+                >expand_more</span>
+              </button>
+            </header>
+            <div v-show="!mentionsCollapsed" class="section-body">
+              <div v-if="loading && !payload" class="section-loading">
+                <div v-for="index in 3" :key="index" class="row-skeleton">
+                  <Skeleton circle :width="32" :height="32" />
+                  <div class="row-skeleton-text">
+                    <Skeleton :width="`${55 + index * 7}%`" :height="14" />
+                    <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+                  </div>
+                </div>
+              </div>
+              <ul v-else-if="hasMentions" class="section-list">
+                <li v-for="notification in payload!.mentions" :key="notification.id">
+                  <DashboardCard
+                    variant="mention"
+                    :notification="notification"
+                    @open-mention="(pageId, commentId) => openMention(pageId, commentId)"
+                  />
+                </li>
+              </ul>
+              <EmptyState
+                v-else
+                icon="forum"
+                title="没有被 @ 提到"
+                hint="有人在评论里 @ 你时会出现在这里。"
+                size="sm"
+              />
+            </div>
+          </section>
+
+          <section id="personal-drafts" class="personal-section personal-drafts-section">
+            <header class="section-head section-toggle-row">
+              <button
+                type="button"
+                class="section-toggle"
+                :aria-expanded="!draftsCollapsed"
+                @click="uiStore.toggleSection(SECTION_DRAFTS, false)"
+              >
+                <h2 class="section-title">
+                  <span class="material-symbols-outlined section-icon personal-space-icon">lock_person</span>
+                  我的草稿
+                </h2>
+                <span class="section-meta">最近 {{ payload?.personalSpace.length ?? 0 }} 个</span>
+                <span
+                  class="material-symbols-outlined section-chevron"
+                  :class="{ 'chevron-collapsed': draftsCollapsed }"
+                >expand_more</span>
+              </button>
+            </header>
+            <div v-show="!draftsCollapsed" class="section-body">
+              <div v-if="loading && !payload" class="section-loading">
+                <div v-for="index in 3" :key="index" class="row-skeleton">
+                  <Skeleton :width="32" :height="32" />
+                  <div class="row-skeleton-text">
+                    <Skeleton :width="`${50 + index * 7}%`" :height="14" />
+                    <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+                  </div>
+                </div>
+              </div>
+              <ul v-else-if="hasPersonalSpace" class="section-list">
+                <li
+                  v-for="page in payload!.personalSpace"
+                  :key="page.id"
+                  @mouseenter="ensurePageLoaded(page)"
+                >
+                  <DashboardCard
+                    variant="page"
+                    :page="page"
+                    :space-name="personalSpaceName"
+                    :space-color="personalSpaceColor"
+                    space-kind="personal"
+                    @open-page="openPage"
+                  />
+                </li>
+              </ul>
+              <EmptyState
+                v-else
+                icon="lock_person"
+                title="还没有个人草稿"
+                hint="在个人空间写点东西,会按更新时间出现在这里。"
+                size="sm"
+              />
+            </div>
+          </section>
+
+          <section class="personal-section">
+            <header class="section-head section-toggle-row">
+              <button
+                type="button"
+                class="section-toggle"
+                :aria-expanded="!watchedCollapsed"
+                @click="uiStore.toggleSection(SECTION_WATCHED, false)"
+              >
+                <h2 class="section-title">
+                  <span class="material-symbols-outlined section-icon watched-icon">notifications_active</span>
+                  我关注的变化
+                </h2>
+                <span class="section-meta">最近 {{ watchedPages.length }} 个</span>
+                <span
+                  class="material-symbols-outlined section-chevron"
+                  :class="{ 'chevron-collapsed': watchedCollapsed }"
+                >expand_more</span>
+              </button>
+            </header>
+            <div v-show="!watchedCollapsed" class="section-body">
+              <div v-if="loading && !payload" class="section-loading">
+                <div v-for="index in 3" :key="index" class="row-skeleton">
+                  <Skeleton circle :width="32" :height="32" />
+                  <div class="row-skeleton-text">
+                    <Skeleton :width="`${50 + index * 7}%`" :height="14" />
+                    <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+                  </div>
+                </div>
+              </div>
+              <ul v-else-if="hasWatched" class="section-list">
+                <li
+                  v-for="page in watchedPages"
+                  :key="page.id"
+                  @mouseenter="ensurePageLoaded(page)"
+                >
+                  <DashboardCard
+                    variant="page"
+                    :page="page"
+                    :space-name="describeSpace(page.spaceId).name"
+                    :space-color="describeSpace(page.spaceId).color"
+                    :space-kind="describeSpace(page.spaceId).kind"
+                    @open-page="openPage"
+                  />
+                </li>
+              </ul>
+              <EmptyState
+                v-else
+                icon="notifications_off"
+                title="还没有关注任何页面"
+                hint="打开任一页,点顶栏的「铃铛」按钮,会出现在这里。"
+                size="sm"
+              />
+            </div>
+          </section>
+        </div>
+
+        <!-- P1-9 · 次级分组:身份 / 浏览信息,默认折叠。常驻展开会跟
+             主分组三块争视觉;点开后才看到 3 个 2 列网格子卡片。 -->
+        <div class="personal-group personal-group-secondary">
+          <button
+            type="button"
+            class="personal-group-toggle"
+            :aria-expanded="!secondaryCollapsed"
+            @click="uiStore.toggleSection(SECTION_GROUP_SECONDARY, true)"
+          >
+            <span class="personal-group-toggle-label">
+              <span class="material-symbols-outlined">workspaces</span>
+              <span>浏览与身份</span>
+            </span>
+            <span class="personal-group-toggle-meta">3 项</span>
+            <span
+              class="material-symbols-outlined section-chevron"
+              :class="{ 'chevron-collapsed': secondaryCollapsed }"
+            >expand_more</span>
+          </button>
+
+          <div v-show="!secondaryCollapsed" class="personal-sections-secondary">
+            <section class="personal-section shared-spaces-section">
+              <header class="section-head section-toggle-row">
+                <button
+                  type="button"
+                  class="section-toggle"
+                  :aria-expanded="!sharedCollapsed"
+                  @click="uiStore.toggleSection(SECTION_SHARED, true)"
+                >
+                  <h2 class="section-title">
+                    <span class="material-symbols-outlined section-icon">workspaces</span>
+                    共享空间与角色
+                  </h2>
+                  <span class="section-meta">{{ sharedSpacesMeta }}</span>
+                  <span
+                    class="material-symbols-outlined section-chevron"
+                    :class="{ 'chevron-collapsed': sharedCollapsed }"
+                  >expand_more</span>
+                </button>
+              </header>
+              <div v-show="!sharedCollapsed" class="section-body">
+                <ul v-if="sharedSpacesRows.length > 0" class="ms-list">
             <li
               v-for="space in sharedSpacesRows"
               :key="space.id"
@@ -386,224 +624,116 @@ function relativeTime(timestamp: number): string {
             hint="联系管理员把你加入团队空间,就可以在这里看到自己的角色。"
             size="sm"
           />
-        </section>
-
-        <section class="personal-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon mention-icon">alternate_email</span>
-              @提到我
-            </h2>
-            <span class="section-meta">{{ payload?.mentions.length ?? 0 }} 条未读</span>
-          </header>
-          <div v-if="loading && !payload" class="section-loading">
-            <div v-for="index in 3" :key="index" class="row-skeleton">
-              <Skeleton circle :width="32" :height="32" />
-              <div class="row-skeleton-text">
-                <Skeleton :width="`${55 + index * 7}%`" :height="14" />
-                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
               </div>
-            </div>
-          </div>
-          <ul v-else-if="hasMentions" class="section-list">
-            <li v-for="notification in payload!.mentions" :key="notification.id">
-              <DashboardCard
-                variant="mention"
-                :notification="notification"
-                @open-mention="(pageId, commentId) => openMention(pageId, commentId)"
-              />
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="forum"
-            title="没有被 @ 提到"
-            hint="有人在评论里 @ 你时会出现在这里。"
-            size="sm"
-          />
-        </section>
+            </section>
 
-        <section class="personal-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon">edit_note</span>
-              我创建的
-            </h2>
-            <span class="section-meta">最近 {{ payload?.created.length ?? 0 }} 个</span>
-          </header>
-          <div v-if="loading && !payload" class="section-loading">
-            <div v-for="index in 3" :key="index" class="row-skeleton">
-              <Skeleton :width="32" :height="32" />
-              <div class="row-skeleton-text">
-                <Skeleton :width="`${50 + index * 7}%`" :height="14" />
-                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
-              </div>
-            </div>
-          </div>
-          <ul v-else-if="hasCreated" class="section-list">
-            <li
-              v-for="page in payload!.created"
-              :key="page.id"
-              @mouseenter="ensurePageLoaded(page)"
-            >
-              <DashboardCard
-                variant="page"
-                :page="page"
-                :space-name="describeSpace(page.spaceId).name"
-                :space-color="describeSpace(page.spaceId).color"
-                :space-kind="describeSpace(page.spaceId).kind"
-                @open-page="openPage"
-              />
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="article"
-            title="还没有创建过页面"
-            hint="去任意空间创建你的第一页,会出现在这里。"
-            size="sm"
-          />
-        </section>
-
-        <section class="personal-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon">history</span>
-              最近访问
-            </h2>
-            <span class="section-meta">{{ recentItems.length }} 个</span>
-          </header>
-          <ul v-if="recentItems.length > 0" class="stored-list">
-            <li v-for="item in recentItems" :key="item.id">
-              <button
-                type="button"
-                class="stored-row"
-                :class="{ 'stored-row-dead': !item.alive }"
-                :disabled="!item.alive"
-                @click="openStoredPage(item)"
-              >
-                <!-- 用空间头像替代通用 history icon —— 让「最近访问」跟
-                  「我创建的」section 的有色 page icon 视觉对齐,同时给
-                  用户空间归属感。空间已删 / page 是 dead row 时 fallback
-                  回 history icon(灰色)。-->
-                <SpaceAvatar
-                  v-if="recentSpaceById(item.spaceId)"
-                  :space="recentSpaceById(item.spaceId)"
-                  :size="20"
-                  class="stored-avatar"
+            <section class="personal-section">
+              <header class="section-head section-toggle-row">
+                <button
+                  type="button"
+                  class="section-toggle"
+                  :aria-expanded="!createdCollapsed"
+                  @click="uiStore.toggleSection(SECTION_CREATED, true)"
+                >
+                  <h2 class="section-title">
+                    <span class="material-symbols-outlined section-icon">edit_note</span>
+                    我创建的
+                  </h2>
+                  <span class="section-meta">最近 {{ payload?.created.length ?? 0 }} 个</span>
+                  <span
+                    class="material-symbols-outlined section-chevron"
+                    :class="{ 'chevron-collapsed': createdCollapsed }"
+                  >expand_more</span>
+                </button>
+              </header>
+              <div v-show="!createdCollapsed" class="section-body">
+                <div v-if="loading && !payload" class="section-loading">
+                  <div v-for="index in 3" :key="index" class="row-skeleton">
+                    <Skeleton :width="32" :height="32" />
+                    <div class="row-skeleton-text">
+                      <Skeleton :width="`${50 + index * 7}%`" :height="14" />
+                      <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+                    </div>
+                  </div>
+                </div>
+                <ul v-else-if="hasCreated" class="section-list">
+                  <li
+                    v-for="page in payload!.created"
+                    :key="page.id"
+                    @mouseenter="ensurePageLoaded(page)"
+                  >
+                    <DashboardCard
+                      variant="page"
+                      :page="page"
+                      :space-name="describeSpace(page.spaceId).name"
+                      :space-color="describeSpace(page.spaceId).color"
+                      :space-kind="describeSpace(page.spaceId).kind"
+                      @open-page="openPage"
+                    />
+                  </li>
+                </ul>
+                <EmptyState
+                  v-else
+                  icon="article"
+                  title="还没有创建过页面"
+                  hint="去任意空间创建你的第一页,会出现在这里。"
+                  size="sm"
                 />
-                <span v-else class="material-symbols-outlined stored-icon">history</span>
-                <span class="stored-title">{{ item.title }}</span>
-                <span class="stored-meta">{{ relativeTime(item.timestamp) }}</span>
-              </button>
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="history"
-            title="暂无最近访问"
-            hint="打开过的页面会按访问时间显示在这里。"
-            size="sm"
-          />
-        </section>
-
-        <!-- ─── 5.1 P0 · personalSpace section ───────────────────────
-             渲染 payload.personalSpace(用户在自己个人空间里的最近编辑
-             页面,updatedAt DESC)。所有 row 都来自用户的同一个 personal
-             space,所以 spaceName 固定是「个人空间」+ 用户空间色,row 视觉
-             跟 .shared-spaces 区分(personal 空间色 + 锁形 icon,不是共享
-             空间的有色 chip)。`@mouseenter="ensurePageLoaded"` 提前
-             拉父链,让 PageTree 在 ReadView 落地时已就位。 -->
-        <section id="personal-drafts" class="personal-section personal-drafts-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon personal-space-icon">lock_person</span>
-              我在个人空间起草的
-            </h2>
-            <span class="section-meta">最近 {{ payload?.personalSpace.length ?? 0 }} 个</span>
-          </header>
-          <div v-if="loading && !payload" class="section-loading">
-            <div v-for="index in 3" :key="index" class="row-skeleton">
-              <Skeleton :width="32" :height="32" />
-              <div class="row-skeleton-text">
-                <Skeleton :width="`${50 + index * 7}%`" :height="14" />
-                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
               </div>
-            </div>
-          </div>
-          <ul v-else-if="hasPersonalSpace" class="section-list">
-            <li
-              v-for="page in payload!.personalSpace"
-              :key="page.id"
-              @mouseenter="ensurePageLoaded(page)"
-            >
-              <DashboardCard
-                variant="page"
-                :page="page"
-                :space-name="personalSpaceName"
-                :space-color="personalSpaceColor"
-                space-kind="personal"
-                @open-page="openPage"
-              />
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="lock_person"
-            title="还没有个人草稿"
-            hint="在个人空间写点东西,会按更新时间出现在这里。"
-            size="sm"
-          />
-        </section>
+            </section>
 
-        <!-- ─── 5.1 P0 · watched section ───────────────────────────
-             渲染 payload.watched(用户关注页的最新编辑,按 updatedAt DESC
-             —— 已在 script 端 client-side 重排,见 watchedPages)。
-             row 跟 created 一样跨空间(space chip 跟每个 page 走),
-             唯一差别是 hover 进 row 时 DashboardCard 自动用 chevron_right
-             暗示「点开看」。EmptyState 文案明确告诉用户「关注按钮在
-             ReadView 顶栏」,让首次用户找到入口。 -->
-        <section class="personal-section">
-          <header class="section-head">
-            <h2 class="section-title">
-              <span class="material-symbols-outlined section-icon watched-icon">notifications_active</span>
-              我关注的页面
-            </h2>
-            <span class="section-meta">最近 {{ watchedPages.length }} 个</span>
-          </header>
-          <div v-if="loading && !payload" class="section-loading">
-            <div v-for="index in 3" :key="index" class="row-skeleton">
-              <Skeleton :width="32" :height="32" />
-              <div class="row-skeleton-text">
-                <Skeleton :width="`${50 + index * 7}%`" :height="14" />
-                <Skeleton :width="`${30 + index * 5}%`" :height="11" />
+            <section class="personal-section">
+              <header class="section-head section-toggle-row">
+                <button
+                  type="button"
+                  class="section-toggle"
+                  :aria-expanded="!recentCollapsed"
+                  @click="uiStore.toggleSection(SECTION_RECENT, true)"
+                >
+                  <h2 class="section-title">
+                    <span class="material-symbols-outlined section-icon">history</span>
+                    最近访问
+                  </h2>
+                  <span class="section-meta">{{ recentItems.length }} 个</span>
+                  <span
+                    class="material-symbols-outlined section-chevron"
+                    :class="{ 'chevron-collapsed': recentCollapsed }"
+                  >expand_more</span>
+                </button>
+              </header>
+              <div v-show="!recentCollapsed" class="section-body">
+                <ul v-if="recentItems.length > 0" class="stored-list">
+                  <li v-for="item in recentItems" :key="item.id">
+                    <button
+                      type="button"
+                      class="stored-row"
+                      :class="{ 'stored-row-dead': !item.alive }"
+                      :disabled="!item.alive"
+                      @click="openStoredPage(item)"
+                    >
+                      <SpaceAvatar
+                        v-if="recentSpaceById(item.spaceId)"
+                        :space="recentSpaceById(item.spaceId)"
+                        :size="20"
+                        class="stored-avatar"
+                      />
+                      <span v-else class="material-symbols-outlined stored-icon">history</span>
+                      <span class="stored-title">{{ item.title }}</span>
+                      <span class="stored-meta">{{ relativeTime(item.timestamp) }}</span>
+                    </button>
+                  </li>
+                </ul>
+                <EmptyState
+                  v-else
+                  icon="history"
+                  title="暂无最近访问"
+                  hint="打开过的页面会按访问时间显示在这里。"
+                  size="sm"
+                />
               </div>
-            </div>
+            </section>
           </div>
-          <ul v-else-if="hasWatched" class="section-list">
-            <li
-              v-for="page in watchedPages"
-              :key="page.id"
-              @mouseenter="ensurePageLoaded(page)"
-            >
-              <DashboardCard
-                variant="page"
-                :page="page"
-                :space-name="describeSpace(page.spaceId).name"
-                :space-color="describeSpace(page.spaceId).color"
-                :space-kind="describeSpace(page.spaceId).kind"
-                @open-page="openPage"
-              />
-            </li>
-          </ul>
-          <EmptyState
-            v-else
-            icon="notifications_off"
-            title="还没有关注任何页面"
-            hint="打开任一页,点顶栏的「铃铛」按钮,会出现在这里。"
-            size="sm"
-          />
-        </section>
+        </div>
       </div>
     </div>
   </div>
@@ -827,6 +957,144 @@ function relativeTime(timestamp: number): string {
   color: var(--text-3);
   font-size: 12px;
 }
+
+/* ─── P1-9 · PersonalHomeView 分组 + 折叠 ────────────────────────────
+ * 把原 6 个 section 拆成 2 个 .personal-group:
+ *   - personal-group-primary:"今天该看" — 3 个 section 单列全宽,常驻展开。
+ *   - personal-group-secondary:"浏览与身份" — 3 个 section 2 列子网
+ *     格,外层一键折叠。
+ *
+ * 主分组单列而不是 2 列,是因为「今天该看」的 row 含 DashboardCard
+ * (variant=mention,含未读 chip + 时间线),跨 2 列会被切成两半;
+ * 居中长 list 体验也更好。次级分组 task 是「要不要点开看一眼」,信
+ * 息密度高,2 列更紧凑。
+ */
+.personal-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.personal-group-primary {
+  grid-column: 1 / -1;
+}
+.personal-group-secondary {
+  /* 占 2 列网格里的整行,里面用 .personal-sections-secondary 子网格
+   * 再拆成 2 列,跟原 2 列布局视觉同款。grid-column: 1/-1 让
+   * .personal-sections 父容器始终把 secondary group 排到下一行。*/
+  grid-column: 1 / -1;
+}
+.personal-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.personal-group-label .material-symbols-outlined {
+  font-size: 16px !important;
+  color: var(--accent);
+}
+
+/* 次级分组折叠按钮 —— 跟 sidebar section header 同款结构:icon + 文
+ * 字 + meta 靠左,chevron 贴右。一键展开/收起整组,默认折叠。视觉跟
+ * 主分组的 section 卡片边框/底色区分:无边框,只是带分组说明 + chevron
+ * 的 row,跟下面的卡片留出明确层次。*/
+.personal-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+.personal-group-toggle:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+.personal-group-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.personal-group-toggle-label .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--text-2);
+}
+.personal-group-toggle-meta {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.personal-group-secondary > .personal-group-toggle .section-chevron {
+  margin-left: 4px;
+}
+
+/* 次级分组展开后的子网格 —— 跟原 .personal-sections 视觉一致
+ * (2 列 + 16-24px gap),只是去掉了第一行的对齐要求。*/
+.personal-sections-secondary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+/* section-toggle-row —— header 行变 button 让整行可点:chevron 在
+ * 末尾,默认 0°(展开)→ 折叠时 -90°,跟 SidebarSectionHeader 同款。*/
+.section-toggle-row { padding: 0; border-bottom: 1px solid var(--border); }
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 16px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.section-toggle:hover { background: var(--bg-subtle); }
+.section-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.section-toggle .section-title {
+  flex: 1;
+  min-width: 0;
+}
+.section-chevron {
+  flex-shrink: 0;
+  font-size: 18px !important;
+  color: var(--text-3);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.section-chevron.chevron-collapsed { transform: rotate(-90deg); }
+
+/* section-body —— 折叠切换真正控制渲染对象。v-show 是 hide-only,
+ * 不销毁 v-if 下的 children,避免每次展开重新跑 DashboardCard
+ * 的 mount 逻辑。空 padding 让 .personal-section 边框保持原视觉
+ * (row 内容贴着 section 底边时 border 不会凸显)。*/
+.section-body { padding: 0; }
 
 /* ─── 模块 1 P1 · 共享空间与角色 ─────────────────────────────────────
  * section 复用 .personal-section 卡片样式(统一边框 / 阴影 / hover 行为),

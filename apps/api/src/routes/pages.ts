@@ -418,14 +418,64 @@ pagesRouter.get('/trash', async (c) => {
   const parsed = safeParsePagination(c)
   if (!parsed.ok) return parsed.response
   const { limit, offset } = parsed.args
-  let q = selectPagesWithAuthor(
-    and(eq(pages.spaceId, querySpace), isNotNull(pages.deletedAt)),
-    { includeDeleted: true, viewerUserId: me.id },
-  ).orderBy(sql`${pages.deletedAt} DESC`).$dynamic()
+
+  // P1-15 · 服务端筛选 + 排序 + 计数 — 此前只支持 space + 全量 + 创建时间 DESC,
+  //   searchBy q / 删除者 / sortBy title 都是客户端过滤(未加载的不参与,大
+  //   数据下失真)。三项都下沉到 WHERE / ORDER BY。
+  const qText = c.req.query('q')?.trim() || ''
+  const deletedByRaw = c.req.query('deletedBy')?.trim() || ''
+  const sortRaw = c.req.query('sortBy')?.toString()
+  const dirRaw = c.req.query('dir')?.toString()
+  const dir: 'asc' | 'desc' = dirRaw === 'asc' ? 'asc' : 'desc'
+
+  const conds = [eq(pages.spaceId, querySpace), isNotNull(pages.deletedAt)]
+  if (qText) {
+    // title 子串匹配。空 title (未命名页) 也会命中 q=未命名 —— 用
+    // COALESCE 让 NULL 视作空串即可。
+    const pattern = `%${qText}%`
+    conds.push(sql`COALESCE(${pages.title}, '') ILIKE ${pattern}`)
+  }
+  if (deletedByRaw) {
+    if (deletedByRaw === 'unknown') {
+      conds.push(isNull(pages.deletedBy))
+    } else {
+      conds.push(eq(pages.deletedBy, deletedByRaw))
+    }
+  }
+  const whereClause = and(...conds)
+
+  // sortBy: deletedAt | title;默认 deletedAt DESC(用户最关心最近被删的)。
+  const dirSql = sql.raw(dir === 'asc' ? 'ASC' : 'DESC')
+  let orderSql: SQL
+  switch (sortRaw) {
+    case 'title':
+      orderSql = sql`COALESCE(${pages.title}, '') ${dirSql}, ${pages.deletedAt} DESC`
+      break
+    case 'deletedAt':
+    default:
+      orderSql = sql`${pages.deletedAt} ${dirSql}`
+      break
+  }
+
+  let q = selectPagesWithAuthor(whereClause, {
+    includeDeleted: true,
+    viewerUserId: me.id,
+  })
+    .orderBy(orderSql)
+    .$dynamic()
   if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
   const rows = await q
   const result = applyPagination(rows.map(rowToPageNode), limit, offset)
-  return c.json(PaginatedListSchema(PageNodeSchema).parse(result))
+
+  // Total — 不分页,只是筛后总数,UI 用来「找到 N 项」。运行一次 COUNT(*)。
+  const totalRow = await db
+    .select({ n: sql<number>`COUNT(*)::int` })
+    .from(pages)
+    .where(whereClause)
+  const total = totalRow[0]?.n ?? 0
+  return c.json(
+    PaginatedListSchema(PageNodeSchema).parse({ ...result, total }),
+  )
 })
 
 /* ─── GET /api/pages/:id ──────────────────────────────────────────────

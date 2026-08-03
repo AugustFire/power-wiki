@@ -47,6 +47,9 @@ export const usePagesStore = defineStore('pages', () => {
   const trashOffset = ref(0)
   const trashHasMore = ref(false)
   const trashLoadingMore = ref(false)
+  /* P1-15 · 服务端筛选后总行数;无 server total = items.length(容错)。
+   * 配合 trashHasMore 算分页 footer 「共 N 项」。*/
+  const trashTotal = ref(0)
   /**
    * B.3: true while a full `loadTrash` round-trip is in flight (drives the
    * refresh button's disabled + spinning state and the top progress bar).
@@ -129,6 +132,8 @@ export const usePagesStore = defineStore('pages', () => {
   }
 
   function reset(): void {
+    trashTotal.value = 0
+
     pages.value = []
     trashed.value = []
     loaded.value = false
@@ -802,16 +807,31 @@ export const usePagesStore = defineStore('pages', () => {
    * Stage 5 / B.1: load trashed pages for the active space. Called by
    * TrashView on mount + when switching spaces. Resets pagination state.
    * `loadMoreTrash(spaceId)` appends the next batch via the same API.
+   *
+   * P1-15 · filter 参数透传到后端;`total`(筛后总行数)同步写入
+   * trashTotal。客户端不再做 title / deletedBy 二次过滤,避免「未
+   * 加载页 = 失配」的隐性 UI 误导。
    */
-  async function loadTrash(spaceId: string): Promise<void> {
+  async function loadTrash(
+    spaceId: string,
+    filter?: { q?: string; deletedBy?: string; sortBy?: 'deletedAt' | 'title'; dir?: 'asc' | 'desc' },
+  ): Promise<void> {
     trashLoading.value = true
     trashOffset.value = 0
     trashHasMore.value = false
     try {
-      const { items, hasMore } = await api.pages.trash.list(spaceId, { limit: TRASH_PAGE_SIZE, offset: 0 })
+      const { items, hasMore, total } = await api.pages.trash.list(spaceId, {
+        limit: TRASH_PAGE_SIZE,
+        offset: 0,
+        q: filter?.q,
+        deletedBy: filter?.deletedBy,
+        sortBy: filter?.sortBy,
+        dir: filter?.dir,
+      })
       trashed.value = items
       trashOffset.value = items.length
       trashHasMore.value = hasMore
+      trashTotal.value = total ?? items.length
       trashLoaded.value = true
     } catch (e) {
       ui().setError(`加载回收站失败: ${errorMessage(e)}`)
@@ -823,18 +843,29 @@ export const usePagesStore = defineStore('pages', () => {
   /**
    * B.1: append the next page of trashed pages to the existing list. No-op
    * while a previous load is in flight, or once the server reports no more.
-   */
-  async function loadMoreTrash(spaceId: string): Promise<void> {
+   * P1-15:服务端 filter 已经稳态,append 时只透传 limit/offset;每
+   * 次 append 后 total 保持(等于首次返回)。如果用户在「加载更多」
+   * 期间改了 filter,watch 会重置回第一页触发 loadTrash,append 路径
+   * 自然被打断。*/
+  async function loadMoreTrash(
+    spaceId: string,
+    filter?: { q?: string; deletedBy?: string; sortBy?: 'deletedAt' | 'title'; dir?: 'asc' | 'desc' },
+  ): Promise<void> {
     if (trashLoadingMore.value || !trashHasMore.value) return
     trashLoadingMore.value = true
     try {
-      const { items, hasMore } = await api.pages.trash.list(spaceId, {
+      const { items, hasMore, total } = await api.pages.trash.list(spaceId, {
         limit: TRASH_PAGE_SIZE,
         offset: trashOffset.value,
+        q: filter?.q,
+        deletedBy: filter?.deletedBy,
+        sortBy: filter?.sortBy,
+        dir: filter?.dir,
       })
       trashed.value.push(...items)
       trashOffset.value += items.length
       trashHasMore.value = hasMore
+      if (typeof total === 'number') trashTotal.value = total
     } catch (e) {
       ui().setError(`加载更多回收站失败: ${errorMessage(e)}`)
     } finally {
@@ -1381,6 +1412,7 @@ export const usePagesStore = defineStore('pages', () => {
     trashLoaded,
     trashOffset,
     trashHasMore,
+    trashTotal,
     trashLoadingMore,
     trashLoading,
     tree,

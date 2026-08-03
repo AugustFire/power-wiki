@@ -40,6 +40,7 @@ import {
   AdminUsersListQuerySchema,
   AdminUsersListResponseSchema,
   CreateUserInputSchema,
+  SpaceAccessSourceSchema,
   UpdateUserInputSchema,
   UserSchema,
   UserSummarySchema,
@@ -66,7 +67,11 @@ import { rowToUser } from '../lib/rowMappers'
 import { generatePageId } from '../lib/ids'
 import { ensurePersonalSpace, personalGroupId } from '../lib/ensurePersonalSpace'
 import { recordPermissionAudit } from '../lib/auditLog'
-import { getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
+import {
+  getEffectiveSpaceRolesForUser,
+  getSpaceAccessSourcesForUser,
+  principalFromUser,
+} from '../lib/permissions'
 
 /** Anonymized display name — shown in JOIN fallbacks everywhere authorship
  *  displays. Keep stable: UI strings / snapshots / tests reference this. */
@@ -231,6 +236,12 @@ adminUsersRouter.get('/', async (c) => {
 // Membership summary for the user detail page. Shared spaces use the same
 // effective direct/group grant calculation as the permissions UI; personal
 // space is included only when owned by the target user.
+//
+// P1-14:每条 space 现在返回 `sources` —— 该用户在该空间上的授权来源
+// (direct grant / group:{groupId,name} / legacy_group:{groupId,name} / owner)。
+// 让 admin 在用户详情页一眼看到「为什么这个人能进 X 空间」,
+// 而不必跳到 SpaceMembersTab 反查。effective role 仍是 sources.role 的
+// max(同 lib/permissions.effectiveSpaceRole 行为)。
 adminUsersRouter.get('/:id/spaces', async (c) => {
   const id = c.req.param('id')
   const target = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0]
@@ -241,10 +252,18 @@ adminUsersRouter.get('/:id/spaces', async (c) => {
     .from(spaces)
     .where(eq(spaces.kind, 'shared'))
     .orderBy(asc(spaces.name))
-  const roles = await getEffectiveSpaceRolesForUser(principalFromUser(target), shared.map((s) => s.id))
+  const sharedIds = shared.map((s) => s.id)
+  const roles = await getEffectiveSpaceRolesForUser(principalFromUser(target), sharedIds)
+  const sources = await getSpaceAccessSourcesForUser(target.id, sharedIds)
   const items = shared
     .filter((space) => roles.get(space.id) != null)
-    .map((space) => ({ ...space, role: roles.get(space.id)! }))
+    .map((space) => ({
+      ...space,
+      role: roles.get(space.id)!,
+      // SpaceAccessSourceSchema.parse 让 null/groupName='' 之类边界被规范,
+      // 前端拿到 typed array。
+      sources: sources.get(space.id) ?? [],
+    }))
 
   const personal = (await db
     .select({ id: spaces.id, name: spaces.name, color: spaces.color, kind: spaces.kind })
@@ -253,9 +272,22 @@ adminUsersRouter.get('/:id/spaces', async (c) => {
     .limit(1))[0]
   // 个人空间所有人 = 在该空间有 admin 权限。SpaceRole schema 仅
   // admin/editor/viewer,前端按 kind==='personal' 显示「所有者」即可。
-  if (personal) items.unshift({ ...personal, role: 'admin' as const })
+  if (personal) {
+    items.unshift({
+      ...personal,
+      role: 'admin' as const,
+      // owner 不属于 grant chain(sentinel),用单独 source 表达。
+      sources: [{ kind: 'owner' as const, role: 'admin' as const }],
+    })
+  }
 
-  return c.json({ items })
+  // 规范化每个 source 的 role + shape(集中在一处 zod parse,前后端
+  // 对 schema drift 早发现)。
+  const parsed = items.map((it) => ({
+    ...it,
+    sources: it.sources.map((s) => SpaceAccessSourceSchema.parse(s)),
+  }))
+  return c.json({ items: parsed })
 })
 
 // ─── GET /api/admin/users/:id ──────────────────────────────────────────────// Single user lookup. The list endpoint omits some metadata and the edit

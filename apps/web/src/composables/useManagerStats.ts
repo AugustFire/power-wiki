@@ -23,7 +23,7 @@
  * Page size caps at 200, matching the existing `?limit=` ceiling.
  * For teams above 200, loadMore() extends the list.
  */
-import { reactive, ref, watch } from 'vue'
+import { reactive, ref, computed, watch } from 'vue'
 import { debounce } from '@/lib/debounce'
 import { api } from '@/lib/api'
 import type {
@@ -41,7 +41,7 @@ const usersLoading = ref(false)
 const usersRefreshing = ref(false)
 const usersError = ref<unknown>(null)
 let usersPromise: Promise<void> | null = null
-let usersOffset = 0
+let usersPage = 0
 const usersHasMore = ref(false)
 /** 匹配当前 filter 的总行数;无 filter = 全表总行数。来自 server 响应。 */
 const usersTotal = ref(0)
@@ -55,14 +55,40 @@ let groupsPromise: Promise<void> | null = null
 let groupsOffset = 0
 const groupsHasMore = ref(false)
 
-const PAGE_SIZE = 200
+/* P1-13 · 页大小从 200 → 50 —— 之前 PAGE_SIZE=200 让 admin 一次性
+ * 拉所有用户,「分页」UI 没出现。M17 时服务端分页已支持,M18 这里把
+ * PAGE_SIZE 收回 50,让分页 footer 真正进入用户视野。200 行的「快加载」
+ * 体感并不比 50 行的「快很多」,但 50 行让「翻页」成为 admin 用户
+ * 日常动作(尤其在 200+ 行团队下)。50 也呼应 Atlassian 的标准
+ * user-management pageSize。*/
+const PAGE_SIZE = 50
 const FILTER_DEBOUNCE_MS = 300
 
-/**
- * M17 filter state。reactive 而不是 ref:filter 多了之后一组值用 reactive
+/* P1-13 · 派生分页状态 —— page = 当前页 (1-based);
+ * totalPages = 总页数(向上取整,total<1 时也至少 1 页以便 UI 不退化为空);
+ * pageStart = 当前页第一条的 1-based 序号(0 行视作「—」);
+ * pageEnd = 当前页最后一条的 1-based 序号(0 行 = 0)。
+ * `usersPageSize` 直接复用 const,保持单一事实来源。*/
+const usersPageSize = PAGE_SIZE
+const usersTotalPages = computed(() => Math.max(1, Math.ceil(usersTotal.value / usersPageSize)))
+const usersPageStart = computed(() =>
+  usersTotal.value === 0 ? 0 : usersPage * usersPageSize + 1,
+)
+const usersPageEnd = computed(() => {
+  if (usersTotal.value === 0) return 0
+  return Math.min((usersPage + 1) * usersPageSize, usersTotal.value)
+})
+/* 上一 / 下一页可用性 —— 边界检查放在 computed 里,
+ * UI 直接消费,无需重复比较。*/
+const usersHasPrevPage = computed(() => usersPage > 0)
+const usersHasNextPage = computed(() => usersPage + 1 < usersTotalPages.value)
+
+/** 用户当前所在页(1-based),给 UI 「第 N 页 / 共 M 页」用 */
+const usersCurrentPage = computed(() => usersPage + 1)
+
+/** M17 filter state。reactive 而不是 ref:filter 多了之后一组值用 reactive
  * 比一组独立 ref 更顺手(set 是原子的,不会中间态触发 watch)。空字符串 /
- * undefined 都视为「不过滤」,server 端 `q: '' / undefined` 等价。
- */
+ * undefined 都视为「不过滤」,server 端 `q: '' / undefined` 等价。*/
 const userFilters = reactive<{
   q: string
   status: AdminUsersListQuery['status']
@@ -84,24 +110,32 @@ function currentUsersQuery(offset: number): AdminUsersListQuery {
   }
 }
 
-async function loadUsersPage(offset: number, refresh: boolean): Promise<void> {
+async function loadUsersPage(page: number, refresh: boolean): Promise<void> {
   if (refresh) usersRefreshing.value = true
   else usersLoading.value = true
   usersError.value = null
+  /* P1-13 · 用 page (0-based) 而非 offset 表达位置 —— UI 思考方式
+   * 是「第几页」,offset 是 server contract。两者同义 page * PAGE_SIZE,
+   * 但让 store 内部统一记 page,UI/内部判断都免了 floor 转换。*/
+  const offset = page * PAGE_SIZE
   try {
     const result: AdminUsersListResponse = await api.admin.users.list(
       currentUsersQuery(offset),
     )
-    if (offset === 0) {
+    /* P1-13 · page-based refetch 整体替换而非 append —— 翻页时
+     * 之前页的内容不再在视口里(v-if table-v-model 也接管了 pagination),
+     * 保留旧 items 会占用内存 + 让 upsertUser 的 findIndex 误命中。
+     * append-only 语义只对「加载更多」一档有意义;回到 page 0 时
+     * 也直接走 refresh 路径(line 222)。*/
+    if (refresh || page === 0) {
       users.value = result.items
     } else {
-      // append, dedup by id
       const seen = new Set(users.value.map((u) => u.id))
       for (const u of result.items) {
         if (!seen.has(u.id)) users.value.push(u)
       }
     }
-    usersOffset = offset + result.items.length
+    usersPage = page
     usersHasMore.value = result.hasMore
     usersTotal.value = result.total
     usersSystemStats.value = result.systemStats
@@ -143,6 +177,11 @@ async function loadGroupsPage(offset: number, refresh: boolean): Promise<void> {
  * First-time loader: only fires if the cache is empty, otherwise
  * idempotent. Subsequent callers within the same tick share the
  * in-flight promise via the cache pointer.
+ *
+ * P1-13 · page-based 版本 — 强制刷新「当前 usersPage」(不回 0 页)。
+ * 之前是回到 0 页;现在 ensureUsersLoaded 是个 idempotent no-op if
+ * cache 满,只有 cache 真空时才取第一页。filter 改动 由 debounced
+ * refetch 统一回到 page 0(参见下方的 `debouncedRefetch`)。
  */
 async function ensureUsersLoaded(): Promise<void> {
   if (users.value.length > 0 && !hasActiveFilter()) return
@@ -162,9 +201,42 @@ async function ensureGroupsLoaded(): Promise<void> {
   return groupsPromise
 }
 
+/* P1-13 · 翻页对外接口 —— UI 直接调 next/prev/goTo,内部统一拉
+ * 那一页。如果在翻页途中 filter 又改了,debouncedRefetch 会回
+ * page 0 重拉 —— 这里不再做并发保护(Vue 的 reactivity 让前后
+ * 请求顺序明确,但响应覆盖按 server 时序,放心)。*/
+async function nextPageUsers(): Promise<void> {
+  if (!usersHasNextPage.value || usersLoading.value || usersRefreshing.value) return
+  await loadUsersPage(usersPage + 1, false)
+}
+
+async function prevPageUsers(): Promise<void> {
+  if (!usersHasPrevPage.value || usersLoading.value || usersRefreshing.value) return
+  await loadUsersPage(usersPage - 1, false)
+}
+
+async function goToPageUsers(page: number): Promise<void> {
+  if (usersLoading.value || usersRefreshing.value) return
+  const target = Math.max(0, Math.min(page - 1, usersTotalPages.value - 1))
+  if (target === usersPage) return
+  await loadUsersPage(target, false)
+}
+
 async function loadMoreUsers(): Promise<void> {
+  /* 兼容旧入口 —— 行为是「append 下一页」,PeopleView 的 Load-more
+   * 按钮还在用。语义上跟 nextPageUsers 的「翻页并 replace」不同,
+   * 单独实现一份。这里不复用 nextPageUsers 是因为后者会清空
+   * users.value,而 loadMore 想保留当前 items + push 新 page 的 items。
+   * hasMore 仍是 result.hasMore(LIMIT N+1 探测);触发条件:
+   *   - hasMore = true
+   *   - 不在 loading / refreshing 中
+   * 跟之前不同:之前 offset 累计,现在 page 累计。append 完后
+   * 继续保留同一 page 值,直到翻页动作才改。*/
   if (!usersHasMore.value || usersLoading.value || usersRefreshing.value) return
-  await loadUsersPage(usersOffset, false)
+  const nextPage = usersPage + 1
+  await loadUsersPage(nextPage, false)
+  /* loadUsersPage 内部会把 page 写回,所以这里不需要手动同步。
+   * hasMore/total 同步更新。*/
 }
 
 async function loadMoreGroups(): Promise<void> {
@@ -183,11 +255,12 @@ async function refreshGroups(): Promise<void> {
 
 /**
  * M17: filter watcher + helpers.filter 改动 → 300ms debounce → 重新拉第一页。
- * `usersOffset` 必须在 refetch 前 reset,否则 server 会按旧 offset 算分页,
- * 漏掉新 filter 的前几行。
+ * P1-13:filter 改动重置 usersPage=0,跟此前 reset offset 等效 —— 把
+ * filter 适配放到 page 0 是 admin 在筛选时的默认预期(「搜张三」后应该
+ * 从第一页开始看,而不是停在第 5 页)。
  */
 const debouncedRefetch = debounce(() => {
-  usersOffset = 0
+  usersPage = 0
   void refreshUsers()
 }, FILTER_DEBOUNCE_MS)
 
@@ -234,6 +307,15 @@ export function useManagerStats() {
     usersTotal,
     usersSystemStats,
 
+    /* P1-13 · 派生分页状态 */
+    usersCurrentPage,
+    usersTotalPages,
+    usersPageSize,
+    usersPageStart,
+    usersPageEnd,
+    usersHasPrevPage,
+    usersHasNextPage,
+
     /* M17 filter state */
     userFilters,
     hasActiveFilter,
@@ -242,6 +324,11 @@ export function useManagerStats() {
     /* Actions */
     ensureUsersLoaded,
     ensureGroupsLoaded,
+    /* P1-13 · 翻页接口 — UI 优先用 next/prev/goTo,loadMoreUsers 保留
+     * 作「append 下一页」别名(语义等价,因为现在翻页就是下一页)。*/
+    nextPageUsers,
+    prevPageUsers,
+    goToPageUsers,
     loadMoreUsers,
     loadMoreGroups,
     refreshUsers,
@@ -287,7 +374,7 @@ export function useManagerStats() {
       groupsHasMore.value = false
       usersTotal.value = 0
       usersSystemStats.value = null
-      usersOffset = 0
+      usersPage = 0
       groupsOffset = 0
       usersPromise = null
       groupsPromise = null

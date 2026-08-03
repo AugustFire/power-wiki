@@ -21,10 +21,22 @@ const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { list: recentList } = useRecentPages()
 const router = useRouter()
-
 const activeSpaceId = computed(() => spacesStore.activeSpaceId.value)
 const activeSpace = computed(() => spacesStore.activeSpace.value)
 const isPersonal = computed(() => activeSpace.value?.kind === 'personal')
+/* P1-12 · 归档空间显式状态 —— 后端 GET /api/spaces 已经把 archivedAt
+ * 字段透出来,前端用 stores.isArchived 派生(单一事实来源,跟
+ * Sidebar / SpaceSwitcher 已有逻辑一致)。在 archive 过的空间里:
+ *   - 渲染顶部只读 banner(归档时间 + 不能新增/编辑)
+ *   - canCreateInSpace 仍走 canCreateInSpaceOf(架构上 archived shared
+ *     space 对普通成员就返回 false),createRoot 也被 canCreateInSpace
+ *     自然 disable
+ *   - 现有页面树 / 阅读 / 浏览照常,成员可以继续读历史文档
+ * 这是「区分业务状态」的最小实现 —— 用户点击旧链接进来看到「这里已
+ * 归档,可以读不能改」而不是静默 404 / 静默首页。*/
+const isArchived = computed(() => spacesStore.isArchived(activeSpaceId.value))
+const archivedAt = computed<number | null>(() => activeSpace.value?.archivedAt ?? null)
+const archivedByName = computed<string | null>(() => null)
 const fallbackSpaceName = computed(() =>
   isPersonal.value ? '我的个人空间' : '团队空间',
 )
@@ -164,6 +176,26 @@ function excerpt(html: string): string {
     </div>
 
     <div class="content-inner home-page content-wide">
+      <!-- P1-12 · 归档空间 banner —— 只在 active space 已归档时显示。
+           顶部醒目位置 + warning 配色,让用户第一眼知道「这里的状态跟
+           平时不一样」;同时显式解释"仍可读,不能写 / 不能新增"
+           —— 区别于 404 和无权访问。归档时间用相对时间,谁归档
+           (archivedByName) 由后端 Space DTO 暂未透出,先给 ?。-->
+      <div v-if="isArchived" class="archived-banner" role="status">
+        <span class="material-symbols-outlined archived-banner-icon">inventory_2</span>
+        <div class="archived-banner-body">
+          <strong>此空间已归档</strong>
+          <p>
+            归档后空间内的页面仍可阅读、不会清除历史,
+            但<strong>不能新增 / 修改 / 删除</strong>任何内容。
+            如需恢复,请联系管理员。
+          </p>
+          <p v-if="archivedAt" class="archived-banner-meta">
+            归档于 {{ relativeTime(archivedAt) }}
+          </p>
+        </div>
+      </div>
+
       <div v-if="rootPages.length === 0" class="empty">
         <div class="empty-illustration">
           <svg viewBox="0 0 240 160" width="240" height="160" aria-hidden="true">
@@ -335,6 +367,38 @@ function excerpt(html: string): string {
 </template>
 
 <style scoped>
+/* P1-12 · 归档空间 banner —— 顶部 status callout,warning 配色 + icon
+ * + 三段文本(强提示 + 解释 + meta)。位置在 cover 之下、内容区之
+ * 上,保证用户进入空间第一眼就看到状态。左右 padding 跟 .space-overview
+ * 对齐(卡片同款 16px 内边距),跟下面正常内容区视觉一体。*/
+.archived-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin: 0 0 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.archived-banner-icon {
+  font-size: 22px !important;
+  color: var(--warning);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.archived-banner-body { flex: 1; min-width: 0; }
+.archived-banner-body strong { color: var(--warning); font-weight: 700; }
+.archived-banner-body p { margin: 4px 0 0; color: var(--text-2); }
+.archived-banner-body strong + p { margin-top: 6px; }
+.archived-banner-meta {
+  margin-top: 6px !important;
+  color: var(--text-3) !important;
+  font-size: 12px;
+}
 .home-hero { margin-bottom: 8px; }
 .space-overview {
   display: flex;

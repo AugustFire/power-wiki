@@ -39,7 +39,7 @@
  *     `listReadableSpaceIds(me)`,返回 `'*' | string[]`。
  *     accessibleSpaceIds.ts 保留 wrapper,Phase B 后删除。
  */
-import { and, eq, sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import { db } from '../db/client'
 import type { AnyTx } from './auditLog'
 import {
@@ -48,6 +48,7 @@ import {
   spaceGroupAccess,
   spaceRoleGrants,
   userGroupMembers,
+  userGroups,
 } from '../db/schema'
 
 /* ─── Types ──────────────────────────────────────────────────────── */
@@ -92,6 +93,33 @@ function rankToRole(rank: number): SpaceRole | null {
   if (rank >= ROLE_RANK.editor) return 'editor'
   if (rank >= ROLE_RANK.viewer) return 'viewer'
   return null
+}
+
+/* ─── SpaceAccessSource —— 授权来源(P1-14)─────────────────────────
+ * 一个 subject 在某 space 上的有效角色可能由多条 grant 共同决定:
+ *   - direct grant(user → space_role_grants,principal_kind='user')
+ *   - 组授权(user 在组里 + 组 → space_role_grants,principal_kind='group')
+ *   - legacy 组(user 在组里 + 旧 space_group_access 行)
+ * effective role = max(所有 sources),但用户需要看到「是哪些来源」
+ * 才能判断「我可以删除这条直接授权来缩窄权限吗」「我在工程组里
+ * 就能进,要把工程组从空间里 remove 吗」。本结构给前端足够信息
+ * 渲染「via 工程组 / 直接授权 / 两路合一」。
+ *
+ * role 字段对 owner / legacy_group 都被强约束:owner 是 personal
+ * space 专属、role 始终生效;legacy_group 跟 lib/permissions.ts
+ * effectiveSpaceRole 行为对齐(视作 'editor')。*/
+export interface SpaceAccessSource {
+  /** direct / group(Phase A) / legacy_group(旧 space_group_access) / owner(personal space)
+   * —— owner 跟其他三类互斥(kind='personal' 的空间只会有 owner)。 */
+  kind: 'direct' | 'group' | 'legacy_group' | 'owner'
+  /** 该 source 授予的角色。owner 永远 'admin';legacy_group 永远 'editor';
+   * direct + group 带 grants 表里的实际值。 */
+  role: SpaceRole
+  /** 组授权专属:组的 id(用于前端跳 GroupEditView)。direct / owner 无此字段。 */
+  groupId?: string
+  /** 组授权专属:组当前的名字(denormalize,前端不用再拉 user_groups)。
+   * 找不到时返回 '' 空串(组已被删或 pg-* 个人组,前端视情况隐藏)。*/
+  groupName?: string
 }
 
 /* ─── Core: effectiveSpaceRole ───────────────────────────────────── */
@@ -279,6 +307,126 @@ export async function getEffectiveSpaceRolesForUser(
   for (const r of result.rows) {
     const role = rankToRole(r.rank ?? 0)
     out.set(r.spaceId, role)
+  }
+  return out
+}
+
+/* ─── getSpaceAccessSourcesForUser —— P1-14 ──────────────────────────
+ * 返回 subject(userId) 在每个 space 上有哪些 grant 来源。
+ *
+ * 实现:
+ *   1) space_role_grants 里 (user → space) 的 direct grant —— → direct source
+ *   2) space_role_grants 里 (group ∈ userGroupMembers(userId) → space) —— → group source
+ *   3) legacy space_group_access 里 (group ∈ userGroupMembers(userId) → space) —— → legacy_group source
+ *      (与 effectiveSpaceRole 行为对齐,记为 editor)
+ *   4) 个人空间 owner —— 由 caller 在 space 是 personal 时单独 push。
+ *      跟 (1-3) 互斥,本函数不处理。
+ *
+ * SQL 走 raw 一条 query,UNION + JOIN。返回 groupId 顺序稳定(id ASC)。
+ * groupName 通过一次 batched inArray 拉取(避免 N+1)。
+ *
+ * Map 永远包含传入的每个 spaceId(空数组表示无授权)。*/
+export async function getSpaceAccessSourcesForUser(
+  userId: string,
+  spaceIds: string[],
+): Promise<Map<string, SpaceAccessSource[]>> {
+  const out = new Map<string, SpaceAccessSource[]>()
+  for (const id of spaceIds) out.set(id, [])
+  if (spaceIds.length === 0) return out
+
+  const idList = sql.join(spaceIds.map((id) => sql`${id}`), sql`, `)
+
+  // Phase A grants + legacy grants UNION,一条 SQL 全拿,GROUP BY 聚合前按
+  // (spaceId, principalKind, principalId) 二维排序用于 dedupe 复用
+  // Phase A group 跟 legacy_group(同组可能两条):优先 Phase A,后者在前
+  // 面 dedupe 里被踢掉 —— groupId 一致就只保留 Phase A 行(角色更准确)。
+  const result = await db.execute<{
+    spaceId: string
+    srcKind: 'phase_a' | 'legacy' | null
+    principalKind: 'user' | 'group' | 'legacy_group' | null
+    principalId: string | null
+    role: string | null
+  }>(sql`
+    SELECT * FROM (
+      SELECT g.space_id AS "spaceId",
+             'phase_a'::text AS "srcKind",
+             g.principal_kind AS "principalKind",
+             g.principal_id AS "principalId",
+             g.role AS role
+        FROM space_role_grants g
+        WHERE g.space_id IN (${idList})
+          AND ((g.principal_kind = 'user' AND g.principal_id = ${userId})
+               OR (g.principal_kind = 'group'
+                   AND g.principal_id IN (
+                     SELECT group_id FROM user_group_members WHERE user_id = ${userId}
+                   )))
+      UNION ALL
+      SELECT sga.space_id AS "spaceId",
+             'legacy'::text AS "srcKind",
+             'legacy_group'::text AS "principalKind",
+             sga.group_id AS "principalId",
+             'editor'::text AS role
+        FROM space_group_access sga
+        JOIN user_group_members ugm ON sga.group_id = ugm.group_id
+        WHERE sga.space_id IN (${idList}) AND ugm.user_id = ${userId}
+    ) raw
+    ORDER BY "spaceId", "srcKind", "principalKind", "principalId"
+  `)
+
+  // Collect groupIds once for batch name lookup.
+  const groupIds = new Set<string>()
+  for (const r of result.rows) {
+    if (
+      (r.srcKind === 'phase_a' && r.principalKind === 'group') ||
+      r.principalKind === 'legacy_group'
+    ) {
+      if (r.principalId) groupIds.add(r.principalId)
+    }
+  }
+  const groupNameById = new Map<string, string>()
+  if (groupIds.size > 0) {
+    const rows = await db
+      .select({ id: userGroups.id, name: userGroups.name })
+      .from(userGroups)
+      .where(inArray(userGroups.id, [...groupIds]))
+    for (const r of rows) groupNameById.set(r.id, r.name)
+  }
+
+  // Dedupe:同一 (spaceId, groupId) 不重复添加 —— Phase A group 优先,
+  // legacy_group 同组同 space 不会再被推入。
+  const seen = new Set<string>()
+  for (const r of result.rows) {
+    let source: SpaceAccessSource
+    if (r.srcKind === 'phase_a' && r.principalKind === 'user') {
+      source = {
+        kind: 'direct',
+        role: rankToRole(ROLE_RANK[r.role as SpaceRole] ?? 0) ?? 'viewer',
+      }
+    } else if (r.srcKind === 'phase_a' && r.principalKind === 'group' && r.principalId) {
+      const key = `${r.spaceId}:${r.principalId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      source = {
+        kind: 'group',
+        role: rankToRole(ROLE_RANK[r.role as SpaceRole] ?? 0) ?? 'viewer',
+        groupId: r.principalId,
+        groupName: groupNameById.get(r.principalId) ?? '',
+      }
+    } else if (r.principalKind === 'legacy_group' && r.principalId) {
+      // 已 dedupe 过的 phase_a group 跳过 legacy
+      const key = `${r.spaceId}:${r.principalId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      source = {
+        kind: 'legacy_group',
+        role: 'editor',
+        groupId: r.principalId,
+        groupName: groupNameById.get(r.principalId) ?? '',
+      }
+    } else {
+      continue
+    }
+    out.get(r.spaceId)?.push(source)
   }
   return out
 }

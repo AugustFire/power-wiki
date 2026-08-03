@@ -211,7 +211,10 @@ function chipColor(kind: ActivityEvent['kind']): string {
         </select>
       </label>
       <details class="kind-filter">
-        <summary>事件类型<span v-if="selectedKinds.length"> {{ selectedKinds.length }}</span></summary>
+        <summary>
+          <span>事件类型</span>
+          <span v-if="selectedKinds.length" class="kind-filter-summary-count">{{ selectedKinds.length }}</span>
+        </summary>
         <div class="kind-filter-popover">
           <label v-for="kind in kindOptions" :key="kind.value">
             <input v-model="selectedKinds" type="checkbox" :value="kind.value" />
@@ -235,7 +238,10 @@ function chipColor(kind: ActivityEvent['kind']): string {
           <option value="me">只看我</option>
         </select>
       </label>
-      <span v-if="activeFilterCount" class="active-filter-count">已应用 {{ activeFilterCount }} 个筛选</span>
+      <span v-if="activeFilterCount" class="active-filter-count" role="status">
+        <span class="material-symbols-outlined">filter_list</span>
+        <span>已筛选 {{ activeFilterCount }} 项</span>
+      </span>
       <button
         class="refresh-btn"
         type="button"
@@ -255,7 +261,23 @@ function chipColor(kind: ActivityEvent['kind']): string {
         <div class="title-block">
           <h1 class="title">最近页面活动</h1>
           <p class="subtitle">
-            Workspace-wide 最近 50 条共享空间活动事件,涵盖编辑/创建/复制/移动/恢复/发布。按发生时间倒序,点击进入对应页。
+            编辑/创建/复制/移动/恢复/发布/删除事件,按时间倒序,每页 20 条。
+          </p>
+          <!-- P1-11 · 「仅团队空间」明示 —— 后端 activity SQL 已经过滤
+               spaces.kind = 'shared',但用户看不到 filter 规则,经常误
+               以为「某人改了 X 页但没出现 = 数据丢了」。这里给 inline
+               微提示(不是 callout,callout 是 warn 语义,这里是常驻指
+               引):accent-soft 圆点 + 短文案,跟 subtitle 同字号紧贴,
+               头部总高 ~50px 不抢列表。原文不重复"团队空间"字样,
+               默认上下文中「团队空间」已是隐含语义,这里只解释覆盖范围。 -->
+          <p class="activity-scope-hint">
+            <span class="scope-hint-dot" aria-hidden="true"></span>
+            <span>
+              仅显示团队空间;个人草稿请到<router-link
+                to="/"
+                class="scope-hint-link"
+              >个人工作台</router-link>查看。
+            </span>
           </p>
         </div>
       </header>
@@ -383,6 +405,40 @@ function chipColor(kind: ActivityEvent['kind']): string {
   color: var(--text-3);
   margin: 0;
   max-width: 640px;
+  line-height: 1.5;
+}
+/* P1-11 · 活动范围明示 —— inline 微提示替代 callout。accent 主色圆
+ * 点 + 紧贴上下文的短文案 + 一键跳转链接。视觉重量比 subtitle 还
+ * 低,但颜色更清楚:accent 圆点告诉眼睛「这里有分类提示」,跳转链
+ * 接提供「修复路径」。常驻在标题区,不占垂直空间(box height 18px)
+ * 比旧 callout 省 ~30px 头部空间。*/
+.activity-scope-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.scope-hint-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.scope-hint-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.scope-hint-link:hover {
+  border-bottom-color: var(--accent);
 }
 .controls {
   display: flex;
@@ -390,23 +446,32 @@ function chipColor(kind: ActivityEvent['kind']): string {
   gap: 12px;
 }
 .filter-select {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  height: 32px;
+  padding: 0 10px;
   font-size: 13px;
   color: var(--text-2);
-}
-.filter-select select {
-  height: 30px;
-  padding: 0 24px 0 8px;
-  font-family: inherit;
-  font-size: 13px;
   border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
   background: var(--bg);
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+.filter-select:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+.filter-select:focus-within {
+  border-color: var(--focus-ring);
+}
+.filter-select select {
+  border: 0;
+  background: transparent;
+  font: inherit;
   color: var(--text-1);
   cursor: pointer;
+  padding-right: 4px;
 }
+.filter-select > span { color: var(--text-3); font-size: 12px; }
 /* 5.5 — multi-select event chips live in a compact native details popover. */
 .kind-filter {
   position: relative;
@@ -414,20 +479,43 @@ function chipColor(kind: ActivityEvent['kind']): string {
   color: var(--text-2);
 }
 .kind-filter summary {
-  height: 30px;
-  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius, 4px);
   background: var(--bg);
   color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
   list-style: none;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
 }
+.kind-filter summary:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
 .kind-filter summary::-webkit-details-marker { display: none; }
-.kind-filter[open] summary { border-color: var(--focus-ring); }
+.kind-filter[open] summary { border-color: var(--focus-ring); background: var(--bg-subtle); }
+/* 已选 count chip:小色块 + 数字,跟 summary 同高,让用户一眼看到「多选已生效」*/
+.kind-filter-summary-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
 .kind-filter-popover {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
   z-index: var(--z-popover);
   display: grid;
@@ -449,9 +537,22 @@ function chipColor(kind: ActivityEvent['kind']): string {
 }
 .kind-filter-popover input { accent-color: var(--accent); }
 .active-filter-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px 3px 8px;
+  background: var(--accent-soft);
   color: var(--accent);
+  border-radius: 12px;
   font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
   white-space: nowrap;
+}
+.active-filter-count .material-symbols-outlined {
+  font-size: 14px !important;
+  color: inherit;
+  line-height: 1;
 }
 .refresh-btn {
   display: inline-flex;
@@ -487,12 +588,31 @@ function chipColor(kind: ActivityEvent['kind']): string {
   grid-template-columns: 32px 1fr 20px;
   align-items: center;
   gap: 12px;
-  padding: 12px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  transition: background var(--duration-fast);
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
-.activity-row:hover { background: var(--bg-subtle); }
+/* Hover affordance:浅灰背景 + 左侧 2px accent 竖线 —— 比单纯换 bg
+ * 色更强,跟 sidebar row / page-tree row 的 hover 视觉对齐。*/
+.activity-row {
+  position: relative;
+}
+.activity-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.activity-row:hover {
+  background: var(--bg-subtle);
+}
+.activity-row:hover::before { background: var(--accent); }
 .activity-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
@@ -568,7 +688,12 @@ function chipColor(kind: ActivityEvent['kind']): string {
   overflow: hidden;
   max-width: 160px;
 }
-.time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.time {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 500;
+}
 .row-arrow {
   color: var(--text-3);
   font-size: 18px;
@@ -600,9 +725,22 @@ function chipColor(kind: ActivityEvent['kind']): string {
 }
 .load-more-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .end-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 4px;
   font-size: 12px;
   color: var(--text-3);
-  padding: 8px 0;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.end-hint::before,
+.end-hint::after {
+  content: '';
+  display: inline-block;
+  width: 32px;
+  height: 1px;
+  background: var(--border);
 }
 
 .row-skeleton {

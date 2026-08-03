@@ -19,12 +19,14 @@ import { useConfirm } from '@/composables/useConfirm'
 import { api, ApiError } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
-import type { User, Space } from '@power-wiki/shared'
+import type { SpaceAccessSource, User, Space } from '@power-wiki/shared'
 
+/* P1-14 · SpaceMembership 类型从 API 响应 derive —— 后端已经把 `sources`
+ * (SpaceAccessSource[]) 接在了 /admin/users/:id/spaces 响应里,这里
+ * 自动继承,前端无需手写 type。SpaceAvatar 接受完整 Space,但这个
+ * 端点只返 id/name/color/kind,视觉上只用到前 4 个字段。补
+ * createdAt / updatedAt 占位以满足类型。*/
 type SpaceMembership = Awaited<ReturnType<typeof api.admin.users.spaces>>['items'][number]
-
-/** SpaceAvatar 接受完整 Space,但 /admin/users/:id/spaces 只返 id/name/color/kind,
- *  视觉上只用到前 4 个字段。补 createdAt / updatedAt 占位以满足类型。 */
 function asSpaceAvatarSource(m: SpaceMembership): Space {
   return {
     id: m.id,
@@ -314,6 +316,50 @@ function openSpace(spaceId: string) {
   void router.push(`/manager/spaces/${spaceId}`)
 }
 
+/* P1-14 · 来源 chip 视觉与跳转目标 ── group / legacy_group 跳
+ * GroupEditView(让 admin 直接到「组成员 + 角色授权」面板,能改组的
+ * 角色或 remove user);direct / owner 跳 SpaceEditView(那里改授权)。*/
+interface SourceChip {
+  label: string
+  title: string
+  to: string | null
+  tone: 'direct' | 'group' | 'legacy_group' | 'owner'
+}
+function sourceLabel(s: SpaceAccessSource): string {
+  switch (s.kind) {
+    case 'direct': return '直接授权'
+    case 'owner': return '所有者'
+    case 'group':
+    case 'legacy_group': return s.groupName?.trim() || s.groupId?.slice(0, 6) || '用户组'
+  }
+}
+function sourceChipsFor(m: SpaceMembership): SourceChip[] {
+  return (m.sources ?? []).map((s) => {
+    let title = ''
+    if (s.kind === 'direct') title = `直接在「${m.name}」空间授权 ${roleLabelFromKind(s.role)}`
+    else if (s.kind === 'owner') title = '该空间为用户本人所有'
+    else title = `通过用户组「${s.groupName || s.groupId}」获得 ${roleLabelFromKind(s.role)} 角色`
+    return {
+      label: sourceLabel(s),
+      title,
+      to: s.kind === 'group' || s.kind === 'legacy_group'
+        ? `/manager/groups/${s.groupId}`
+        : `/manager/spaces/${m.id}`,
+      tone: s.kind,
+    }
+  })
+}
+/** 从 raw SpaceAccessSource 拿角色显示 —— 跟 spaceRoleLabel 重复,
+ * 这里独立出来是为了 sourceChipsFor 不依赖 SpaceMembership.role(可能
+ * 比 source.role 强,但显示「这一条 source 给了什么角色」更准)。*/
+function roleLabelFromKind(r: SpaceAccessSource['role']): string {
+  switch (r) {
+    case 'admin': return '管理'
+    case 'editor': return '编辑'
+    case 'viewer': return '只读'
+  }
+}
+
 const colorPresets = [
   '#0052CC', '#36B37E', '#FF5630', '#FFAB00',
   '#403294', '#00B8D9', '#6554C0', '#FF8B00',
@@ -508,6 +554,24 @@ const colorPresets = [
             <span class="ue-ms-name">{{ m.name }}</span>
             <span class="ue-ms-kind">{{ m.kind === 'personal' ? '个人空间' : '团队空间' }}</span>
             <span class="ue-ms-role" :class="`tone-${spaceRoleTone(m)}`">{{ spaceRoleLabel(m) }}</span>
+            <!-- P1-14 · 授权来源 chip(s)—— 多个 source 时并列展示。
+                 chip 自身可点击 → 跳到源头(用户组 / 空间)的管理页。
+                 @click.stop 阻止冒泡触发外层 row 的 openSpace,避免
+                 「点 chip 进修改源 + 同时切到空间」双跳转。-->
+            <span class="ue-ms-sources">
+              <button
+                v-for="(src, idx) in sourceChipsFor(m)"
+                :key="`${src.tone}-${idx}`"
+                type="button"
+                class="ue-ms-source-chip"
+                :class="`tone-${src.tone}`"
+                :title="src.title"
+                @click.stop="router.push(src.to!)"
+              >
+                <span class="material-symbols-outlined">{{ src.tone === 'group' || src.tone === 'legacy_group' ? 'groups' : src.tone === 'direct' ? 'person' : 'home' }}</span>
+                <span class="ue-ms-source-label">{{ src.label }}</span>
+              </button>
+            </span>
             <span class="material-symbols-outlined ue-ms-arrow">chevron_right</span>
           </li>
         </ul>
@@ -831,8 +895,11 @@ const colorPresets = [
 }
 .ue-ms-row {
   display: grid;
-  /* avatar | name | kind | role pill | chevron */
-  grid-template-columns: 20px minmax(0, 1fr) auto auto 18px;
+  /* avatar | name | kind | role pill | sources | chevron —— P1-14
+   * 在 kind / role 之后插入 sources chip 区。sources 在窄列宽下
+   * name 优先截断,sources 一律 ellipsis(向下兼容视觉密度)。
+   */
+  grid-template-columns: 20px minmax(0, 1fr) auto auto minmax(0, 1fr) 18px;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
@@ -890,6 +957,82 @@ const colorPresets = [
   transition: opacity var(--duration-fast) var(--ease-out),
               transform var(--duration-fast) var(--ease-out),
               color var(--duration-fast) var(--ease-out);
+}
+
+/* P1-14 · 授权来源 chip(s) —— 显示在 role pill 右侧。一行可容纳多 chip,
+ * 多了 overflow-x 不必要(典型 1-2 个 source 已能拍全);min-width: 0 让
+ * grid 1fr column 截断发生在 chip label 而不是溢出整行。每个 chip 是
+ * button:hover 时颜色加深(@click.stop 已在外层 row 隔离)。tone-direct
+ * 用 accent-soft(跟角色「管理员」pill 同色系,视觉一致),tone-group
+ * 用 accent-soft 不同饱和度,tone-legacy_group 走 text-2 表示「旧字段
+ * 但仍生效」,tone-owner 用 purple-soft(跟 owner 角色 pill 同色)。*/
+.ue-ms-sources {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.ue-ms-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill, 999px);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.ue-ms-source-chip .material-symbols-outlined {
+  font-size: 13px !important;
+  line-height: 1;
+}
+.ue-ms-source-chip.tone-direct {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ue-ms-source-chip.tone-direct:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ue-ms-source-chip.tone-group {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.ue-ms-source-chip.tone-group:hover {
+  background: var(--accent-soft);
+}
+.ue-ms-source-chip.tone-legacy_group {
+  background: var(--bg-canvas);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.ue-ms-source-chip.tone-legacy_group:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
+}
+.ue-ms-source-chip.tone-owner {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+.ue-ms-source-chip.tone-owner:hover {
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+}
+.ue-ms-source-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
 .ue-ms-row:hover .ue-ms-arrow,
 .ue-ms-row:focus-visible .ue-ms-arrow {

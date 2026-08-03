@@ -258,6 +258,18 @@ export interface AdminUsersListResponse {
   systemStats: UserSystemStats
 }
 
+/** P1-15 · `GET /api/admin/groups` 响应 —— 跟 PaginatedListSchema
+ * 同款 (items / limit / offset / hasMore),加 `total` 字段方便 UI
+ * 分页 footer 显示「共 N 个用户组」。无 systemStats(group 体量
+ * 较 user 小)。 */
+export interface AdminGroupsListResponse {
+  items: UserGroup[]
+  limit: number
+  offset: number
+  hasMore: boolean
+  total: number
+}
+
 /** 空间 — 顶层组织单元,页面归属一个 space,space 通过用户组授权访问 */
 export interface Space {
   id: string

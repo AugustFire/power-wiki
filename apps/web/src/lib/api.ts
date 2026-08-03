@@ -24,6 +24,7 @@ import {
   AdminSettingSchema,
   AdminSpacesListResponseSchema,
   AdminUsersListResponseSchema,
+  AdminGroupsListResponseSchema,
   AttachmentSchema,
   AuditEntrySchema,
   AuditListResponseSchema,
@@ -71,6 +72,7 @@ import type {
   AdminSpacesList,
   AdminUsersListQuery,
   AdminUsersListResponse,
+  AdminGroupsListResponse,
   Attachment,
   AuditEntry,
   AuditListQuery,
@@ -113,6 +115,7 @@ import type {
   SpaceGrants,
   SpaceMember,
   SpaceRole,
+  SpaceAccessSource,
   UpsertGroupGrantInput,
   UpsertUserGrantInput,
   SignInInput,
@@ -489,10 +492,27 @@ export const api = {
      * and let the caller decide what to do. `limit`/`offset` paginate.
      */
     trash: {
-      list: (spaceId: string, q?: PaginatedQuery): Promise<Paginated<PageNode>> => {
+      /** P1-15 · 服务端筛选 + 排序:
+       *   - q (title 子串)
+       *   - deletedBy (userId / 'unknown')
+       *   - sortBy (deletedAt | title) + dir
+       * 旧调用保持向后兼容:q? 三个参数都 optional。 */
+      list: (
+        spaceId: string,
+        q?: PaginatedQuery & {
+          q?: string
+          deletedBy?: string
+          sortBy?: 'deletedAt' | 'title'
+          dir?: 'asc' | 'desc'
+        },
+      ): Promise<Paginated<PageNode>> => {
         const params = new URLSearchParams({ space: spaceId })
         if (q?.limit !== undefined) params.set('limit', String(q.limit))
         if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        if (q?.q) params.set('q', q.q)
+        if (q?.deletedBy) params.set('deletedBy', q.deletedBy)
+        if (q?.sortBy) params.set('sortBy', q.sortBy)
+        if (q?.dir) params.set('dir', q.dir)
         return getManyPages(`/pages/trash?${params.toString()}`)
       },
     },
@@ -1027,6 +1047,10 @@ export const api = {
           color: string
           kind: 'personal' | 'shared'
           role: 'admin' | 'editor' | 'viewer'
+          /** P1-14 · 授权来源数组 —— 后端已经从 grants + groups 推导,
+           * 客户端直接消费 source.kind / .role / .groupId / .groupName
+           * 渲染「通过 X 组」「直接授权」chip。*/
+          sources: SpaceAccessSource[]
         }>
       }> => request(`/admin/users/${encodeURIComponent(id)}/spaces`),
       create: async (
@@ -1104,12 +1128,23 @@ export const api = {
       }> => request(`/admin/users/${encodeURIComponent(id)}/anonymize-impact`),
     },
     groups: {
-      list: (q?: PaginatedQuery): Promise<Paginated<UserGroup>> => {
+      list: async (q?: PaginatedQuery & {
+        /** P1-15 · name / description 子串 ILIKE 搜索 */
+        q?: string
+        /** P1-15 · 排序字段:createdAt (默认) | name | memberCount */
+        sort?: 'name' | 'memberCount' | 'createdAt'
+        /** P1-15 · 排序方向:默认 desc */
+        dir?: 'asc' | 'desc'
+      }): Promise<AdminGroupsListResponse> => {
         const params = new URLSearchParams()
         if (q?.limit !== undefined) params.set('limit', String(q.limit))
         if (q?.offset !== undefined) params.set('offset', String(q.offset))
+        if (q?.q) params.set('q', q.q)
+        if (q?.sort) params.set('sort', q.sort)
+        if (q?.dir) params.set('dir', q.dir)
         const qs = params.toString() ? `?${params.toString()}` : ''
-        return getManyPaginated(`/admin/groups${qs}`, UserGroupSchema)
+        const raw = await request<AdminGroupsListResponse>(`/admin/groups${qs}`)
+        return AdminGroupsListResponseSchema.parse(raw)
       },
       get: async (id: string): Promise<UserGroup> => {
         const raw = await request<UserGroup>(`/admin/groups/${encodeURIComponent(id)}`)

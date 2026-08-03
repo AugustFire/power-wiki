@@ -32,7 +32,7 @@
  *   - permission_audit row: 'group_deleted' in same tx (rolls back together)
  */
 import { Hono } from 'hono'
-import { and, eq, not, like, sql } from 'drizzle-orm'
+import { and, eq, ilike, not, like, sql, type SQL } from 'drizzle-orm'
 import {
   CreateGroupInputSchema,
   PaginatedListSchema,
@@ -98,11 +98,38 @@ function rowToGroupWithMembers(row: DbUserGroupRow, memberIds: string[]): UserGr
 // `pg-*` rows (the auto-created per-user groups for personal-space access)
 // are filtered out — they're system artifacts, not admin-managed groups.
 // memberCount comes from a single LEFT JOIN + GROUP BY (no N+1).
+//
+// P1-15 · 服务端筛选 + 排序 + 分页:
+//   - `q` (可选) name / description ILIKE 子串
+//   - `sort` ∈ name | memberCount | createdAt;默认 createdAt DESC
+//   - `limit / offset` 由 safeParsePagination 走 PaginatedQuerySchema
+//   - 响应 items + total + hasMore(PaginatedListSchema)
+// 排序成员数要 ORDER BY aggregate — Drizzle 不直接走 groupBy 列,但
+// Postgres 允许 ORDER BY aggregate expression,这里手写 raw SQL 排序
+// 列避免 ORM 误判 (subquery alias `member_count` 复用 SELECT 里的 alias)。
 adminGroupsRouter.get('/', async (c) => {
   const parsed = safeParsePagination(c)
   if (!parsed.ok) return parsed.response
   const { limit, offset } = parsed.args
-  let q = db
+  const q = c.req.query('q')?.trim() || ''
+  const sort = (c.req.query('sort') ?? 'createdAt').toString() as
+    | 'name'
+    | 'memberCount'
+    | 'createdAt'
+  const dirRaw = c.req.query('dir')?.toString()
+  const dir: 'asc' | 'desc' = dirRaw === 'asc' ? 'asc' : 'desc'
+
+  // WHERE 拼接 — pg-* 永远排除
+  const conds = [not(like(userGroups.id, 'pg-%'))]
+  if (q) {
+    const pattern = `%${q}%`
+    // ilike 是 OR-safe:name 或 description 命中其一即出。
+    conds.push(sql`(${userGroups.name} ILIKE ${pattern} OR ${userGroups.description} ILIKE ${pattern})`)
+  }
+  const whereClause = and(...conds)
+
+  // Items
+  const itemsBase = db
     .select({
       id: userGroups.id,
       name: userGroups.name,
@@ -112,11 +139,27 @@ adminGroupsRouter.get('/', async (c) => {
     })
     .from(userGroups)
     .leftJoin(userGroupMembers, eq(userGroupMembers.groupId, userGroups.id))
-    .where(not(like(userGroups.id, 'pg-%')))
+    .where(whereClause)
     .groupBy(userGroups.id)
     .$dynamic()
-  if (limit !== undefined) q = q.limit(limit + 1).offset(offset)
-  const rows = await q
+  // sort 子句 — 都跟 groupBy 兼容(name/createdAt 是 group 列,memberCount 是 aggregate alias)
+  const dirSql = sql.raw(dir === 'asc' ? 'ASC' : 'DESC')
+  let orderSql: SQL
+  switch (sort) {
+    case 'name':
+      orderSql = sql`${userGroups.name} ${dirSql}`
+      break
+    case 'memberCount':
+      orderSql = sql`${sql.raw('COUNT(' + userGroupMembers.userId.name + ')')} ${dirSql}`
+      break
+    case 'createdAt':
+    default:
+      orderSql = sql`${userGroups.createdAt} ${dirSql}`
+      break
+  }
+  let itemsQ = itemsBase.orderBy(orderSql)
+  if (limit !== undefined) itemsQ = itemsQ.limit(limit + 1).offset(offset)
+  const rows = await itemsQ
   const items = rows.map((r) =>
     UserGroupSchema.parse(
       rowToGroup(
@@ -126,7 +169,16 @@ adminGroupsRouter.get('/', async (c) => {
     ),
   )
   const result = applyPagination(items, limit, offset)
-  return c.json(PaginatedListSchema(UserGroupSchema).parse(result))
+
+  // Total — 在不影响 items 的 where 基础上做 COUNT。比再次 join 简单。
+  const totalRow = await db
+    .select({ n: sql<number>`COUNT(*)::int` })
+    .from(userGroups)
+    .where(whereClause)
+  const total = totalRow[0]?.n ?? 0
+  return c.json(
+    PaginatedListSchema(UserGroupSchema).parse({ ...result, total }),
+  )
 })
 
 // POST /api/admin/groups — create
