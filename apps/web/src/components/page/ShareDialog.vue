@@ -21,6 +21,7 @@ import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
 import { formatRelativeTime, formatRelativeTimeFuture } from '@/lib/relativeTime'
 import { useToast } from '@/composables/useToast'
+import { usePagesStore } from '@/stores/pages'
 import type { CreateShareResponse, ShareRow } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -48,6 +49,7 @@ const createError = ref<string | null>(null)
 const revokingId = ref<string | null>(null)
 
 const toast = useToast()
+const pagesStore = usePagesStore()
 
 const expiryChoice = ref<ExpiryOption>(30)
 
@@ -95,6 +97,57 @@ watch(
 const activeShares = computed(() => shares.value.filter((s) => s.revokedAt === null))
 const revokedShares = computed(() => shares.value.filter((s) => s.revokedAt !== null))
 
+/**
+ * D-2 (2026-08-03):行级「复制 URL」按钮的可行性 —— 该 share 是否还有
+ * 缓存的明文 token 可用。D-1 在 create 时把 token 落到 pagesStore,
+ * 切页 / 刷新后仍存活。share 被 revoke / expire 后,invalidateShareTokens
+ * 让缓存跟 active 状态严格 1:1,所以这里直接查 store 即可。
+ */
+function cachedTokenFor(s: ShareRow): string | undefined {
+  return pagesStore.shareTokens[props.pageId]?.[s.id]
+}
+
+/** 「复制 URL」反馈 —— 缓存命中走公开 URL toast,否则走「不可恢复」toast。
+ *  「不可恢复」是 Confluence 风格的诚实反馈:不假装能复制,但明确告诉
+ *  owner 「为什么」「下一步」(撤销 + 重建),不让用户对着 UI 干瞪眼。 */
+async function onCopyShareUrl(s: ShareRow): Promise<void> {
+  const token = cachedTokenFor(s)
+  if (token && s.revokedAt === null && (s.expiresAt === null || s.expiresAt > Date.now())) {
+    const url = `${window.location.origin}/#/public/pages/${token}`
+    let ok = false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+        ok = true
+      } else {
+        throw new Error('clipboard api unavailable')
+      }
+    } catch {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = url
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    if (ok) toast.success('已复制公开链接')
+    else toast.error('复制失败,请手动复制')
+    return
+  }
+  // 没缓存 token(创建后从未在本会话复制 / 已被 revoke / 已 expire):
+  // 直说 URL 不可恢复,给出下一步建议。owner 可能以为是 UI bug,这条 toast
+  // 把它转成「预期行为 + 解决方案」,跟 Confluence 的 share 列表 UX 一致。
+  toast.info(
+    `此分享的链接无法恢复(token 仅创建时展示一次)。如需重新分发,请撤销后创建新的分享链接。`,
+  )
+}
+
 async function onCreate() {
   if (creating.value) return
   creating.value = true
@@ -104,6 +157,10 @@ async function onCreate() {
     const resp = await api.pages.shares.create(props.pageId, { expiresInDays })
     justCreated.value = resp
     justCreatedCopied.value = false
+    // D-1 (2026-08-03):把明文 token 缓存到 store,让 ReadView 顶栏「复制链
+    // 接」按 pageId 查到 → 复制公开 URL 而不是内部 URL。缓存命中与否不影响
+    // banner 的 1.2s 自动收起;ShareDialog 自己不依赖这个 token。
+    pagesStore.cacheShareToken(props.pageId, resp.id, resp.token)
     // 自动选中文本框方便用户复制
     setTimeout(() => {
       const el = document.getElementById('share-just-created-url') as HTMLInputElement | null
@@ -131,6 +188,11 @@ async function onRevoke(s: ShareRow) {
   revokingId.value = s.id
   try {
     await api.pages.shares.revoke(props.pageId, s.id)
+    // D-1 (2026-08-03):撤销后该 share 变非 active,缓存的 token 让
+    // firstActiveShareToken 自然跳过(它会再查 list 过滤 active 状态),
+    // 但同 page 下其它 active share 的 token 也连带失去可达入口
+    // —— invalidate 整页缓存让缓存语义跟 active 列表严格 1:1。
+    pagesStore.invalidateShareTokens(props.pageId)
     await load()
     // 成功不弹 toast:列表里 status pill 从「有效」变「已撤销」+ 行尾显示撤销人,
     // 反馈已经够强。再弹 toast 反而打扰。
@@ -298,6 +360,7 @@ function expiresLabel(s: ShareRow): string {
               <th>创建人</th>
               <th>创建时间</th>
               <th>过期</th>
+              <th>标识</th>
               <th></th>
             </tr>
           </thead>
@@ -316,7 +379,26 @@ function expiresLabel(s: ShareRow): string {
                 </span>
                 <span v-else class="muted">永不过期</span>
               </td>
+              <!-- D-2 (2026-08-03):tokenPrefix 列 —— sha256 前 8 位作为非敏感
+                   行级标识,owner 凭印象「我记得是 …a3b9 那个」定位哪条。
+                   用等宽字体 + muted 色,跟「过期」/「撤销」同视觉权重。 -->
+              <td>
+                <code class="token-prefix" :title="`分享链接标识:${s.tokenPrefix}`">…{{ s.tokenPrefix }}</code>
+              </td>
               <td class="actions">
+                <!-- 行级「复制 URL」:有缓存 token → 复制公开 URL;无缓存 →
+                     toast 告知 URL 不可恢复。active 才显示,已撤销 / 过期
+                     的 share 复制无意义。 -->
+                <button
+                  v-if="s.revokedAt === null && (s.expiresAt === null || s.expiresAt > Date.now())"
+                  class="btn ghost"
+                  type="button"
+                  :title="cachedTokenFor(s) ? '复制公开链接' : 'URL 已无法恢复,请撤销并重建'"
+                  @click="onCopyShareUrl(s)"
+                >
+                  <span class="material-symbols-outlined">link</span>
+                  复制 URL
+                </button>
                 <button
                   v-if="s.revokedAt === null"
                   class="btn ghost danger-text"
@@ -360,6 +442,19 @@ function expiresLabel(s: ShareRow): string {
 
 .muted {
   color: var(--text-3);
+}
+
+/* D-2 (2026-08-03):tokenPrefix 列 —— 等宽字体 + muted 色,跟前缀的
+   「非敏感标识」语义对齐;hover 时整行 cursor 给默认 + tooltip 显示
+   完整标识(slice 后的 8 位)。 */
+.token-prefix {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 .section-title {

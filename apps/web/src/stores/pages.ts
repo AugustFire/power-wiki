@@ -94,6 +94,40 @@ export const usePagesStore = defineStore('pages', () => {
    * leaks data across sessions (and triggers 401s when the next user
    * tries to load trash for a space the previous user had selected).
    */
+  /**
+   * D-1 (2026-08-03):公开分享的明文 token 缓存。Share 后端只把 token 的
+   * sha256 落 DB,明文只在 POST 响应里出现一次。ShareDialog 的 banner 1.2s
+   * 自动消失后,前端就丢失了「公开 URL = ${origin}/#/public/pages/<token>」
+   * 中的 token,ReadView 顶栏「复制链接」也就没法切到公开 URL —— 必须把
+   * 明文 token 在 Pinia 里持久化,才能让「复制链接」按 pageId 查 token。
+   *
+   * 数据形状:
+   *   shareTokens: { [pageId]: { [shareId]: plaintextToken } }
+   * Map 套 Map 在 Vue 3 reactivity 里嵌套触发不可靠(outer Map 是 reactive
+   * 但 inner Map 的 mutate 不会被深度追踪);用 plain object + ref + 整体
+   * 重新赋值,触发更明确。
+   *
+   * 生命周期:
+   *   - 写入:ShareDialog.onCreate 成功 → cacheShareToken
+   *   - 失效:ShareDialog.onRevoke → invalidateShareTokens(pageId)
+   *           reset() → 全部清掉(切用户时防泄漏)
+   *   - 读取:PageMoreActionsMenu.copyLink → firstActiveShareToken(pageId)
+   */
+  const shareTokens = ref<Record<string, Record<string, string>>>({})
+
+  function cacheShareToken(pageId: string, shareId: string, token: string): void {
+    const next = { ...shareTokens.value }
+    next[pageId] = { ...(next[pageId] ?? {}), [shareId]: token }
+    shareTokens.value = next
+  }
+
+  function invalidateShareTokens(pageId: string): void {
+    if (!(pageId in shareTokens.value)) return
+    const next = { ...shareTokens.value }
+    delete next[pageId]
+    shareTokens.value = next
+  }
+
   function reset(): void {
     pages.value = []
     trashed.value = []
@@ -103,6 +137,7 @@ export const usePagesStore = defineStore('pages', () => {
     loadError.value = null
     childrenLoaded.clear()
     loadingPromises.clear()
+    shareTokens.value = {}
   }
 
   function clearSpaceCache(spaceId: string): void {
@@ -1302,6 +1337,41 @@ export const usePagesStore = defineStore('pages', () => {
 
   const tree = computed(() => getTree())
 
+  /**
+   * D-1:从 active share 列表里挑第一个有缓存明文 token 的 share;返回
+   * { shareId, token } 或 null。`copyLink` 用这个结果判定复制内部 URL
+   * 还是公开 URL。
+   *
+   * 设计取舍:
+   *   - 每次都 fetch 一次 share list —— 30s 内的 GET 缓存够便宜,而且
+   *     list 自身有 cache(GET /pages/:id/shares 命中),share 增删都
+   *     invalidatePrefix('/pages')。fetch 失败容错:走内部 URL,不阻塞
+   *     用户复制动作。
+   *   - 不在 store 里持久化 active list —— 缓存 token + 重新拉 list
+   *     比维护「active list 本地版」简单,只有 30s 一次的代价。
+   *   - 多 active share 时:按 list 的 createdAt DESC 取最新一个(列表
+   *     接口已 desc)。下一步可改成 picker UI,但优先级低。
+   */
+  async function firstActiveShareToken(
+    pageId: string,
+  ): Promise<{ shareId: string; token: string } | null> {
+    const cache = shareTokens.value[pageId] ?? {}
+    if (Object.keys(cache).length === 0) return null
+    try {
+      const shares = await api.pages.shares.list(pageId)
+      const now = Date.now()
+      for (const s of shares) {
+        if (s.revokedAt !== null) continue
+        if (s.expiresAt !== null && s.expiresAt <= now) continue
+        const cached = cache[s.id]
+        if (cached) return { shareId: s.id, token: cached }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
   return {
     pages,
     loaded,
@@ -1314,6 +1384,7 @@ export const usePagesStore = defineStore('pages', () => {
     trashLoadingMore,
     trashLoading,
     tree,
+    shareTokens,
     init,
     refresh,
     reset,
@@ -1348,6 +1419,9 @@ export const usePagesStore = defineStore('pages', () => {
     purgePage,
     togglePageLike,
     togglePageWatch,
+    cacheShareToken,
+    invalidateShareTokens,
+    firstActiveShareToken,
     watchVersion,
   }
 })

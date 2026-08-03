@@ -39,7 +39,18 @@ import { useToast } from '@/composables/useToast'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 
-const props = defineProps<{ pageId: string }>()
+const props = withDefaults(
+  defineProps<{
+    pageId: string
+    /** B-2 (2026-08-03):删除权限 gate。false 时隐藏每行的删除按钮
+     *  —— 后端 `attachments.ts:336` 拒绝无 canEditPage 的 DELETE,
+     *  UI 提前收口避免红色 banner。ReadView 接 canEdit 传入,EditView
+     *  不渲染此组件,EditPageDialog 等少数写路径只挂 Read-only 视图时
+     *  自行 gate(默认 true 保持现有调用方不变)。 */
+    canDelete?: boolean
+  }>(),
+  { canDelete: true },
+)
 
 // pageId 走 prop ref(toRef),composable 内部 watch 会响应路由切页
 const { items, loading, error, refresh, remove } = usePageAttachments(
@@ -200,6 +211,7 @@ async function onDelete(a: Attachment): Promise<void> {
 
         <!-- hover 才浮出的删除按钮(显式危险操作,confirm 兜底) -->
         <button
+          v-if="canDelete"
           type="button"
           class="as-delete"
           :title="`删除 ${a.originalFilename}`"

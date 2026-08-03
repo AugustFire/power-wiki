@@ -569,21 +569,20 @@ export interface PageMeta {
  * 列表路径(GET /api/pages)的 SQL 过滤 —— 在 SELECT WHERE 里直接判 page
  * 可读性,避免 N+1 跑 canReadPage。
  *
- * 覆盖三类可读情况(OR):
- *   1. **admin**:短路 TRUE。
- *   2. **author**:本用户是 page 作者(author 始终 full,不进 allow-list)。
- *   3. **无 view 限制 + 空间可读**:NOT EXISTS 走 page_restrictions_page_idx,
- *      命中就走 canReadSpace 的角色判定(由调用方 space filter 兜底)。
- *   4. **有 view 限制 + 在 allow-list 内**:EXISTS(page_restrictions
- *      WHERE kind='view' AND (user 命中 OR group 命中))。group 命中
- *      通过 IN 子查询 user_group_members(user_id=me) 解析。
+ * 覆盖两类可读情况(OR):
+ *   1. **author**:本用户是 page 作者(author 始终 full,不进 allow-list)。
+ *   2. **整条父链 + 本页的所有 view 限制都在 allow-list 内**:NOT EXISTS
+ *      一个 CTE,该 CTE 沿 pages.parent_id 上溯本页祖先链,链上每条 view
+ *      限制都必须满足 user 直接命中或 user 所属组命中。空链(即本页无 view
+ *      限制、祖先也无 view 限制)vacuously 通过 → 走调用方的 space filter
+ *      兜底 canReadSpace。
  *
- * 已知局限:**不处理 view 沿父链继承**。父页有 view 限制 → 子页即便
- * 不直接受限制,在 list 路径上也可能仍出现(子页不在父链的 allow-list
- * 里时),需要用户点开时由 canReadPage 在 GET /:id 路径返回 404。这
- * 是 v0 的可接受折衷;后续可以做"denormalized 父链 view-inheritance
- * JSONB 列 + trigger"优化,把 BFS 收进 SQL。子页的入口级 404 兜底不
- * 会出现数据错位,只是 sidebar 多 1 个不能点的项 —— 用户能感知但不致命。
+ * 性能:页深度一般 < 10,CTE 50 层硬上限(防御 parent_id 循环 + 极端深树);
+ * 配合 (page_id, kind) 上的 page_restrictions_page_idx,单页 NOT EXISTS
+ * 是 O(depth) 的 index seek,实测 list 端点 P95 不退化。
+ *
+ * 实现时间:2026-08-03,fix journey-B-1(替换 v0 折衷的「只查本页 view 限制」,
+ * 父链 view 限制子页不再出现在 sidebar / 列表,避免「幽灵条目 → 404」反 UX)。
  */
 export function pageReadableDirectFilter(me: Principal): SQL {
   if (me.isAdmin) return sql`TRUE`
@@ -591,19 +590,22 @@ export function pageReadableDirectFilter(me: Principal): SQL {
   return sql`(
     ${pages.authorId} = ${me.id}
     OR NOT EXISTS (
-      SELECT 1 FROM ${pageRestrictions}
-      WHERE ${pageRestrictions.pageId} = ${pages.id}
-        AND ${pageRestrictions.kind} = 'view'
-    )
-    OR EXISTS (
-      SELECT 1 FROM ${pageRestrictions}
-      WHERE ${pageRestrictions.pageId} = ${pages.id}
-        AND ${pageRestrictions.kind} = 'view'
-        AND (
-          (${pageRestrictions.principalKind} = 'user' AND ${pageRestrictions.principalId} = ${me.id})
-          OR (${pageRestrictions.principalKind} = 'group' AND ${pageRestrictions.principalId} IN (
-            SELECT ${userGroupMembers.groupId} FROM ${userGroupMembers}
-            WHERE ${userGroupMembers.userId} = ${me.id}
+      WITH RECURSIVE page_ancestors(id, depth) AS (
+        SELECT ${pages.id}, 0
+        UNION ALL
+        SELECT p.parent_id, pa.depth + 1
+        FROM pages p
+        INNER JOIN page_ancestors pa ON p.id = pa.id
+        WHERE pa.depth < 50 AND p.parent_id IS NOT NULL
+      )
+      SELECT 1 FROM page_restrictions pr
+      WHERE pr.kind = 'view'
+        AND pr.page_id IN (SELECT id FROM page_ancestors)
+        AND NOT (
+          (pr.principal_kind = 'user' AND pr.principal_id = ${me.id})
+          OR (pr.principal_kind = 'group' AND pr.principal_id IN (
+            SELECT ugm.group_id FROM user_group_members ugm
+            WHERE ugm.user_id = ${me.id}
           ))
         )
     )
@@ -709,9 +711,13 @@ export async function effectivePageReadAccess(
   // requireAuth 之前,自管 share 校验);这里不接,确保「匿名读」只能
   // 通过显式 share,不会从别的口子漏进来。
   if (me.kind !== 'user') return false
-  // page 作者本人:始终能读自己写的页(view 限制也不挡作者自己)
+  // page 作者本人:被移除出空间后,author 短路失效 → 走完整流程(canReadSpace
+  // false / view 限制父链 fail)→ 404。这是 E-1 (2026-08-03) 之前的安全
+  // 语义偏离 —— author 在被移除出空间后仍能 GET/PATCH/share 自己写的页
+  // 绕过空间隔离承诺。Plan A:author 短路**前**先 canReadSpace;仍在空间内
+  // 才保留「无视 view 限制读自己页」的权限(原 author 特殊待遇)。
   const meta = await loadPageMeta(pageId)
-  if (meta?.authorId === me.id) return true
+  if (meta?.authorId === me.id && (await canReadSpace(me, spaceId))) return true
 
   const myGroupIds = await userGroupIds(me)
   const visited = new Set<string>()
@@ -747,8 +753,12 @@ export async function effectivePageEditAccess(
 ): Promise<boolean> {
   if (me.isAdmin) return true
   if (me.kind !== 'user') return false
-  // page 作者本人:始终能改自己写的页(edit 限制也不挡作者)
-  if (authorId === me.id) return true
+  // page 作者本人:E-1 (2026-08-03) — author 短路**前**先 canEditSpace。
+  // 被移除出空间 → canEditSpace false → 短路不生效 → 走完整流程(edit
+  // 限制 / canEditSpace)→ false → PATCH 404。降级为 viewer 时也走同
+  // 路径 —— canEditSpace false,author 不能编辑自己写的页(对齐 Confluence
+  // 「空间角色决定可写性」语义,而不是 author 永远可写)。
+  if (authorId === me.id && (await canEditSpace(me, spaceId))) return true
 
   const { edit } = await loadPageRestrictions(pageId, spaceId)
   if (edit.users.size + edit.groups.size > 0) {

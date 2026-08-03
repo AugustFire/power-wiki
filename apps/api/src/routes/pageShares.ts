@@ -113,7 +113,15 @@ async function hasViewRestriction(pageId: string): Promise<boolean> {
   return !!row
 }
 
-/** DB row → ShareRow DTO(actor 名字 LEFT JOIN 平铺)。 */
+/** DB row → ShareRow DTO(actor 名字 LEFT JOIN 平铺 + tokenHash 前 8 位
+ *  前缀作非敏感标识符,D-2)。tokenHash 不下传整个,只截前 8 位 hex:
+ *   - sha256 输出 64 hex,前 8 = 32 bit 标识空间,远低于完整 hash 空间,
+ *     公开不破坏 token 不可逆性。
+ *   - 公开页路由验证用完整 hash,prefix 不参与认证。
+ *   - UI 用它做行级「这是哪条 share」视觉锚点(owner 「我记得是 …a3b9
+ *     那个」);接收方拿到也登不进公开页。
+ * 8 位选择跟 share_token 标准 base62 16 字符长度接近(同数量级),视觉
+ *  简短 + 标识够区分;想加长到 12 是后续 P2 工作量。 */
 function rowToShare(
   row: {
     id: string
@@ -124,6 +132,7 @@ function rowToShare(
     revokedAt: number | null
     revokedBy: string | null
     lastAccessedAt: number | null
+    tokenHash: string
   },
   actorName: string | null,
   revokerName: string | null,
@@ -139,6 +148,7 @@ function rowToShare(
     revokedBy: row.revokedBy,
     revokedByName: revokerName,
     lastAccessedAt: row.lastAccessedAt,
+    tokenPrefix: row.tokenHash.slice(0, 8),
   }
 }
 
@@ -235,6 +245,8 @@ pageSharesRouter.get('/:id/shares', async (c) => {
   // LEFT JOIN users × 2:created_by + revoked_by,平铺展示。
   // 单 share 行 → 2 行(users × created_by,users × revoked_by);
   // GROUP BY 重组?为简单,改用两次 SELECT + 拼 map。
+  // D-2 (2026-08-03):多 SELECT 一列 tokenHash 给 rowToShare 截前 8 位
+  // 做 tokenPrefix,前端拿不到完整 hash 也无法据此构造可登 URL。
   const rows = await db
     .select({
       id: pagePublicShares.id,
@@ -245,6 +257,7 @@ pageSharesRouter.get('/:id/shares', async (c) => {
       revokedAt: pagePublicShares.revokedAt,
       revokedBy: pagePublicShares.revokedBy,
       lastAccessedAt: pagePublicShares.lastAccessedAt,
+      tokenHash: pagePublicShares.tokenHash,
     })
     .from(pagePublicShares)
     .where(eq(pagePublicShares.pageId, pageId))

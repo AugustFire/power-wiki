@@ -85,7 +85,7 @@ Confluence 风格 view / edit 限制。`requireAuth` + `canManageRestrictions`(�
 | Method | Path | 说明 |
 |---|---|---|
 | POST   | `/:id/share` | body `{expiresInDays?: 7\|30\|90\|null}`(null = 永不过期)→ 201 `{id, token, url, expiresAt, createdAt}`;**校验:** shared space(否则 400 `share_forbidden`)+ 无 view 限制(否则 400 `share_forbidden`)+ `deleted_at IS NULL` |
-| GET    | `/:id/shares` | → `{shares: ShareRow[]}`(DESC by createdAt;revoked / active 都返) |
+| GET    | `/:id/shares` | → `{shares: ShareRow[]}`(DESC by createdAt;revoked / active 都返);每行带 `tokenPrefix`(= sha256 tokenHash 前 8 位 hex,非敏感标识符) |
 | DELETE | `/:id/share/:shareId` | → 204;若已 revoked → 400 `share_already_revoked`;**不**做 cascade(page purge 才扫 shares) |
 
 ### Public Shares(Phase D,挂在 `/api` 同前缀,**无需 auth**)

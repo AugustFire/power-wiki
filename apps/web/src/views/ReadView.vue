@@ -722,7 +722,10 @@ watch(
     <PageActions>
       <!-- 关注按钮 —— 个人空间无 watch 语义,直接不渲染。 -->
       <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
-      <!-- 复制按钮:恢复模块 2 P0 的「复制」入口,onDuplicate() 已存在。 -->
+      <!-- 复制按钮:PageTree 上下文里的同名入口叫「复制页面」(2026-08-03 语义
+           对齐),这里是单页复制快捷入口 —— 顶栏只能塞一个按钮,把它跟
+           PageTree 的「复制页面」标签对齐,避免顶栏「复制」/ 侧栏「复制页面」
+           两种叫法歧义。子树复制走 ⋯ 菜单的「复制整棵子树」。 -->
       <button
         v-if="page"
         class="btn"
@@ -731,11 +734,15 @@ watch(
         @click="onDuplicate"
       >
         <span class="material-symbols-outlined icon-md">content_copy</span>
-        复制
+        复制页面
       </button>
       <!-- ⋮ 更多操作 —— 把现有 导出 / 历史 / 限制 / 分享 + 新增 移动 / 复制链接
            / 删除 全部装进 popover。1280 视口下顶栏只剩 4 个元素,不再挤爆
-           subheader。 -->
+           subheader。
+           C-2 (2026-08-03):hasChildren 透传当前页的子页数(subPages.length > 0),
+           有子页时菜单的「复制」项展开 submenu(仅本页 / 连同子树),跟 PageTree
+           的复制双入口对齐。无子页时退化成单动作,跟顶栏「复制」快捷按钮
+           语义一致(用户用 menu vs 顶栏 button 选入口,结果相同)。 -->
       <PageMoreActionsMenu
         v-if="page"
         :page="page"
@@ -743,6 +750,7 @@ watch(
         :can-manage-restrictions="canManageRestrictions"
         :can-move="canMove"
         :can-delete="canDelete"
+        :has-children="subPages.length > 0"
         @restrictions="restrictionsOpen = true"
         @share="shareOpen = true"
         @delete="onDelete"
@@ -985,12 +993,15 @@ watch(
                  Attachments 24 不齐)。Reactions 整组上移到 byline 子行
                  (见上面 .page-reactions),不留底部独立 section。 -->
 
-            <!-- 标签条:一级 metadata,先于附件。 -->
-            <LabelPills v-if="page" :page="page" />
+            <!-- 标签条:一级 metadata,先于附件。canEdit=false(viewer / 个人空间读
+                 者 / 归档空间读者)时整段退化成只读 chip 行,不暴露 `+`/`×` 按钮
+                 —— 后端 `pageLabels.ts:85/140` 拒绝,UI 提前收口避免红色 banner。 -->
+            <LabelPills v-if="page" :page="page" :can-edit="canEdit" />
 
             <!-- 附件汇总:二级 metadata,放在 Labels 之下。count=0 时整段
-                 不渲染,无视觉干扰。 -->
-            <AttachmentsSection v-if="page" :page-id="page.id" />
+                 不渲染,无视觉干扰。canEdit=false 时隐藏每行的删除按钮
+                 (删除走 attachments.ts DELETE,需要 canEditPage)。 -->
+            <AttachmentsSection v-if="page" :page-id="page.id" :can-delete="canEdit" />
 
             <div v-if="subPages.length > 0" class="subpages">
               <div class="subpages-title">

@@ -182,8 +182,8 @@ pageLabelsRouter.get('/search', async (c) => {
     if (accessible === '*' || accessible.length === 0) return c.json([], 200)
   }
 
-  // Phase B: 加 page-level view restriction 过滤(直接 view 限制;父链继承
-  // 留 v0 折衷,见 permissions.ts pageReadableDirectFilter 注释)。
+  // Phase B: 加 page-level view restriction 过滤(2026-08-03 起含父链继承,
+  // 见 permissions.ts:pageReadableDirectFilter)。
   const principal = principalFromUser(me)
   const pageReadFilter =
     me.role === 'admin' ? sql`TRUE` : pageReadableDirectFilter(principal)

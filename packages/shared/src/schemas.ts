@@ -127,16 +127,18 @@ export const PageNodeSchema = z.object({
    * 显示该字段(列表里只剩已发布的 row,没必要重复)。 */
   firstPublishedAt: z.number().int().positive().nullable().optional(),
   /**
-   * Phase B 页面级 view 限制标记 —— 服务端 EXISTS 子查询
-   * `(SELECT 1 FROM page_restrictions WHERE page_id=? AND kind='view')`。
-   * 用来让 Sidebar / 列表 UI 渲染「🔒 限制中」chip,无需拉完整 allow-list。
+   * Phase B 页面级 view 限制标记 —— 由 `selectPagesWithAuthor` 注入
+   * (EXISTS 子查询,2026-08-03 起实现)。用来让 Sidebar / 列表 UI 渲染
+   * 「🔒 限制中」chip,无需拉完整 allow-list。
    * 注意:这不是「我能读吗」的判断,只是「此页是否配置了限制」的元信息
    * —— 真正的可读性走 permissions.ts canReadPage(由后端路由在 404/200
    * 之间直接表达)。Optional:fallback 路径 / 老 cache 没填时为 undefined,
    * UI fallback 到 false。 */
   hasViewRestriction: z.boolean().optional(),
   /** Phase B 页面级 edit 限制标记 —— 与 hasViewRestriction 同构,
-   * 用来在 ReadView / EditView 头部显示「🔒 受编辑限制」chip。 */
+   * 用来在 ReadView / EditView 头部显示「🔒 受编辑限制」chip。
+   * (2026-08-03 起 selectPagesWithAuthor 注入 EXISTS 子查询,跟
+   * hasViewRestriction 一起补齐;之前 schema 注释承诺但代码未实现。) */
   hasEditRestriction: z.boolean().optional(),
   /**
    * 当前用户在该 page 所属空间的 effective role(viewer/editor/admin),
@@ -1349,7 +1351,19 @@ export const CreateShareInputSchema = z.object({
 })
 export type CreateShareInput = z.infer<typeof CreateShareInputSchema>
 
-/** 单条 share 元信息(不含 tokenHash)。ShareDialog 列表 / 撤销按钮用。 */
+/** 单条 share 元信息(不含 tokenHash 明文)。ShareDialog 列表 / 撤销按钮用。
+ *
+ * `tokenPrefix` 是 sha256(tokenHash) 的前 8 位 hex 串 ——
+ * **非敏感标识符**,用于前端在「token 不可恢复」(创建后丢失 plaintext)
+ * 场景下做行级标识和提示锚点:ShareDialog 列表行可以显示 `…a3b9`,
+ * 让 owner 凭印象定位「我那个 `…a3b9` 的链接」是哪条。
+ *
+ * 安全侧:sha256 hash 截前 8 位 = 32 bit,不是 secret;公开它不影响 token
+ * 不可逆性(2^32 ≈ 4B 候选空间,远低于 sha256 输出空间)。它**不是**
+ * 公开 URL 的一部分,只是 UI 行级可见字符串,接收方拿到也不能用它登入
+ * 公开页 —— 公开页验证的是完整 64 位 hash。
+ *
+ * 2026-08-03 D-2 加。 */
 export const ShareRowSchema = z.object({
   id: z.string(),
   pageId: z.string(),
@@ -1361,6 +1375,7 @@ export const ShareRowSchema = z.object({
   revokedBy: z.string().nullable(),
   revokedByName: z.string().nullable(),
   lastAccessedAt: z.number().int().nonnegative().nullable(),
+  tokenPrefix: z.string(),
 })
 export type ShareRow = z.infer<typeof ShareRowSchema>
 

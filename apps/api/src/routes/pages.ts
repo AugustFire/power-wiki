@@ -207,8 +207,8 @@ pagesRouter.get('/', async (c) => {
       return c.json({ items: [], limit: 0, offset: 0, hasMore: false })
     }
 
-    // Phase B: page-level view restriction 过滤(直接 view 限制,不含父链
-    // 继承 —— 见 lib/permissions.ts pageReadableDirectFilter 注释)。
+    // Phase B: page-level view restriction 过滤,2026-08-03 起沿父链继承
+    // (Recursive CTE 见 lib/permissions.ts:pageReadableDirectFilter)。
     const principal = principalFromUser(me)
     const pageReadFilter = pageReadableDirectFilter(principal)
 
@@ -496,7 +496,6 @@ pagesRouter.post('/', async (c) => {
   // — Confluence-style: admin supervises, doesn't edit).
   const blocked = await assertAdminNotWritingPersonalSpace(c, me, input.spaceId)
   if (blocked) return blocked
-  console.log('!!! INTENTIONALLY_BROKEN_FOR_DEBUG !!!') // deliberate syntax-ish to trigger reload
 
   // sortOrder: 显式传入则用,否则追加到末尾。
   let sortOrder = input.order

@@ -77,6 +77,10 @@ export type PageRowWithAuthor = PageRow & {
   watchedByMe?: boolean
   /** M13 👁 该页关注者总数。COUNT correlated,未走 join fallback 0。 */
   watchersCount?: number
+  /** B-3 (2026-08-03):本页是否有 view 限制。EXISTS 子查询,fallback 路径 false。 */
+  hasViewRestriction?: boolean
+  /** B-3 (2026-08-03):本页是否有 edit 限制。EXISTS 子查询,fallback 路径 false。 */
+  hasEditRestriction?: boolean
 }
 
 export function rowToPageNode(row: PageRowWithAuthor): PageNode {
@@ -114,6 +118,8 @@ export function rowToPageNode(row: PageRowWithAuthor): PageNode {
     likedBySample: (row.likedBySample ?? []) as unknown as PageNode['likedBySample'],
     watchedByMe: row.watchedByMe ?? false,
     watchersCount: row.watchersCount ?? 0,
+    hasViewRestriction: row.hasViewRestriction ?? false,
+    hasEditRestriction: row.hasEditRestriction ?? false,
   }
   if (row.icon !== null) node.icon = row.icon
   return node

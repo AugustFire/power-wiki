@@ -30,8 +30,14 @@ const props = withDefaults(
      *  popover trigger (EditView header bar). Read view always shows
      *  the + trigger even when empty. */
     compact?: boolean
+    /** B-2 (2026-08-03):编辑权限 gate。false 时隐藏 `+ 编辑标签` 触发器
+     *  与每个 chip 上的 `×` 删除按钮 —— 后端 pageLabels.ts:85/140 拒绝
+     *  无 canEditPage 的 add/remove,UI 提前收口避免红色 banner。前端
+     *  canEditPage 的语义跟 EditView.canEditPageNode 对齐(viewer /
+     *  personal-readonly / spaceArchived 一律退化成纯展示)。 */
+    canEdit?: boolean
   }>(),
-  { compact: false },
+  { compact: false, canEdit: true },
 )
 
 const popoverOpen = ref(false)
@@ -100,11 +106,13 @@ async function removeLabel(label: string) {
     <span
       v-for="l in labels"
       :key="l"
-      class="label-chip label-chip-removable"
+      class="label-chip"
+      :class="{ 'label-chip-removable': canEdit }"
       :style="chipStyle(l)"
     >
       {{ l }}
       <button
+        v-if="canEdit"
         class="label-remove"
         type="button"
         :aria-label="`移除标签 ${l}`"
@@ -114,8 +122,10 @@ async function removeLabel(label: string) {
         <span class="material-symbols-outlined icon-xs">close</span>
       </button>
     </span>
-    <!-- 文字按钮触发 popover — 跟 design 一致,用 accent 文字而不是 dashed chip -->
+    <!-- 文字按钮触发 popover — 跟 design 一致,用 accent 文字而不是 dashed chip。
+         B-2:canEdit=false(viewer)时不渲染,免得点击触发后端 404 + 红色 banner。 -->
     <button
+      v-if="canEdit"
       class="label-add-text"
       type="button"
       @click="openPopover"

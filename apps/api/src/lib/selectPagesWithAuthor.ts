@@ -101,6 +101,22 @@ export function selectPagesWithAuthor(
      FROM user_watched_pages wp
      WHERE wp.page_id = ${pages.id})
   `.as('watchers_count')
+  // B-3 (2026-08-03):hasViewRestriction / hasEditRestriction 由服务端
+  // EXISTS 子查询填充 —— 之前 schema 注释承诺但代码没实现,导致 Sidebar
+  // / 列表 UI 永远看不到「受限」chip。两条 EXISTS 各自走 page_restrictions_page_idx
+  // (page_id, kind),独立 index seek,不增加额外 JOIN。
+  const hasViewRestrictionExpr = sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM page_restrictions pr
+      WHERE pr.page_id = ${pages.id} AND pr.kind = 'view'
+    )
+  `.as('has_view_restriction')
+  const hasEditRestrictionExpr = sql<boolean>`
+    EXISTS (
+      SELECT 1 FROM page_restrictions pr
+      WHERE pr.page_id = ${pages.id} AND pr.kind = 'edit'
+    )
+  `.as('has_edit_restriction')
   const editorUsers = aliasedTable(users, 'editor_users')
   const q = db
     .select({
@@ -120,6 +136,8 @@ export function selectPagesWithAuthor(
       likedBySample: likedBySampleExpr,
       watchedByMe: watchedByMeExpr,
       watchersCount: watchersCountExpr,
+      hasViewRestriction: hasViewRestrictionExpr,
+      hasEditRestriction: hasEditRestrictionExpr,
     })
     .from(pages)
     .leftJoin(users, eq(pages.authorId, users.id))

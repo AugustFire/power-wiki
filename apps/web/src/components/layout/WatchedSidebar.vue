@@ -28,7 +28,8 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import { useSpacesStore } from '@/stores/spaces'
 import { usePagesStore } from '@/stores/pages'
 import { useUiStore } from '@/stores/ui'
@@ -59,6 +60,10 @@ function toggle(): void {
 const items = ref<PageNode[]>([])
 const total = ref(0)
 const loading = ref(false)
+// B-4 (2026-08-03):load() 之前 try/finally 没有 catch,网络错误被静默吞掉,
+// UI 不反馈(用户看不到关注列表但也不知道为啥)。现在把错误暴露给模板渲染,
+// 失败时显示「加载失败」行 + 重试按钮,跟其它 sidebar section 的失败 UX 对齐。
+const loadError = ref<string | null>(null)
 
 const currentPageId = computed(() => {
   const id = route.params.id
@@ -76,6 +81,7 @@ async function load() {
     return
   }
   loading.value = true
+  loadError.value = null
   try {
     const r = await api.users.me.watched({
       spaceId: sid,
@@ -90,6 +96,13 @@ async function load() {
     // 兜底)。
     items.value = r.items.filter((p) => p.deletedAt == null)
     total.value = r.hasMore ? items.value.length + 1 : items.value.length
+  } catch (e) {
+    // B-4:不再静默吞错。ApiError 走 humanizeApiError 翻译成白话;
+    // 其它 unknown error 兜底成「加载失败」。items 立刻清空避免显示
+    // 上一空间的 stale rows。
+    loadError.value = e instanceof ApiError ? humanizeApiError(e) : '加载失败'
+    items.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -147,6 +160,17 @@ function goPage(pageId: string) {
         >
           查看全部
         </RouterLink>
+      </div>
+    </template>
+    <!-- B-4:加载失败行 —— 仅在用户展开了 section 且非空 + 报错时显示。
+         跟「暂无关注」的 0 条空态视觉一致(都是 section 标题下没有 row),
+         区别在多一行 muted 错误提示 + 重试按钮,告诉用户「这是网络问题、
+         不是你没关注」。 -->
+    <template v-else-if="expanded && loadError">
+      <div class="watched-error" role="status">
+        <span class="material-symbols-outlined watched-err-icon">error</span>
+        <span class="watched-err-text">{{ loadError }}</span>
+        <button type="button" class="watched-retry" @click="load()">重试</button>
       </div>
     </template>
   </div>
@@ -227,6 +251,41 @@ function goPage(pageId: string) {
   text-decoration: none;
 }
 .watched-all:hover {
+  text-decoration: underline;
+}
+
+/* B-4:加载失败行 —— 单行紧凑,跟 .watched-row 起点对齐,跟 sidebar 顶
+   部两块 section 的失败 UX 同款模式(icon + text + retry)。 */
+.watched-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 20px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.watched-err-icon {
+  font-size: 14px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.watched-err-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watched-retry {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.watched-retry:hover {
   text-decoration: underline;
 }
 </style>
