@@ -198,6 +198,7 @@ async function deregisterUser(u: User) {
       '· 清除该用户的所有组成员关系、关注、点赞与未读通知\n' +
       '· 移除该用户的直接空间授权与页面级限制\n' +
       '· 已创建的页面与评论保留,署名变为「已注销用户」',
+    requireText: u.name,
     confirmText: '确认注销',
     cancelText: '取消',
     danger: true,

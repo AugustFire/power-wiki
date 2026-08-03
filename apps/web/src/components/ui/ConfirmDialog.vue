@@ -10,14 +10,21 @@ const { state, close } = useConfirm()
 const isDanger = computed(() => state.value.danger)
 const title = computed(() => state.value.title)
 const message = computed(() => state.value.message)
+const details = computed(() => state.value.details ?? [])
+const requireText = computed(() => state.value.requireText ?? '')
+const typedInput = ref('')
+const canConfirm = computed(() => !requireText.value || typedInput.value === requireText.value)
 const confirmText = computed(() => state.value.confirmText)
 const cancelText = computed(() => state.value.cancelText)
 
 function onCancel() {
+  typedInput.value = ''
   close(false)
 }
 
 function onConfirm() {
+  if (!canConfirm.value) return
+  typedInput.value = ''
   close(true)
 }
 
@@ -75,6 +82,13 @@ useFocusTrap(dialogRef, () => state.value.open, {
           <div class="confirm-body">
             <div id="confirm-title" class="confirm-title">{{ title }}</div>
             <div v-if="message" class="confirm-message">{{ message }}</div>
+            <ul v-if="details.length" class="confirm-details">
+              <li v-for="detail in details" :key="detail">{{ detail }}</li>
+            </ul>
+            <label v-if="requireText" class="confirm-typed">
+              <span>请输入 <code>{{ requireText }}</code> 以确认</span>
+              <input v-model="typedInput" type="text" autocomplete="off" />
+            </label>
           </div>
           <div class="confirm-actions">
             <button class="btn ghost" type="button" @click="onCancel">
@@ -85,6 +99,7 @@ useFocusTrap(dialogRef, () => state.value.open, {
               :class="isDanger ? 'danger' : 'primary'"
               type="button"
               autofocus
+              :disabled="!canConfirm"
               @click="onConfirm"
             >
               {{ confirmText }}
@@ -166,6 +181,35 @@ useFocusTrap(dialogRef, () => state.value.open, {
   /* message 支持换行 / 多段:用 \n\n 段落、\n 行。其它弹窗都是单行
      不带 \n,加这个不影响它们。 */
   white-space: pre-wrap;
+}
+
+
+.confirm-details {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.confirm-typed {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.confirm-typed input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-1);
+  background: var(--bg);
+}
+.confirm-typed code {
+  color: var(--text-1);
+  font-family: var(--font-mono);
 }
 
 .confirm-actions {

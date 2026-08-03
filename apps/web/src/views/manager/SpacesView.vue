@@ -287,9 +287,22 @@ async function onUnarchive(s: Space) {
 }
 
 async function onDelete(s: Space) {
+  let pageCount: number | null = null
+  try {
+    pageCount = (await api.admin.spaces.deleteImpact(s.id)).pageCount
+  } catch {
+    pageCount = null
+  }
   const ok = await askConfirm({
     title: '删除空间',
-    message: `确定要删除空间「${s.name}」吗?该操作不可撤销。空间必须为空(没有页面)才能删除 — 否则请先移动或删除页面。`,
+    message: `确定要删除空间「${s.name}」吗?该操作不可撤销。`,
+    details: [
+      pageCount === null
+        ? '空间必须为空(没有页面)才能删除。'
+        : pageCount > 0
+        ? `当前空间还有 ${pageCount} 个页面,请先删除或移动。`
+        : '当前空间没有未删除页面。',
+    ],
     confirmText: '删除',
     danger: true,
   })

@@ -111,3 +111,11 @@ export function spaceRefForPage(page: PageNode | null | undefined): SpaceRef | n
   if (!page) return null
   return resolvePersonalSpace(page.spaceId)
 }
+
+export function canManagePageWrite(me: User | null, page: PageNode | null | undefined): boolean {
+  if (!me || !page || page.spaceArchived) return false
+  if (!canWritePersonalSpace(me, spaceRefForPage(page))) return false
+  if (me.role === 'admin') return true
+  if (page.viewerRole && page.viewerRole !== 'viewer') return true
+  return me.id === page.authorId
+}

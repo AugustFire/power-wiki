@@ -20,8 +20,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUiStore } from '@/stores/ui'
 import { api, ApiError } from '@/lib/api'
+import { humanizeApiError } from '@/lib/humanizeApiError'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
-import type { SpaceMember, SpaceMemberSource, SpaceRole } from '@power-wiki/shared'
+import type {
+  SpaceMember,
+  SpaceMemberSource,
+  SpaceRole,
+  User,
+  UserGroup,
+} from '@power-wiki/shared'
 
 const props = defineProps<{
   spaceId: string
@@ -141,11 +148,151 @@ function goHighlightGrant(source: SpaceMemberSource, memberUserId: string) {
   })
 }
 
+/** 「调整」按钮文案:按首位来源区分「调整直接授权」/「调整用户组授权」,
+ * 让管理员一眼能看出点击之后会跳到 grants tab 的哪一段。 */
+function adjustLabel(m: SpaceMember): string {
+  const first = m.sources[0]
+  if (!first) return '调整授权'
+  return first.kind === 'direct' ? '调整直接授权' : '调整用户组授权'
+}
+function adjustTitle(m: SpaceMember): string {
+  const first = m.sources[0]
+  if (!first) return '跳到授权 tab'
+  if (first.kind === 'direct') return '跳到授权 tab 调整「' + m.user.name + '」的直接授权'
+  return '跳到授权 tab 调整「' + (first.groupName ?? first.groupId) + '」用户组的授权'
+}
+
 /* ─── 复制 userId 调试(开发用,production no-op) ───────────── */
 function copyUserId(userId: string) {
   if (typeof navigator !== 'undefined' && navigator.clipboard) {
     void navigator.clipboard.writeText(userId)
     uiStore.notify('已复制 userId', 'info')
+  }
+}
+
+/* ─── P1-4:添加成员 / 用户组 入口(2026-08-03)────────────────────
+ * 复用 `candidates` 端点(共享 space-admin 路径,不依赖 admin.users.list),
+ * 默认角色 viewer —— 新成员进来先按只读访问,要更高权限去授权 tab 调。
+ * 直接 upsert 调 `upsertUser` / `upsertGroup`,成功后 reload members,
+ * 跟 grants tab 的 full-replace 不冲突(单条 upsert 走自己的路由)。
+ * 跟 grants tab 同时打开编辑时:这里直接调 upsert,grants tab 本地
+ * dirty 状态会被后端真相覆盖;UI 不做并发锁,跟原有 upsert 同语义。 */
+const addOpen = ref<null | 'user' | 'group'>(null)
+const addSearch = ref('')
+const candidates = ref<{ users: User[]; groups: UserGroup[] }>({ users: [], groups: [] })
+const candidatesLoading = ref(false)
+const addBusy = ref(false)
+const addRootEl = ref<HTMLElement | null>(null)
+
+async function loadCandidates() {
+  candidatesLoading.value = true
+  try {
+    candidates.value = await api.spaces.permissions.candidates(props.spaceId, addSearch.value)
+  } catch (e) {
+    if (e instanceof ApiError) {
+      uiStore.notify(humanizeApiError(e), 'error')
+    } else {
+      uiStore.notify('加载候选失败', 'error')
+    }
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+function openAdd(kind: 'user' | 'group') {
+  addOpen.value = kind
+  addSearch.value = ''
+  void loadCandidates()
+}
+function closeAdd() {
+  addOpen.value = null
+  addSearch.value = ''
+}
+
+const filteredUserCandidates = computed(() => {
+  if (addOpen.value !== 'user') return []
+  const q = addSearch.value.trim().toLowerCase()
+  const taken = new Set(members.value.map((m) => m.userId))
+  let list = candidates.value.users.filter(
+    (u) => !taken.has(u.id) && u.status !== 'disabled' && u.status !== 'anonymized',
+  )
+  if (q) list = list.filter((u) =>
+    u.name.toLowerCase().includes(q) || (u.email ?? '').toLowerCase().includes(q),
+  )
+  return list
+})
+const filteredGroupCandidates = computed(() => {
+  if (addOpen.value !== 'group') return []
+  const q = addSearch.value.trim().toLowerCase()
+  const taken = new Set<string>()
+  for (const m of members.value) {
+    for (const s of m.sources) {
+      if (s.kind === 'group' && s.groupId) taken.add(s.groupId)
+    }
+  }
+  let list = candidates.value.groups.filter(
+    (g) => !taken.has(g.id) && !g.id.startsWith('pg-'),
+  )
+  if (q) list = list.filter((g) =>
+    g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q),
+  )
+  return list
+})
+
+let candidatesSearchTimer: ReturnType<typeof setTimeout> | null = null
+watch(addSearch, () => {
+  if (candidatesSearchTimer) clearTimeout(candidatesSearchTimer)
+  candidatesSearchTimer = setTimeout(() => {
+    void loadCandidates()
+  }, 300)
+})
+
+function onAddDocClick(e: MouseEvent) {
+  if (!addOpen.value || !addRootEl.value) return
+  if (!addRootEl.value.contains(e.target as Node)) closeAdd()
+}
+function onAddKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && addOpen.value) {
+    e.preventDefault()
+    closeAdd()
+  }
+}
+onMounted(() => {
+  document.addEventListener('mousedown', onAddDocClick)
+  document.addEventListener('keydown', onAddKey)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onAddDocClick)
+  document.removeEventListener('keydown', onAddKey)
+  if (candidatesSearchTimer) clearTimeout(candidatesSearchTimer)
+})
+
+async function addUserDirect(userId: string) {
+  if (addBusy.value) return
+  addBusy.value = true
+  try {
+    await api.spaces.permissions.upsertUser(props.spaceId, userId, 'viewer')
+    uiStore.notify('已添加成员(默认只读)', 'info')
+    closeAdd()
+    await load()
+  } catch (e) {
+    uiStore.notify(e instanceof ApiError ? humanizeApiError(e) : '添加失败', 'error')
+  } finally {
+    addBusy.value = false
+  }
+}
+async function addGroupDirect(groupId: string) {
+  if (addBusy.value) return
+  addBusy.value = true
+  try {
+    await api.spaces.permissions.upsertGroup(props.spaceId, groupId, 'viewer')
+    uiStore.notify('已添加用户组(默认只读)', 'info')
+    closeAdd()
+    await load()
+  } catch (e) {
+    uiStore.notify(e instanceof ApiError ? humanizeApiError(e) : '添加失败', 'error')
+  } finally {
+    addBusy.value = false
   }
 }
 </script>
@@ -157,15 +304,111 @@ function copyUserId(userId: string) {
         <h2 class="smt-title">成员</h2>
         <span class="smt-count">{{ members.length }} 人</span>
       </div>
-      <div class="smt-search">
-        <span class="material-symbols-outlined smt-search-icon">search</span>
-        <input
-          v-model="search"
-          type="text"
-          class="smt-search-input"
-          placeholder="按姓名或邮箱搜索"
-          :disabled="loading"
-        />
+      <div class="smt-header-actions">
+        <div ref="addRootEl" class="smt-add-wrap">
+          <button
+            type="button"
+            class="btn ghost smt-add-btn"
+            :disabled="addOpen !== null"
+            @click="openAdd('user')"
+          >
+            <span class="material-symbols-outlined">person_add</span>
+            <span>添加成员</span>
+          </button>
+          <button
+            type="button"
+            class="btn ghost smt-add-btn"
+            :disabled="addOpen !== null"
+            @click="openAdd('group')"
+          >
+            <span class="material-symbols-outlined">workspaces</span>
+            <span>添加用户组</span>
+          </button>
+          <div v-if="addOpen !== null" class="smt-add-popover">
+            <div class="smt-add-head">
+              <span class="material-symbols-outlined">
+                {{ addOpen === 'user' ? 'person_add' : 'workspaces' }}
+              </span>
+              <span class="smt-add-title">
+                {{ addOpen === 'user' ? '添加成员(默认只读)' : '添加用户组(默认只读)' }}
+              </span>
+            </div>
+            <div class="smt-add-search">
+              <span class="material-symbols-outlined smt-search-icon">search</span>
+              <input
+                v-model="addSearch"
+                type="text"
+                class="smt-search-input"
+                :placeholder="addOpen === 'user' ? '按姓名或邮箱搜索' : '按组名或描述搜索'"
+                :disabled="candidatesLoading"
+              />
+            </div>
+            <div class="smt-add-scroll">
+              <template v-if="addOpen === 'user'">
+                <div v-if="candidatesLoading" class="smt-add-loading">加载候选中…</div>
+                <div v-else-if="filteredUserCandidates.length === 0" class="smt-add-empty">
+                  没有可添加的成员
+                </div>
+                <button
+                  v-for="u in filteredUserCandidates.slice(0, 30)"
+                  v-else
+                  :key="u.id"
+                  type="button"
+                  class="smt-add-candidate"
+                  :disabled="addBusy"
+                  @click="addUserDirect(u.id)"
+                >
+                  <span class="smt-row-avatar" :style="{ background: u.color }">
+                    {{ (u.name || '?').slice(0, 2) }}
+                  </span>
+                  <div class="smt-add-text">
+                    <div class="smt-add-name">{{ u.name }}</div>
+                    <div class="smt-add-desc">{{ u.email }}</div>
+                  </div>
+                  <span class="smt-add-cta">添加</span>
+                </button>
+              </template>
+              <template v-else>
+                <div v-if="candidatesLoading" class="smt-add-loading">加载候选中…</div>
+                <div v-else-if="filteredGroupCandidates.length === 0" class="smt-add-empty">
+                  没有可添加的用户组
+                </div>
+                <button
+                  v-for="g in filteredGroupCandidates.slice(0, 30)"
+                  v-else
+                  :key="g.id"
+                  type="button"
+                  class="smt-add-candidate"
+                  :disabled="addBusy"
+                  @click="addGroupDirect(g.id)"
+                >
+                  <span class="material-symbols-outlined smt-add-icon">workspaces</span>
+                  <div class="smt-add-text">
+                    <div class="smt-add-name">{{ g.name }}</div>
+                    <div v-if="g.description" class="smt-add-desc">{{ g.description }}</div>
+                  </div>
+                  <span class="smt-add-cta">添加</span>
+                </button>
+              </template>
+            </div>
+            <div class="smt-add-foot">
+              <span class="smt-add-foot-hint">
+                新成员先以「只读」加入,要去「授权」tab 调整更高权限。
+              </span>
+              <button type="button" class="btn ghost" @click="closeAdd">完成</button>
+            </div>
+          </div>
+        </div>
+        <div class="smt-search">
+          <span class="material-symbols-outlined smt-search-icon">search</span>
+          <input
+            v-model="search"
+            type="text"
+            class="smt-search-input"
+            placeholder="按姓名或邮箱搜索"
+            :disabled="loading"
+          />
+        </div>
       </div>
     </div>
     <p class="smt-hint">
@@ -281,10 +524,10 @@ function copyUserId(userId: string) {
         <button
           type="button"
           class="smt-adjust"
-          :title="`跳到授权 tab 调整「${m.user.name}」的授权`"
+          :title="adjustTitle(m)"
           @click="goHighlightGrant(m.sources[0]!, m.userId)"
         >
-          调整
+          {{ adjustLabel(m) }}
           <span class="material-symbols-outlined">arrow_forward</span>
         </button>
       </li>
@@ -294,7 +537,17 @@ function copyUserId(userId: string) {
       没有匹配「{{ searchDebounced }}」的成员
     </div>
     <div v-else class="smt-empty">
-      还没有任何成员 — 去授权 tab 添加用户或用户组
+      <p class="smt-empty-text">还没有任何成员 — 先加几个成员或用户组:</p>
+      <div class="smt-empty-actions">
+        <button type="button" class="btn ghost" @click="openAdd('user')">
+          <span class="material-symbols-outlined">person_add</span>
+          <span>添加成员</span>
+        </button>
+        <button type="button" class="btn ghost" @click="openAdd('group')">
+          <span class="material-symbols-outlined">workspaces</span>
+          <span>添加用户组</span>
+        </button>
+      </div>
     </div>
   </section>
 </template>
@@ -339,6 +592,114 @@ function copyUserId(userId: string) {
   position: relative;
   width: 260px;
   flex-shrink: 0;
+}
+
+.smt-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.smt-add-wrap { position: relative; display: inline-flex; gap: 6px; }
+
+.smt-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 0 12px;
+  height: 32px;
+  font-family: inherit;
+}
+.smt-add-btn .material-symbols-outlined { font-size: 16px; }
+
+.smt-add-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 360px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  box-shadow: var(--shadow-sm, 0 2px 12px rgba(0, 0, 0, 0.08));
+  z-index: 20;
+}
+
+.smt-add-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.smt-add-head .material-symbols-outlined { font-size: 18px; color: var(--accent); }
+.smt-add-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
+
+.smt-add-search { padding: 8px 12px 4px; }
+
+.smt-add-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+  max-height: 320px;
+}
+
+.smt-add-loading,
+.smt-add-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.smt-add-candidate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm, 3px);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.smt-add-candidate:hover { background: var(--bg-canvas); }
+.smt-add-candidate:disabled { cursor: progress; opacity: 0.6; }
+
+.smt-add-icon { font-size: 22px; color: var(--accent); flex-shrink: 0; }
+.smt-row-avatar {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 700; font-size: 11px; text-transform: uppercase;
+}
+.smt-add-text { min-width: 0; flex: 1; }
+.smt-add-name { font-size: 13px; font-weight: 500; color: var(--text-1); }
+.smt-add-desc { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.smt-add-cta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.smt-add-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-canvas);
+}
+.smt-add-foot-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.4;
 }
 
 .smt-search-icon {
@@ -393,7 +754,7 @@ function copyUserId(userId: string) {
 .smt-list-header,
 .smt-row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 92px minmax(180px, 280px) 72px;
+  grid-template-columns: 32px minmax(140px, 220px) 92px minmax(160px, 240px) 120px;
   align-items: center;
   column-gap: 16px;
 }
@@ -628,13 +989,30 @@ function copyUserId(userId: string) {
 
 /* ─── empty / error / skeleton ─── */
 .smt-empty {
-  padding: 32px;
+  padding: 28px 24px;
   text-align: center;
   color: var(--text-3);
   font-size: 13px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-md, 4px);
 }
+.smt-empty-text { margin: 0 0 12px 0; }
+.smt-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.smt-empty-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.smt-empty-actions .material-symbols-outlined { font-size: 16px; }
 
 .smt-error {
   padding: 24px;
@@ -659,7 +1037,7 @@ function copyUserId(userId: string) {
 
 .smt-skel-row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 92px minmax(180px, 280px) 72px;
+  grid-template-columns: 32px minmax(140px, 220px) 92px minmax(160px, 240px) 120px;
   align-items: center;
   column-gap: 16px;
   padding: 10px 12px;

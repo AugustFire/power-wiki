@@ -277,12 +277,14 @@ adminSpacesRouter.patch('/:id', async (c) => {
   )
 })
 
-/* ─── DELETE /api/admin/spaces/:id ────────────────────────────────────── */
-// Refuses if the space has any pages (409 space_not_empty) or is a personal
-// space (400 personal_space_cannot_delete — see route header). Cascade
-// delete would silently drop the entire subtree, which is the kind of action
-// that should require an extra confirmation in the UI rather than be
-// triggered by accident.
+/* ─── GET /api/admin/spaces/:id/delete-impact ─────────────────────────── */
+adminSpacesRouter.get('/:id/delete-impact', async (c) => {
+  const id = c.req.param('id')
+  const existing = await db.select({ id: spaces.id, kind: spaces.kind }).from(spaces).where(eq(spaces.id, id)).limit(1)
+  if (!existing[0]) return c.json({ error: 'not_found' }, 404)
+  if (existing[0].kind === 'personal') return c.json({ error: 'personal_space_cannot_delete' }, 400)
+  return c.json({ pageCount: await countPagesInSpace(id) })
+})
 adminSpacesRouter.delete('/:id', async (c) => {
   const me = c.get('user')
   const id = c.req.param('id')

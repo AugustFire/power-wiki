@@ -4,12 +4,17 @@
  *
  * 语义(Confluence 风格,后端 permissions.ts 实现):
  *   - 查看限制(view):沿父链继承 —— 任一祖先设了 view 限制,子页也被收紧
+ *     (P1-3 起可独立关闭 inherit_view_restrictions,本页成为新规则起点)
  *   - 编辑限制(edit):不继承 —— 只作用于本页
  *   - 两个 allow-list 都空 = 无限制(回退到空间角色)
+ *   - 受保护主体(global admin / space admin / page 作者)始终享有 full
+ *     访问权,不受 allow-list 约束 —— 后端短路,UI 在 protectedSources
+ *     给出明确提示避免误以为「没列入就被挡」。
+ *   - edit 蕴含 view:同一主体若出现在 edit,UI 自动同步到 view,
+ *     防止「可编辑但看不到」的反直觉配置。
  *
  * 数据流:打开时并行拉 restrictions(当前状态)+ candidates(可选主体)。
- * candidates 走限制路由自带端点(非 admin 页面作者也能用,不依赖
- * admin.users.list)。Save 是 full-replace PUT;清空全部也走 PUT(view:[]+edit:[])。
+ * Save 是 full-replace PUT(view/edit/inherit 三字段一起发)。
  */
 import { computed, ref, watch } from 'vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -17,8 +22,11 @@ import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
 import type {
   PageRestriction,
+  PageRestrictions,
   RestrictionCandidateGroup,
   RestrictionCandidateUser,
+  RestrictionInheritedFrom,
+  RestrictionProtectedSources,
 } from '@power-wiki/shared'
 
 const props = defineProps<{
@@ -42,6 +50,13 @@ const saveError = ref<string | null>(null)
 
 const viewItems = ref<LocalItem[]>([])
 const editItems = ref<LocalItem[]>([])
+const inheritViewRestrictions = ref<boolean>(true)
+const inheritedFrom = ref<RestrictionInheritedFrom | null>(null)
+const protectedSources = ref<RestrictionProtectedSources>({
+  globalAdmin: false,
+  spaceAdmin: false,
+  pageAuthor: false,
+})
 const original = ref<string>('')
 
 const allUsers = ref<RestrictionCandidateUser[]>([])
@@ -52,7 +67,11 @@ const addOpen = ref<{ view: boolean; edit: boolean }>({ view: false, edit: false
 const addSearch = ref<{ view: string; edit: string }>({ view: '', edit: '' })
 
 function snapshot(): string {
-  return JSON.stringify({ view: viewItems.value, edit: editItems.value })
+  return JSON.stringify({
+    view: viewItems.value,
+    edit: editItems.value,
+    inherit: inheritViewRestrictions.value,
+  })
 }
 const dirty = computed(() => snapshot() !== original.value)
 
@@ -65,8 +84,7 @@ async function load() {
       api.pages.restrictions.get(props.pageId),
       api.pages.restrictions.candidates(props.pageId),
     ])
-    viewItems.value = r.view.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
-    editItems.value = r.edit.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
+    applyFromServer(r)
     allUsers.value = cand.users
     allGroups.value = cand.groups
     original.value = snapshot()
@@ -75,6 +93,14 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function applyFromServer(r: PageRestrictions) {
+  viewItems.value = r.view.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
+  editItems.value = r.edit.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
+  inheritViewRestrictions.value = r.inheritViewRestrictions
+  inheritedFrom.value = r.inheritedFrom
+  protectedSources.value = r.protectedSources
 }
 
 watch(
@@ -133,17 +159,92 @@ function candidateGroups(kind: 'view' | 'edit'): RestrictionCandidateGroup[] {
 
 /* ─── 增删 ─────────────────────────────────────────────────────────── */
 
+/** edit 蕴含 view:addUser('edit', X) 自动把 X 也加进 view 列表,保证
+ * 「可编辑但看不到」不会出现;反向 addUser('view', X) 不自动加到 edit
+ * (view 单独配置是合法的)。 */
 function addUser(kind: 'view' | 'edit', userId: string) {
   const ref_ = itemsFor(kind)
+  if (ref_.value.some((i) => i.principalKind === 'user' && i.principalId === userId)) return
   ref_.value = [...ref_.value, { principalKind: 'user', principalId: userId }]
+  if (kind === 'edit' && !viewItems.value.some((i) => i.principalKind === 'user' && i.principalId === userId)) {
+    viewItems.value = [...viewItems.value, { principalKind: 'user', principalId: userId }]
+  }
 }
 function addGroup(kind: 'view' | 'edit', groupId: string) {
   const ref_ = itemsFor(kind)
+  if (ref_.value.some((i) => i.principalKind === 'group' && i.principalId === groupId)) return
   ref_.value = [...ref_.value, { principalKind: 'group', principalId: groupId }]
+  if (kind === 'edit' && !viewItems.value.some((i) => i.principalKind === 'group' && i.principalId === groupId)) {
+    viewItems.value = [...viewItems.value, { principalKind: 'group', principalId: groupId }]
+  }
 }
 function removeItem(kind: 'view' | 'edit', idx: number) {
   const ref_ = itemsFor(kind)
   ref_.value = ref_.value.filter((_, i) => i !== idx)
+}
+
+/* ─── Save 影响预览 ───────────────────────────────────────────────── */
+
+/** Diff:当前 view / edit 集合 vs original。返回新增 / 移除主体列表,
+ * 用于渲染「保存影响」摘要。inheritedFrom 仅当 inherit=true 时影响
+ * 子页(写本页配置不改父链),所以 impact 只标本页 + 父链下子页的
+ * 范围注解,不展开具体子页计数(深度可变,UI 不显示具体数字)。 */
+const impact = computed(() => {
+  const orig = parseOriginal(original.value)
+  const keyOf = (i: LocalItem) => `${i.principalKind}:${i.principalId}`
+  const curView = new Set(viewItems.value.map(keyOf))
+  const origView = new Set(orig.view.map(keyOf))
+  const curEdit = new Set(editItems.value.map(keyOf))
+  const origEdit = new Set(orig.edit.map(keyOf))
+
+  const viewGained: LocalItem[] = []
+  const viewLost: LocalItem[] = []
+  for (const i of viewItems.value) {
+    if (!origView.has(keyOf(i))) viewGained.push(i)
+  }
+  for (const i of orig.view) {
+    if (!curView.has(keyOf(i))) viewLost.push(i)
+  }
+  const editGained: LocalItem[] = []
+  const editLost: LocalItem[] = []
+  for (const i of editItems.value) {
+    if (!origEdit.has(keyOf(i))) editGained.push(i)
+  }
+  for (const i of orig.edit) {
+    if (!curEdit.has(keyOf(i))) editLost.push(i)
+  }
+
+  const inheritChanged = inheritViewRestrictions.value !== orig.inherit
+  return {
+    viewGained,
+    viewLost,
+    editGained,
+    editLost,
+    inheritChanged,
+    inheritWas: orig.inherit,
+  }
+})
+
+function parseOriginal(s: string): { view: LocalItem[]; edit: LocalItem[]; inherit: boolean } {
+  try {
+    const parsed = JSON.parse(s)
+    return {
+      view: Array.isArray(parsed.view) ? parsed.view : [],
+      edit: Array.isArray(parsed.edit) ? parsed.edit : [],
+      inherit: typeof parsed.inherit === 'boolean' ? parsed.inherit : true,
+    }
+  } catch {
+    return { view: [], edit: [], inherit: true }
+  }
+}
+
+function labelOf(it: LocalItem): string {
+  if (it.principalKind === 'user') return userNameOf(it.principalId)
+  return groupNameOf(it.principalId)
+}
+function subLabelOf(it: LocalItem): string | null {
+  if (it.principalKind === 'user') return userEmailOf(it.principalId) ?? null
+  return groupDescOf(it.principalId) ?? null
 }
 
 /* ─── Save / Cancel ────────────────────────────────────────────────── */
@@ -163,12 +264,12 @@ async function onSave() {
     const updated = await api.pages.restrictions.set(props.pageId, {
       view: toDto(viewItems.value),
       edit: toDto(editItems.value),
+      inheritViewRestrictions: inheritViewRestrictions.value,
     })
-    viewItems.value = updated.view.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
-    editItems.value = updated.edit.map((x) => ({ principalKind: x.principalKind, principalId: x.principalId }))
+    applyFromServer(updated)
     original.value = snapshot()
     emit('saved', {
-      hasViewRestriction: updated.view.length > 0,
+      hasViewRestriction: updated.view.length > 0 || (updated.inheritViewRestrictions && updated.inheritedFrom !== null),
       hasEditRestriction: updated.edit.length > 0,
     })
     emit('update:open', false)
@@ -182,6 +283,25 @@ async function onSave() {
 function onClose() {
   emit('update:open', false)
 }
+
+/* ─── 受保护来源摘要文案 ──────────────────────────────────────────── */
+const protectedSummary = computed(() => {
+  const tags: string[] = []
+  if (protectedSources.value.globalAdmin) tags.push('全局管理员')
+  if (protectedSources.value.spaceAdmin) tags.push('空间管理员')
+  if (protectedSources.value.pageAuthor) tags.push('页面作者')
+  if (tags.length === 0) return null
+  return `你作为 ${tags.join(' / ')},不受本页限制约束,即使未列入下表也能查看和编辑。`
+})
+const impactScopeNote = computed(() => {
+  if (impact.value.inheritChanged && inheritViewRestrictions.value === false) {
+    return '关闭继承后,本页成为新的规则起点;子页面从此处开始重新计算访问权。'
+  }
+  if (inheritViewRestrictions.value && inheritedFrom.value) {
+    return '本页继续继承父链,本次保存的 view 限制同样作用于本页及其继承子页。'
+  }
+  return '本次保存的 view 限制只作用于本页。'
+})
 </script>
 
 <template>
@@ -202,6 +322,40 @@ function onClose() {
         设置后,只有下方列出的用户 / 用户组才能查看或编辑本页。<strong>查看限制</strong>会沿父页向下继承,
         <strong>编辑限制</strong>只作用于本页。页面作者与管理员始终不受限制。
       </p>
+
+      <!-- 受保护来源提示 -->
+      <p v-if="protectedSummary" class="pr-protected">
+        <span class="material-symbols-outlined pr-protected-icon">shield_person</span>
+        {{ protectedSummary }}
+      </p>
+
+      <!-- 继承状态:toggle + 来源 chip -->
+      <section class="pr-inherit">
+        <label class="pr-inherit-toggle">
+          <input
+            type="checkbox"
+            :checked="inheritViewRestrictions"
+            @change="inheritViewRestrictions = ($event.target as HTMLInputElement).checked"
+          />
+          <span class="pr-inherit-text">
+            <strong>继承父页面的查看限制</strong>
+            <span class="pr-inherit-hint">
+              关闭后,本页成为新的规则起点,不再向上继承父链的查看限制。
+            </span>
+          </span>
+        </label>
+        <div v-if="inheritViewRestrictions && inheritedFrom" class="pr-source-chip">
+          <span class="material-symbols-outlined">account_tree</span>
+          <span>
+            继承自父页面
+            <strong>{{ inheritedFrom.title }}</strong>
+          </span>
+        </div>
+        <div v-else-if="!inheritViewRestrictions" class="pr-source-chip pr-source-chip--self">
+          <span class="material-symbols-outlined">flag</span>
+          <span>本页是新规则的起点</span>
+        </div>
+      </section>
 
       <!-- 两个 section:view / edit -->
       <section
@@ -315,6 +469,54 @@ function onClose() {
           </div>
         </div>
       </section>
+
+      <!-- 保存影响预览 -->
+      <section v-if="dirty" class="pr-impact">
+        <h3 class="pr-impact-title">
+          <span class="material-symbols-outlined">preview</span>
+          保存后影响
+        </h3>
+        <p class="pr-impact-scope">{{ impactScopeNote }}</p>
+        <ul v-if="impact.viewGained.length + impact.viewLost.length + impact.editGained.length + impact.editLost.length > 0" class="pr-impact-list">
+          <template v-for="it in impact.viewGained" :key="'vg-' + it.principalKind + it.principalId">
+            <li class="pr-impact-item pr-impact-item--gain">
+              <span class="material-symbols-outlined">visibility</span>
+              <span>
+                <strong>{{ labelOf(it) }}</strong> 将获得查看权限
+                <span v-if="subLabelOf(it)" class="pr-impact-sub">({{ subLabelOf(it) }})</span>
+              </span>
+            </li>
+          </template>
+          <template v-for="it in impact.viewLost" :key="'vl-' + it.principalKind + it.principalId">
+            <li class="pr-impact-item pr-impact-item--lose">
+              <span class="material-symbols-outlined">visibility_off</span>
+              <span>
+                <strong>{{ labelOf(it) }}</strong> 将失去查看权限
+                <span v-if="subLabelOf(it)" class="pr-impact-sub">({{ subLabelOf(it) }})</span>
+              </span>
+            </li>
+          </template>
+          <template v-for="it in impact.editGained" :key="'eg-' + it.principalKind + it.principalId">
+            <li class="pr-impact-item pr-impact-item--gain">
+              <span class="material-symbols-outlined">edit</span>
+              <span>
+                <strong>{{ labelOf(it) }}</strong> 将获得编辑权限
+                <span v-if="subLabelOf(it)" class="pr-impact-sub">({{ subLabelOf(it) }})</span>
+              </span>
+            </li>
+          </template>
+          <template v-for="it in impact.editLost" :key="'el-' + it.principalKind + it.principalId">
+            <li class="pr-impact-item pr-impact-item--lose">
+              <span class="material-symbols-outlined">edit_off</span>
+              <span>
+                <strong>{{ labelOf(it) }}</strong> 将失去编辑权限
+                <span v-if="subLabelOf(it)" class="pr-impact-sub">({{ subLabelOf(it) }})</span>
+              </span>
+            </li>
+          </template>
+        </ul>
+        <p v-else class="pr-impact-empty">本次保存仅调整了继承开关,未改动任何主体的查看或编辑权限。</p>
+      </section>
     </template>
 
     <template #footer>
@@ -335,15 +537,71 @@ function onClose() {
   font-size: 13px;
   color: var(--text-2);
   line-height: 1.6;
-  margin: 0 0 20px 0;
+  margin: 0 0 16px 0;
   padding: 12px 14px;
   background: var(--bg-canvas);
   border-radius: var(--radius-md, 4px);
 }
 .pr-intro strong { color: var(--text-1); font-weight: 600; }
 
+.pr-protected {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px 0;
+  padding: 10px 12px;
+  background: var(--accent-bg-soft, #eaf2ff);
+  border: 1px solid var(--accent-bg, #cfe0ff);
+  border-radius: var(--radius-md, 4px);
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+.pr-protected-icon { font-size: 18px; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
+
+.pr-inherit {
+  margin: 0 0 20px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  background: var(--bg);
+}
+.pr-inherit-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.pr-inherit-toggle input[type='checkbox'] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.pr-inherit-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text-1); }
+.pr-inherit-text strong { font-weight: 600; }
+.pr-inherit-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; }
+
+.pr-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-2);
+}
+.pr-source-chip .material-symbols-outlined { font-size: 16px; color: var(--accent); }
+.pr-source-chip strong { color: var(--text-1); font-weight: 600; }
+.pr-source-chip--self { background: var(--accent-bg-soft, #eaf2ff); border-color: var(--accent-bg, #cfe0ff); }
+
 .pr-section { margin-bottom: 24px; }
-.pr-section:last-child { margin-bottom: 0; }
+.pr-section:last-of-type { margin-bottom: 0; }
 .pr-sec-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
 .pr-sec-icon { font-size: 22px; color: var(--accent); flex-shrink: 0; }
 .pr-sec-title { font-size: 14px; font-weight: 600; color: var(--text-1); margin: 0; }
@@ -416,6 +674,39 @@ function onClose() {
 }
 .pr-candidate:hover { background: var(--bg-canvas); }
 .pr-popover-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+.pr-impact {
+  margin-top: 20px;
+  padding: 14px 16px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+}
+.pr-impact-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 0 0 6px 0;
+}
+.pr-impact-title .material-symbols-outlined { font-size: 18px; color: var(--accent); }
+.pr-impact-scope { font-size: 12px; color: var(--text-3); margin: 0 0 10px 0; line-height: 1.5; }
+.pr-impact-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.pr-impact-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-1);
+}
+.pr-impact-item .material-symbols-outlined { font-size: 18px; flex-shrink: 0; }
+.pr-impact-item--gain .material-symbols-outlined { color: var(--success, #2e7d32); }
+.pr-impact-item--lose .material-symbols-outlined { color: var(--danger, #d32f2f); }
+.pr-impact-item strong { font-weight: 600; }
+.pr-impact-sub { color: var(--text-3); font-size: 12px; margin-left: 2px; }
+.pr-impact-empty { font-size: 12px; color: var(--text-3); margin: 0; }
 
 .pr-save-err { color: var(--danger); font-size: 13px; margin-right: auto; align-self: center; }
 </style>

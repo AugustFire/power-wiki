@@ -36,7 +36,7 @@ import { formatRelativeTime } from '@/lib/relativeTime'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { useConfirm } from '@/composables/useConfirm'
 import { EMPTY_HTML } from '@/lib/constants'
-import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
+import { canManagePageWrite } from '@/lib/permissions'
 
 const props = defineProps<{ id: string }>()
 const pagesStore = usePagesStore()
@@ -577,72 +577,16 @@ watch(
 const { lightbox, closeLightbox, openFromImg } = useAttachmentLightbox()
 
 /* ─── 页面级限制 dialog(Phase B)───────────────────────
- * 按钮可见性用启发式 gate:
- *   - 全局 admin → 可见
- *   - 页面作者 → 可见(能编辑就有资格管自己的限制)
- *   - 非作者 space-admin → v0 不在客户端 gate 内,需由后端 404 兜底。
- *     这是已知 v0 缺口(space role 信息当前没下沉到 PageNode);下次页面
- *     schema 改时把 `viewerRole` 加上就能 cover 这个 case。
- *
- * saved 事件传回的 flags 直接 patch 到 page.hasViewRestriction /
- * hasEditRestriction 上,避免读侧重拉整页。 */
+ * `viewerRole` 已包含共享空间的 effective role，空间 editor/admin 与页面作者
+ * 使用同一套页面写能力判断。saved 事件只 patch restriction flags，避免重拉整页。 */
 const restrictionsOpen = ref(false)
-/** 启发式 gate:跟 canEdit 对称 —— isAdmin || 非 viewer(=editor / admin) ||
- *  作者本人。后端 `canManageRestrictions` 同样三选一:isAdmin / 作者本人 /
- *  canEditPage(空间 editor / space-admin 都覆盖)。
- *
- *  个人空间写矩阵(P0-3):global admin 即使 own 自己的 personal space 也按
- *  supervisor 处理 —— 不能编辑 / 不能改限制 / 不能分享。先用
- *  canWritePersonalSpace 把 personal 拒掉。 */
-const canManageRestrictions = computed(() => {
-  const p = page.value
-  if (!p) return false
-  const me = authStore.user
-  if (!me) return false
-  if (isPersonalSpace.value) return false
-  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
-  if (authStore.isAdmin) return true
-  if (p.viewerRole && p.viewerRole !== 'viewer') return true
-  if (me.id === p.authorId) return true
-  return false
-})
-/** Phase D: 公开分享的 canManage gate —— 与 canManageRestrictions 对称
- *  (page 作者 / admin / 空间 admin / 空间 editor)。`viewerRole` 由后端
- *  PageNodeSchema 注入,跟 share 路由的 canEditPage gate 等价;space-
- *  admin 没有 `viewerRole='admin'` 的中间档(直接 isAdmin),但跟 canEdit
- *  共用同一段判断。 */
+const canManageRestrictions = computed(() => canManagePageWrite(authStore.user, page.value))
 const canShare = computed(() => {
-  const p = page.value
-  if (!p) return false
-  const me = authStore.user
-  if (!me) return false
-  // 归档空间不再发放新的分享链接(share 是写操作)。
-  if (p.spaceArchived) return false
   if (isPersonalSpace.value) return false
-  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
-  if (authStore.isAdmin) return true
-  if (p.viewerRole && p.viewerRole !== 'viewer') return true
-  if (me.id === p.authorId) return true
-  return false
+  return canManagePageWrite(authStore.user, page.value)
 })
 
-/** 顶部「编辑」按钮 gate:server 端 PageNode.viewerRole 注入 effective role,
- *  非 viewer(=editor/admin)直接显示;viewer 时仅作者本人保留(author bypass,
- *  对齐 canEditPage)。空间级 canEditSpace 隐含包含在 viewerRole='editor' 里,
- *  这里不再二次查 space grant。 */
-const canEdit = computed(() => {
-  const p = page.value
-  if (!p) return false
-  const me = authStore.user
-  if (!me) return false
-  // 模块 1 P2:归档空间整体只读,admin 也不例外(对齐后端 canEditSpace)。
-  if (p.spaceArchived) return false
-  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
-  if (authStore.isAdmin) return true
-  if (p.viewerRole && p.viewerRole !== 'viewer') return true
-  if (me.id === p.authorId) return true
-  return false
-})
+const canEdit = computed(() => canManagePageWrite(authStore.user, page.value))
 
 /**
  * 移动 / 删除与编辑共用同一套写权限 gate(都是 page 级写操作)。
@@ -672,11 +616,17 @@ function onRestrictionsSaved(flags: {
  */
 async function onDelete() {
   if (!page.value) return
+  const childCount = subPages.value.length
   const ok = await confirm({
     title: `删除「${page.value.title}」?`,
-    message: '页面将进入回收站,可联系管理员恢复。',
+    message: childCount > 0
+      ? '该页面仍有子页面,请先处理子页面后再删除。'
+      : '页面将进入回收站,管理员可以从回收站恢复。',
+    details: childCount > 0
+      ? [`当前已加载的直接子页面: ${childCount} 个`, '删除父页面前请先移动或删除这些子页面。']
+      : ['页面内容不会立即物理删除。'],
     danger: true,
-    confirmText: '删除',
+    confirmText: childCount > 0 ? '仍然尝试删除' : '删除',
     cancelText: '取消',
   })
   if (!ok) return
@@ -686,6 +636,7 @@ async function onDelete() {
   } catch {
     return
   }
+  uiStore.notify('页面已移入回收站', 'success')
   if (wasCurrent) router.push('/')
 }
 

@@ -47,6 +47,7 @@ import {
 import type { UserSummary, UserSystemStats } from '@power-wiki/shared'
 import { db } from '../db/client'
 import {
+  comments,
   notifications,
   pageLikes,
   pageRestrictions,
@@ -571,6 +572,28 @@ adminUsersRouter.post('/:id/reset-password', async (c) => {
  * (the password hash is gone, email is a `.invalid` domain). The audit row
  * records the before/after name+email for compliance.
  */
+adminUsersRouter.get('/:id/anonymize-impact', async (c) => {
+  const id = c.req.param('id')
+  const target = await db.select({ id: users.id }).from(users).where(eq(users.id, id)).limit(1)
+  if (!target[0]) return c.json({ error: 'not_found' }, 404)
+  const [groupRows, recentRows, watchedRows, likeRows, notificationRows, grantRows, restrictionRows, commentRows] = await Promise.all([
+    db.select({ value: count() }).from(userGroupMembers).where(eq(userGroupMembers.userId, id)),
+    db.select({ value: count() }).from(userRecentPages).where(eq(userRecentPages.userId, id)),
+    db.select({ value: count() }).from(userWatchedPages).where(eq(userWatchedPages.userId, id)),
+    db.select({ value: count() }).from(pageLikes).where(eq(pageLikes.userId, id)),
+    db.select({ value: count() }).from(notifications).where(eq(notifications.userId, id)),
+    db.select({ value: count() }).from(spaceRoleGrants).where(and(eq(spaceRoleGrants.principalKind, 'user'), eq(spaceRoleGrants.principalId, id))),
+    db.select({ value: count() }).from(pageRestrictions).where(and(eq(pageRestrictions.principalKind, 'user'), eq(pageRestrictions.principalId, id))),
+    db.select({ value: count() }).from(comments).where(eq(comments.authorId, id)),
+  ])
+  const value = (rows: { value: number | string }[]) => Number(rows[0]?.value ?? 0)
+  return c.json({
+    groupMembershipCount: value(groupRows), recentPageCount: value(recentRows), watchedPageCount: value(watchedRows),
+    likeCount: value(likeRows), notificationCount: value(notificationRows), roleGrantCount: value(grantRows),
+    restrictionCount: value(restrictionRows), commentCount: value(commentRows),
+  })
+})
+
 adminUsersRouter.post('/:id/anonymize', async (c) => {
   const me = c.get('user')
   const id = c.req.param('id')

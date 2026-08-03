@@ -574,22 +574,62 @@ export const PageRestrictionSchema = z.object({
   grantedAt: z.number().int().nonnegative(),
 })
 
+/** 单 page 的 view 限制继承来源(P1-3,2026-08-03 起)。
+ *  GET /api/pages/:id/restrictions 沿父链 BFS 找最近一个有 view 限制
+ *  且 inherit_view_restrictions=true 的祖先返回。前端 dialog 用它展示
+ *  「本页继承自父页面 X 的查看限制」+ 跳到父页限制面板的入口。
+ *  pageId + title 同时给,避免前端再查一次父页元数据。null = 沿父链无
+ *  任何 view 限制来源(本页是新规则的起点)。 */
+export const RestrictionInheritedFromSchema = z.object({
+  pageId: z.string().min(1),
+  title: z.string(),
+})
+
+/** 当前用户在该 page 受哪些「保护来源」覆盖 —— 用于 dialog 解释「不在
+ *  allow-list 里但仍能读写」(2026-08-03 起)。三选多:`globalAdmin` /
+ *  `spaceAdmin` / `pageAuthor`。前端展示一行 chip 告诉用户「你作为
+ *  XX,不受本页限制约束」,避免误以为自己的访问权被收窄。 */
+export const RestrictionProtectedSourcesSchema = z.object({
+  globalAdmin: z.boolean(),
+  spaceAdmin: z.boolean(),
+  pageAuthor: z.boolean(),
+})
+
 /** 单 page 的完整限制结构。view / edit 各自的用户 / 组列表。
  *  空数组 = 该 kind 没限制(回退到 space 角色判定)。与
  *  `hasViewRestriction` / `hasEditRestriction`(PageNode 上的 boolean
- *  标记)语义对齐:那个是"是否有任何限制"的元信息,这个是 allow-list 全量。 */
+ *  标记)语义对齐:那个是"是否有任何限制"的元信息,这个是 allow-list 全量。
+ *
+ *  2026-08-03 P1-3 起增加三个元字段:
+ *    - inheritViewRestrictions:本页是否继承父级 view 限制(默认 true)
+ *    - inheritedFrom:本页 view 限制继承自哪一页(用于 dialog 解释)
+ *    - protectedSources:当前用户在该 page 享受哪些高权限保护(不进
+ *      allow-list 也能读写的原因)
+ *
+ *  三个字段都是只读元信息:后端 GET 计算 + 返回;PUT 只接受
+ *  inheritViewRestrictions 写入,inheritedFrom / protectedSources 由
+ *  server 重新计算后回传。 */
 export const PageRestrictionsSchema = z.object({
   view: z.array(PageRestrictionSchema),
   edit: z.array(PageRestrictionSchema),
+  inheritViewRestrictions: z.boolean(),
+  inheritedFrom: RestrictionInheritedFromSchema.nullable(),
+  protectedSources: RestrictionProtectedSourcesSchema,
 })
 
 /** PUT /api/pages/:id/restrictions 整组替换 body。view / edit 都可选。
  *  两者都空(或省略)= 清空该页所有限制(full-replace 语义,后端 DELETE
  *  全部后不 INSERT)。这是 dialog「移除全部限制」保存的自然路径,所以
- *  不做「至少一个非空」的 refine —— 清空是合法操作。 */
+ *  不做「至少一个非空」的 refine —— 清空是合法操作。
+ *
+ *  2026-08-03 P1-3 起接受 inheritViewRestrictions 字段:跟 view / edit
+ *  列表在同一事务保存,语义跟其它两个字段一致 —— 省略 = 不动(后端
+ *  仅在显式传入时 UPDATE,保留原值)。dialog 在 toggle 开关时主动传,
+ *  不在 toggle 时不传(允许「只改 view 列表不碰开关」保存)。 */
 export const SetPageRestrictionsInputSchema = z.object({
   view: z.array(PageRestrictionSchema).optional(),
   edit: z.array(PageRestrictionSchema).optional(),
+  inheritViewRestrictions: z.boolean().optional(),
 })
 
 /** POST /api/pages/:id/restrictions/{view|edit}/{users|groups}/:id 的 body。
@@ -1058,6 +1098,9 @@ export type UpsertPageRestrictionInput = z.infer<typeof UpsertPageRestrictionInp
 export type RestrictionCandidateUser = z.infer<typeof RestrictionCandidateUserSchema>
 export type RestrictionCandidateGroup = z.infer<typeof RestrictionCandidateGroupSchema>
 export type RestrictionCandidates = z.infer<typeof RestrictionCandidatesSchema>
+// P1-3 (2026-08-03) — inheritance switch + protected sources
+export type RestrictionInheritedFrom = z.infer<typeof RestrictionInheritedFromSchema>
+export type RestrictionProtectedSources = z.infer<typeof RestrictionProtectedSourcesSchema>
 
 /* ---------- Dashboard ---------- */
 export const DashboardPayloadSchema = z.object({

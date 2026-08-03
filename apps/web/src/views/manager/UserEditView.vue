@@ -81,6 +81,7 @@ const anonymizeOpen = ref(false)
 const anonymizeConfirm = ref('')
 const anonymizing = ref(false)
 const anonymizeError = ref<string | null>(null)
+const anonymizeImpact = ref<Awaited<ReturnType<typeof api.admin.users.anonymizeImpact>> | null>(null)
 
 const canAnonymize = computed(
   () =>
@@ -221,10 +222,18 @@ function dismissOneTime() {
   copied.value = false
 }
 
-function openAnonymize() {
+async function openAnonymize() {
   anonymizeOpen.value = true
   anonymizeConfirm.value = ''
   anonymizeError.value = null
+  anonymizeImpact.value = null
+  if (user.value) {
+    try {
+      anonymizeImpact.value = await api.admin.users.anonymizeImpact(user.value.id)
+    } catch {
+      anonymizeImpact.value = null
+    }
+  }
 }
 function cancelAnonymize() {
   anonymizeOpen.value = false
@@ -590,6 +599,15 @@ const colorPresets = [
               </div>
             </div>
           </div>
+          <ul v-if="anonymizeImpact" class="ue-impact-list">
+            <li v-if="anonymizeImpact.groupMembershipCount">{{ anonymizeImpact.groupMembershipCount }} 个用户组成员关系</li>
+            <li v-if="anonymizeImpact.watchedPageCount">{{ anonymizeImpact.watchedPageCount }} 个页面关注</li>
+            <li v-if="anonymizeImpact.likeCount">{{ anonymizeImpact.likeCount }} 个页面点赞</li>
+            <li v-if="anonymizeImpact.notificationCount">{{ anonymizeImpact.notificationCount }} 条接收通知</li>
+            <li v-if="anonymizeImpact.roleGrantCount">{{ anonymizeImpact.roleGrantCount }} 个直接空间授权</li>
+            <li v-if="anonymizeImpact.restrictionCount">{{ anonymizeImpact.restrictionCount }} 个页面限制</li>
+            <li v-if="anonymizeImpact.commentCount">{{ anonymizeImpact.commentCount }} 条评论将保留并匿名署名</li>
+          </ul>
           <label class="field">
             <span class="field-label">输入用户名「{{ user.name }}」以确认</span>
             <input

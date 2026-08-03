@@ -615,7 +615,7 @@ export const usePagesStore = defineStore('pages', () => {
       pages.value = [...pages.value, snapshot]
       const msg =
         e instanceof ApiError && e.code === 'has_children'
-          ? '请先删除子页面'
+          ? `该页面还有 ${Number((e.body as { childCount?: number } | undefined)?.childCount ?? 0)} 个子页面,请先处理`
           : `删除失败: ${errorMessage(e)}`
       ui().setError(msg)
       throw e
@@ -645,7 +645,7 @@ export const usePagesStore = defineStore('pages', () => {
       await loadTrashForCurrent()
       const msg =
         e instanceof ApiError && e.code === 'parent_trashed'
-          ? '请先恢复父页面'
+          ? `父页面「${String((e.body as { parentId?: string } | undefined)?.parentId ?? '未知')}」仍在回收站,请先恢复父页面`
           : `恢复失败: ${errorMessage(e)}`
       ui().setError(msg)
       throw e

@@ -1092,6 +1092,16 @@ export const api = {
         invalidatePrefix('/admin/users')
         return UserSchema.parse(u) as User
       },
+      anonymizeImpact: async (id: string): Promise<{
+        groupMembershipCount: number
+        recentPageCount: number
+        watchedPageCount: number
+        likeCount: number
+        notificationCount: number
+        roleGrantCount: number
+        restrictionCount: number
+        commentCount: number
+      }> => request(`/admin/users/${encodeURIComponent(id)}/anonymize-impact`),
     },
     groups: {
       list: (q?: PaginatedQuery): Promise<Paginated<UserGroup>> => {
@@ -1189,12 +1199,15 @@ export const api = {
         invalidatePrefix('/admin/spaces')
         return SpaceSchema.parse(s) as Space
       },
+      deleteImpact: async (id: string): Promise<{ pageCount: number }> =>
+        request(`/admin/spaces/${encodeURIComponent(id)}/delete-impact`),
       delete: async (id: string): Promise<void> => {
         await request<void>(`/admin/spaces/${encodeURIComponent(id)}`, {
           method: 'DELETE',
         })
         invalidatePrefix('/admin/spaces')
       },
+
       archive: async (id: string): Promise<Space> => {
         const s = await request<Space>(`/admin/spaces/${encodeURIComponent(id)}/archive`, { method: 'POST' })
         invalidatePrefix('/admin/spaces')

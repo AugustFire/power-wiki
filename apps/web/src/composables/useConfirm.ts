@@ -12,6 +12,8 @@ import { ref } from 'vue'
 export interface ConfirmOptions {
   title: string
   message?: string
+  details?: string[]
+  requireText?: string
   /** 强调样式(删除等危险操作) */
   danger?: boolean
   confirmText?: string
@@ -40,6 +42,8 @@ export function useConfirm() {
         open: true,
         title: opts.title,
         message: opts.message ?? '',
+        details: opts.details ?? [],
+        requireText: opts.requireText ?? '',
         danger: opts.danger ?? false,
         confirmText: opts.confirmText ?? '确认',
         cancelText: opts.cancelText ?? '取消',

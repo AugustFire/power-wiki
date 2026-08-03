@@ -207,12 +207,11 @@ async function onDelete() {
       )
     }
   }
-  const detail = impactLines.length > 0
-    ? `\n\n将一并删除:\n${impactLines.join('\n')}`
-    : ''
+  const details = impactLines
   const ok = await askConfirm({
     title: '删除用户组',
-    message: `确定要删除用户组「${g.name}」吗?该操作不可撤销。${detail}`,
+    message: `确定要删除用户组「${g.name}」吗?该操作不可撤销。`,
+    details,
     confirmText: '删除',
     danger: true,
   })

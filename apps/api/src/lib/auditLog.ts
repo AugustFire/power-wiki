@@ -41,7 +41,7 @@ import { generatePageId } from './ids'
  * 实用上:任何 `db.transaction(tx => …)` 里那个 tx 都满足这个约束(因为
  * permissionAudit 在 schema.ts 里),所以直接传进来即可。
  */
-export type AnyTx = Pick<NodePgTransaction<Record<string, unknown>, TablesRelationalConfig>, 'insert' | 'execute'>
+export type AnyTx = Pick<NodePgTransaction<Record<string, unknown>, TablesRelationalConfig>, 'insert' | 'select' | 'update' | 'delete' | 'execute'>
 
 /** 事件类型。schema 里 CHECK 限定 14 个;新增事件同步改 CHECK + migration。
  *  9 个权限变更(grant add/remove/change/set / restriction add/remove/set / share create/revoke)

@@ -94,9 +94,20 @@ async function onSubmitCreate() {
 }
 
 async function onDelete(g: UserGroup) {
+  let details: string[] = []
+  try {
+    const impact = await api.admin.groups.impact(g.id)
+    if (impact.memberCount) details.push(`${impact.memberCount} 个成员关系`)
+    if (impact.legacyGrantCount) details.push(`${impact.legacyGrantCount} 个旧授权关系`)
+    if (impact.roleGrantCount) details.push(`${impact.roleGrantCount} 个角色授权`)
+    if (impact.restrictionCount) details.push(`${impact.restrictionCount} 个页面限制`)
+  } catch {
+    details = []
+  }
   const ok = await askConfirm({
     title: '删除用户组',
-    message: `确定要删除用户组「${g.name}」吗?该组下的所有成员关系将一并删除,组内用户不会被删除。`,
+    message: `确定要删除用户组「${g.name}」吗?组内用户不会被删除。`,
+    details,
     confirmText: '删除',
     danger: true,
   })

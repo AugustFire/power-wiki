@@ -253,10 +253,13 @@ const rows = computed(() => {
 
 /* Row-level busy state. A row is busy if it has a pending restore/purge
    request in flight (so we can disable the buttons + dim the row). */
+function parentRow(node: { parentId: string | null }) {
+  if (!node.parentId) return null
+  return rows.value.find((row) => row.id === node.parentId) ?? pagesStore.getPage(node.parentId) ?? null
+}
+
 function parentIsTrashed(node: { parentId: string | null }): boolean {
-  if (node.parentId == null) return false
-  const parent = pagesStore.getPage(node.parentId)
-  return parent != null && parent.deletedAt != null
+  return parentRow(node)?.deletedAt != null
 }
 
 function relativeTime(ts: number): string {
@@ -290,6 +293,10 @@ async function onPurge(id: string, title: string) {
   const ok = await confirm({
     title: `永久删除「${title}」?`,
     message: '此操作不可恢复,将从数据库中物理删除该页面及其所有已删除的子页面。',
+    details: [
+      '页面版本、标签、限制、分享、评论和附件关联会一并清理。',
+      '删除后的页面不能恢复。',
+    ],
     danger: true,
     confirmText: '永久删除',
     cancelText: '取消',
@@ -492,7 +499,13 @@ async function onPurge(id: string, title: string) {
               <span class="title-text">{{ row.title || '未命名' }}</span>
               <span v-if="row.parentId" class="parent-hint" :title="row.parentId">
                 <span class="material-symbols-outlined" style="font-size:14px">subdirectory_arrow_right</span>
-                <span v-if="parentIsTrashed(row)" class="parent-trashed">父级已删除</span>
+                <button
+                  v-if="parentIsTrashed(row) && parentRow(row)"
+                  type="button"
+                  class="parent-restore-link"
+                  @click="onRestore(parentRow(row)!.id)"
+                >先恢复父级</button>
+                <span v-else-if="parentIsTrashed(row)" class="parent-trashed">父级已删除</span>
                 <span v-else>已挂载</span>
               </span>
             </div>
@@ -861,6 +874,15 @@ async function onPurge(id: string, title: string) {
   font-weight: 400;
 }
 .parent-trashed { color: var(--danger); font-weight: 500; }
+.parent-restore-link {
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.parent-restore-link:hover { text-decoration: underline; }
 
 .row-btn {
   display: inline-flex;

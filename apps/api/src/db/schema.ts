@@ -282,6 +282,19 @@ export const pages = pgTable(
      */
     deletedAt: bigint('deleted_at', { mode: 'number' }),
     deletedBy: text('deleted_by'),
+
+    /**
+     * 是否继承父级 view 限制(2026-08-03 P1-3 落地)。默认 TRUE —— Confluence
+     * 默认行为:子页 view 限制沿父链 BFS 累计,任一祖先 view 限制都会收紧
+     * 子页可见性。FALSE 时本页重新计算 view 访问权(本页 view allow-list
+     * 仍是事实,但不再上溯祖先)—— 通常用于「父页 view 限制了 A,B;C,D 的
+     * 子树不希望被这条规则影响」场景。edit 限制不继承(独立语义),无对应
+     * 开关。
+     *
+     * 不可作为 audit 来源,改这条 + page_restrictions 一起写进
+     * permission_audit.before / after 即可(新增 audit kind 不必要)。
+     */
+    inheritViewRestrictions: boolean('inherit_view_restrictions').notNull().default(true),
   },
   (table) => [
     index('pages_parent_idx').on(table.parentId),

@@ -42,9 +42,12 @@ import {
 } from '../db/schema'
 import { requireAuth, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
+import type { AnyTx } from '../lib/auditLog'
 import {
   canEditPage,
   canReadPage,
+  findInheritedViewSource,
+  getProtectedSourcesForPage,
   loadPageMeta,
   principalFromUser,
   type Principal,
@@ -102,9 +105,19 @@ async function validatePrincipals(
 /** 把 loadPageRestrictions(Set 形态)转成 DTO 数组(含 grantedBy/grantedAt
  *  元信息)。需要一次额外查询把 (principalKind, principalId) 拼回去 ——
  *  loadPageRestrictions 只返了 kind + principalKind + principalId,granted
- *  元信息走另一条 SQL 拿全。 */
-async function loadPageRestrictionsFull(pageId: string): Promise<PageRestrictions> {
-  const rows = await db
+ *  元信息走另一条 SQL 拿全。
+ *
+ *  2026-08-03 P1-3 起增加三个只读元字段(inheritViewRestrictions /
+ *  inheritedFrom / protectedSources),仅 GET 路径使用 —— 单行 POST/DELETE
+ *  handler 自己合成最小响应(避免 N+1 拉继承来源)。需要全量 DTO 的场景
+ *  统一通过这个函数走。 */
+async function loadPageRestrictionsFull(
+  pageId: string,
+  spaceId: string,
+  me: Principal,
+  executor: typeof db | AnyTx = db,
+): Promise<PageRestrictions> {
+  const rows = await executor
     .select({
       kind: pageRestrictions.kind,
       principalKind: pageRestrictions.principalKind,
@@ -125,7 +138,28 @@ async function loadPageRestrictionsFull(pageId: string): Promise<PageRestriction
       grantedAt: typeof r.grantedAt === 'string' ? Number(r.grantedAt) : r.grantedAt,
     })
   }
-  return { view, edit }
+  // inheritViewRestrictions 从 pages 行读,2026-08-03 P1-3 起。事务内
+  // 必须用 executor 才能看到本事务的 pages UPDATE(否则 audit 的
+  // after.inheritViewRestrictions 会停留在 tx commit 前的旧值,
+  // 「开关切换」无法被 audit 记录 —— P1-3 验证脚本曾经踩到这个)。
+  const [pageRow] = await executor
+    .select({ inheritViewRestrictions: pages.inheritViewRestrictions })
+    .from(pages)
+    .where(eq(pages.id, pageId))
+    .limit(1)
+  const inheritViewRestrictions = pageRow?.inheritViewRestrictions ?? true
+  // inheritedFrom + protectedSources:父链 / 当前用户视角跟事务隔离无关,
+  // 沿用全局 db 即可;事务内外的「继承来源」视图一致(本事务只改 inherit
+  // 开关或 page_restrictions,不影响父链结构)。
+  const inheritedFrom = await findInheritedViewSource(pageId)
+  const protectedSources = await getProtectedSourcesForPage(me, pageId, spaceId)
+  return {
+    view,
+    edit,
+    inheritViewRestrictions,
+    inheritedFrom,
+    protectedSources,
+  }
 }
 
 /* ─── 写权限 gate(作者 / space-admin / global admin / space-editor 四选一) ─ */
@@ -168,7 +202,7 @@ pageRestrictionsRouter.get('/:id/restrictions', async (c) => {
   if (!(await canReadPage(me, pageId, meta.spaceId))) {
     return c.json({ error: 'not_found' }, 404)
   }
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })
 
@@ -234,7 +268,7 @@ pageRestrictionsRouter.put('/:id/restrictions', async (c) => {
   if (!parsed.success) {
     return c.json({ error: 'invalid_input', issues: parsed.error.issues }, 400)
   }
-  const { view = [], edit = [] } = parsed.data
+  const { view = [], edit = [], inheritViewRestrictions } = parsed.data
 
   // 1) 校验 principal 全部存在
   const principalsCheck = await validatePrincipals([
@@ -256,9 +290,11 @@ pageRestrictionsRouter.put('/:id/restrictions', async (c) => {
   // 2) Full-replace 事务 + 审计日志
   const now = Date.now()
   const actorId = me.id
-  // 拍 before 快照(事务前的 view/edit 数组)。Phase B 已经有 loadPageRestrictionsFull,
-  // 复用它拿 before。
-  const before = await loadPageRestrictionsFull(pageId)
+  // 拍 before 快照(事务前的 view/edit 数组 + inheritViewRestrictions)。
+  // Phase B 已经有 loadPageRestrictionsFull,复用它拿 before;P1-3 起该
+  // 函数返回全量 DTO(含 inheritViewRestrictions / inheritedFrom / protectedSources),
+  // audit.before / after 顺带记录继承开关变化,无需新增 audit kind。
+  const before = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   await db.transaction(async (tx) => {
     await tx.delete(pageRestrictions).where(eq(pageRestrictions.pageId, pageId))
     const rows = [
@@ -286,11 +322,20 @@ pageRestrictionsRouter.put('/:id/restrictions', async (c) => {
     if (rows.length > 0) {
       await tx.insert(pageRestrictions).values(rows)
     }
-    // 触发 page.updatedAt 同步,UI 列表的 updatedAt DESC 排序会反映
-    // 「限制被改了」事件。
-    await tx.update(pages).set({ updatedAt: now }).where(eq(pages.id, pageId))
-    // 拍 after 快照(事务内,跟业务变更同 commit / rollback)。
-    const after = await loadPageRestrictionsFull(pageId)
+    // 同步 inherit_view_restrictions 列(2026-08-03 P1-3):传入字段才更新,
+    // 省略保留原值 —— 跟 view / edit 的「省略不动」语义一致,允许「只改
+    // view 列表不碰开关」的保存路径。
+    const updateFields: { updatedAt: number; inheritViewRestrictions?: boolean } = {
+      updatedAt: now,
+    }
+    if (inheritViewRestrictions !== undefined) {
+      updateFields.inheritViewRestrictions = inheritViewRestrictions
+    }
+    await tx.update(pages).set(updateFields).where(eq(pages.id, pageId))
+    // 拍 after 快照(必须用 tx 才能看到本次 UPDATE)。如果用全局 db,会
+    // 读到 UPDATE 之前的旧值,audit payload.after.inheritViewRestrictions
+    // 永远是 stale,「开关切换」不会被记录(P1-3 验收脚本踩过这个)。
+    const after = await loadPageRestrictionsFull(pageId, meta.spaceId, me, tx)
     await recordPermissionAudit(tx, {
       kind: 'page_restriction_set',
       actorId,
@@ -300,7 +345,7 @@ pageRestrictionsRouter.put('/:id/restrictions', async (c) => {
     })
   })
 
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })
 
@@ -375,7 +420,7 @@ pageRestrictionsRouter.post('/:id/restrictions/:kind/users/:userId', async (c) =
     })
   })
 
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })
 
@@ -451,7 +496,7 @@ pageRestrictionsRouter.delete('/:id/restrictions/:kind/users/:userId', async (c)
     }
   })
 
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })
 
@@ -530,7 +575,7 @@ pageRestrictionsRouter.post('/:id/restrictions/:kind/groups/:groupId', async (c)
     })
   })
 
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })
 
@@ -605,6 +650,6 @@ pageRestrictionsRouter.delete('/:id/restrictions/:kind/groups/:groupId', async (
     }
   })
 
-  const restrictions = await loadPageRestrictionsFull(pageId)
+  const restrictions = await loadPageRestrictionsFull(pageId, meta.spaceId, me)
   return c.json(restrictions)
 })

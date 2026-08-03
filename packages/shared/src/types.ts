@@ -407,4 +407,7 @@ export type {
   RestrictionCandidateUser,
   RestrictionCandidateGroup,
   RestrictionCandidates,
+  // P1-3 (2026-08-03) — inheritance switch + protected sources
+  RestrictionInheritedFrom,
+  RestrictionProtectedSources,
 } from './schemas'

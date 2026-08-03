@@ -17,7 +17,11 @@
  *     space 的写操作由 `assertAdminNotWritingPersonalSpace` 在路由层
  *     单独拦截(CLAUDE.md 硬约束:不引入 admin 写个人空间内容)。
  *   - Phase B 页面级限制:view 继承父链,edit 不继承(参 B.2 实现)。
- *     作者本人 + global admin 始终 full(短路,不走 allow-list 校验)。
+ *     作者本人 + global admin + space admin 始终 full(短路,不走 allow-list
+ *     校验)—— 2026-08-03 旅程 B 收口:用户 case「A 把 view 限制设成只让自己」
+ *     不应缩小其他 space-admin 的访问权,否则共享空间退化成「A 一言堂」。
+ *     effectivePageReadAccess / effectivePageEditAccess / pageReadableDirectFilter
+ *     三处都加 canAdminSpace bypass。
  *   - 无 FK(CLAUDE.md):cleanup 由 adminGroups / adminUsers / adminSpaces
  *     DELETE handler / pages.ts DELETE ?purge=true 在事务内显式 sweep。
  *
@@ -554,24 +558,47 @@ export interface PageRestrictionsView {
   edit: PageAllowList
 }
 
-/** 一个 page 的最小元信息(loadPageMeta 返回的形状)。 */
+/** 一个 page 的最小元信息(loadPageMeta 返回的形状)。
+ *  2026-08-03 P1-3 起增加 inheritViewRestrictions(对应 pages.inherit_view_restrictions
+ *  列)和 title(供 findInheritedViewSource 沿父链 walk 时附带在
+ *  inheritedFrom DTO 里返回,避免再发一次 SELECT)。所有现存的 loadPageMeta
+ *  调用点都通过 PageMeta 这个 interface 拿到这些字段 —— 没有 caller 需要
+ *  改写,只是 PageMeta 字段更多而已。
+ *  PageMetaWithInherit 是历史 alias,留给 Phase B 之前已经显式 import 这个
+ *  名字的代码(目前已经全部统一到 PageMeta,这个 alias 保留以防外部代码)。 */
 export interface PageMeta {
   id: string
   spaceId: string
   parentId: string | null
   authorId: string
+  /** 页面标题 —— findInheritedViewSource 用它组装 inheritedFrom {pageId, title}
+   *  DTO,前端 dialog 直接渲染不需要再发请求。 */
+  title: string
   /** Date.now() ms;null = live page,非 null = 已在回收站。
    *  Phase B 的 restrictions 路由需要这个判断 trashed page → 404。 */
   deletedAt: number | null
+  /** 是否继承父级 view 限制(2026-08-03 P1-3)。见 findInheritedViewSource
+   *  注释;pageReadableDirectFilter 也用它决定父链 walk 是否继续。 */
+  inheritViewRestrictions: boolean
 }
+
+/** @deprecated 已合并到 PageMeta,保留 alias 避免外部 import 报错。 */
+export type PageMetaWithInherit = PageMeta
 
 /**
  * 列表路径(GET /api/pages)的 SQL 过滤 —— 在 SELECT WHERE 里直接判 page
  * 可读性,避免 N+1 跑 canReadPage。
  *
- * 覆盖两类可读情况(OR):
+ * 覆盖三类可读情况(OR):
  *   1. **author**:本用户是 page 作者(author 始终 full,不进 allow-list)。
- *   2. **整条父链 + 本页的所有 view 限制都在 allow-list 内**:NOT EXISTS
+ *   2. **space-admin**:本用户在 page 所在空间是 admin(2026-08-03 加)。
+ *      理由同 effectivePageReadAccess —— 不能用 view 限制反过来把空间
+ *      管理员挡在列表外,否则他们的 sidebar 是「空白 + 能管限制」的反
+ *      直觉状态。匹配 space_role_grants 上 role='admin' + (user 直接
+ *      命中 OR user 所属 group 命中),legacy space_group_access 视为
+ *      editor 这里不命中,但 admin / 编辑者不被影响(legacy 不参与 view
+ *      限制 bypass,因为 legacy 是 editor 角色,不是 admin)。
+ *   3. **整条父链 + 本页的所有 view 限制都在 allow-list 内**:NOT EXISTS
  *      一个 CTE,该 CTE 沿 pages.parent_id 上溯本页祖先链,链上每条 view
  *      限制都必须满足 user 直接命中或 user 所属组命中。空链(即本页无 view
  *      限制、祖先也无 view 限制)vacuously 通过 → 走调用方的 space filter
@@ -579,16 +606,30 @@ export interface PageMeta {
  *
  * 性能:页深度一般 < 10,CTE 50 层硬上限(防御 parent_id 循环 + 极端深树);
  * 配合 (page_id, kind) 上的 page_restrictions_page_idx,单页 NOT EXISTS
- * 是 O(depth) 的 index seek,实测 list 端点 P95 不退化。
+ * 是 O(depth) 的 index seek,实测 list 端点 P95 不退化。space_role_grants
+ * 是 page.space_id 上的 index seek,常数级。admin / author 是常数判定。
  *
  * 实现时间:2026-08-03,fix journey-B-1(替换 v0 折衷的「只查本页 view 限制」,
  * 父链 view 限制子页不再出现在 sidebar / 列表,避免「幽灵条目 → 404」反 UX)。
+ * 同日新增 space-admin bypass(旅程 B 收口,见 effectivePageReadAccess 注释)。
  */
 export function pageReadableDirectFilter(me: Principal): SQL {
   if (me.isAdmin) return sql`TRUE`
   if (me.kind !== 'user') return sql`FALSE`
   return sql`(
     ${pages.authorId} = ${me.id}
+    OR EXISTS (
+      SELECT 1 FROM space_role_grants srg
+        WHERE srg.space_id = ${pages.spaceId}
+          AND srg.role = 'admin'
+          AND (
+            (srg.principal_kind = 'user' AND srg.principal_id = ${me.id})
+            OR (srg.principal_kind = 'group' AND srg.principal_id IN (
+              SELECT ugm.group_id FROM user_group_members ugm
+              WHERE ugm.user_id = ${me.id}
+            ))
+          )
+    )
     OR NOT EXISTS (
       WITH RECURSIVE page_ancestors(id, depth) AS (
         SELECT ${pages.id}, 0
@@ -596,7 +637,10 @@ export function pageReadableDirectFilter(me: Principal): SQL {
         SELECT p.parent_id, pa.depth + 1
         FROM pages p
         INNER JOIN page_ancestors pa ON p.id = pa.id
-        WHERE pa.depth < 50 AND p.parent_id IS NOT NULL
+        INNER JOIN pages cur ON cur.id = pa.id
+        WHERE pa.depth < 50
+          AND p.parent_id IS NOT NULL
+          AND cur.inherit_view_restrictions = TRUE
       )
       SELECT 1 FROM page_restrictions pr
       WHERE pr.kind = 'view'
@@ -612,16 +656,23 @@ export function pageReadableDirectFilter(me: Principal): SQL {
   )`
 }
 
-/** 加载一个 page 的最小元信息(id / spaceId / parentId / authorId / deletedAt),
- *  不存在返回 null。trashed page 也照样返回(由调用方按需 404 短路)。 */
-export async function loadPageMeta(pageId: string): Promise<PageMeta | null> {
+/** 加载一个 page 的最小元信息(id / spaceId / parentId / authorId /
+ *  deletedAt / inheritViewRestrictions),不存在返回 null。trashed page
+ *  也照样返回(由调用方按需 404 短路)。
+ *
+ * inheritViewRestrictions 是 2026-08-03 P1-3 加的字段,findInheritedViewSource
+ * + effectivePageReadAccess / pageReadableDirectFilter 都需要它来决策父
+ * 链 walk 是否继续上溯。 */
+export async function loadPageMeta(pageId: string): Promise<PageMetaWithInherit | null> {
   const [row] = await db
     .select({
       id: pages.id,
       spaceId: pages.spaceId,
       parentId: pages.parentId,
       authorId: pages.authorId,
+      title: pages.title,
       deletedAt: pages.deletedAt,
+      inheritViewRestrictions: pages.inheritViewRestrictions,
     })
     .from(pages)
     .where(sql`${pages.id} = ${pageId}`)
@@ -629,7 +680,15 @@ export async function loadPageMeta(pageId: string): Promise<PageMeta | null> {
   if (!row || row.spaceId === null) return null
   // pg driver returns bigint as string by default. Coerce to number.
   const deletedAt = typeof row.deletedAt === 'string' ? Number(row.deletedAt) : row.deletedAt
-  return { id: row.id, spaceId: row.spaceId, parentId: row.parentId, authorId: row.authorId, deletedAt }
+  return {
+    id: row.id,
+    spaceId: row.spaceId,
+    parentId: row.parentId,
+    authorId: row.authorId,
+    title: row.title,
+    deletedAt,
+    inheritViewRestrictions: row.inheritViewRestrictions,
+  }
 }
 
 /**
@@ -686,17 +745,100 @@ function isInAllowList(
   return false
 }
 
+/** PageMeta 上附加 inherit_view_restrictions 字段(2026-08-03 P1-3)已合并
+ *  到 PageMeta 主定义,见上方 PageMeta 注释。这里删除独立的 extends 别名,
+ *  避免重复 export。 */
+
+/**
+ * 沿父链 walk 找到本页 view 限制的「最近有效父级来源」。
+ * 用于 GET /api/pages/:id/restrictions 的 inheritedFrom 字段 —— dialog
+ * 解释「本页继承自父页面 X 的查看限制」+ 跳到父页限制面板的入口。
+ *
+ * 语义:
+ *   - 本页 inherit_view_restrictions=false → null(本页是新规则的起点,
+ *     不继承任何祖先)。
+ *   - 沿 parentId 上溯,每页的 inherit_view_restrictions=true 才能继续
+ *     上溯(等于 false 意味着该祖先自己就是新起点,前面的祖先不再约束)。
+ *   - 找最近一条「本页 view 有 allow-list」的祖先,返回其 {pageId, title};
+ *     链上无 view allow-list → null(本页是新规则的起点)。
+ *
+ * 性能:深度一般 < 10,O(depth) 个 SELECT(共享 effectivePageReadAccess 的
+ * walk 路径,数据不变)。
+ */
+export async function findInheritedViewSource(
+  pageId: string,
+): Promise<{ pageId: string; title: string } | null> {
+  // 第一步:确认本页本身的状态。本页 inherit=false → 无继承来源。
+  const selfMeta = await loadPageMeta(pageId)
+  if (!selfMeta) return null
+  if (!selfMeta.inheritViewRestrictions) return null
+  if (!selfMeta.parentId) return null
+
+  // 第二步:从父开始 walk。visited 防 parent_id 循环。
+  const visited = new Set<string>()
+  let cur: string | null = selfMeta.parentId
+  while (cur && !visited.has(cur)) {
+    visited.add(cur)
+    const parentMeta = await loadPageMeta(cur)
+    if (!parentMeta) return null
+    // parent 是不是 view 限制来源?
+    const { view } = await loadPageRestrictions(parentMeta.id, parentMeta.spaceId)
+    const hasView = view.users.size + view.groups.size > 0
+    if (hasView) {
+      return { pageId: parentMeta.id, title: parentMeta.title || '(无标题)' }
+    }
+    // parent 不是限制来源 → 看 parent 自己是不是新起点(inherit=false)
+    if (!parentMeta.inheritViewRestrictions) return null
+    // 继续上溯
+    cur = parentMeta.parentId
+  }
+  return null
+}
+
+/**
+ * 当前用户在该 page 享受哪些高权限保护(global admin / space admin /
+ * page author)。三选多,用于 GET /api/pages/:id/restrictions 的
+ * protectedSources 字段 —— dialog 解释「你作为 XX,不受本页限制约束」。
+ *
+ * 与 effectivePageReadAccess 的语义对齐:
+ *   - globalAdmin:me.isAdmin(覆盖 personal space)
+ *   - spaceAdmin:canAdminSpace(me, spaceId) 对非 global admin 的 user
+ *   - pageAuthor:meta.authorId === me.id,且能在空间内(canReadSpace)
+ */
+export async function getProtectedSourcesForPage(
+  me: Principal,
+  pageId: string,
+  spaceId: string,
+): Promise<{ globalAdmin: boolean; spaceAdmin: boolean; pageAuthor: boolean }> {
+  const meta = await loadPageMeta(pageId)
+  const pageAuthor =
+    !!meta && me.kind === 'user' && meta.authorId === me.id &&
+    (await canReadSpace(me, spaceId))
+  const spaceAdmin = me.kind === 'user' && !me.isAdmin && (await canAdminSpace(me, spaceId))
+  return {
+    globalAdmin: me.isAdmin,
+    spaceAdmin,
+    pageAuthor,
+  }
+}
+
 /**
  * 解析 view 限制(沿父链 BFS 累计 allow-list)。
  *
  * 关键不变量(对齐 Confluence):
  *   - 任一祖先有 view 限制 → 子页 view 默认收紧,子页必须满足该 allow-list
  *   - 没限制:沿父链上溯到 root,都没限制就回退到 canReadSpace
- *   - global admin + page 作者 始终短路 true(不受 view 限制约束)
+ *   - global admin + page 作者 + space admin 始终短路 true(不受 view 限制约束)
  *   - visited 集合防 parent_id 循环(理论上 PATCH 已防,defensive)
  *
  * 性能:深度一般 < 10 层,O(depth) 个 SQL。depth cache(denormalized JSONB
  * 列 + trigger)留后续优化。
+ *
+ * Space admin 短路(2026-08-03 旅程 B 收口):用户提的 case「A 把 view 限制
+ * 设成只让自己能读 + 编辑」不应缩小其他 space-admin 的访问权 —— 否则共享
+ * 空间内的协作就退化成「A 一言堂」,违背 Confluence 的「限制是收窄默认
+ * 行为,不覆盖高权限角色」语义。本函数 + pageReadableDirectFilter 同时加
+ * canAdminSpace bypass。
  */
 export async function effectivePageReadAccess(
   me: Principal,
@@ -718,6 +860,12 @@ export async function effectivePageReadAccess(
   // 才保留「无视 view 限制读自己页」的权限(原 author 特殊待遇)。
   const meta = await loadPageMeta(pageId)
   if (meta?.authorId === me.id && (await canReadSpace(me, spaceId))) return true
+  // space admin(2026-08-03):受任一祖先 view 限制约束?不。理由同 global
+  // admin —— 空间元数据 + 成员授权是他们的本职工作,view 限制是 metadata
+  // 维度,不应该反而把「能管限制」的人挡在页外,否则他们看不见页面谈何
+  // 管理限制。canAdminSpace 已经内含 canReadSpace 判定(grant 必须存在),
+  // 不会把「不在空间内」的人误放进来。
+  if (await canAdminSpace(me, spaceId)) return true
 
   const myGroupIds = await userGroupIds(me)
   const visited = new Set<string>()
@@ -727,6 +875,15 @@ export async function effectivePageReadAccess(
     // 用 cur 重新 load meta(取 parentId);首次 cur === pageId
     const nodeMeta: PageMeta | null = cur === pageId ? meta : await loadPageMeta(cur)
     if (!nodeMeta) break
+    // inherit_view_restrictions=false → 本页是新规则的起点,不再上溯祖先。
+    // 本页 view 限制仍按下面的 hasRestriction 判断(没限制 → fallthrough)。
+    if (!nodeMeta.inheritViewRestrictions) {
+      const { view } = await loadPageRestrictions(cur, nodeMeta.spaceId)
+      if (view.users.size + view.groups.size > 0) {
+        return isInAllowList(me, myGroupIds, view)
+      }
+      return canReadSpace(me, spaceId)
+    }
     const { view } = await loadPageRestrictions(cur, nodeMeta.spaceId)
     const hasRestriction = view.users.size + view.groups.size > 0
     if (hasRestriction) {
@@ -741,9 +898,20 @@ export async function effectivePageReadAccess(
 /**
  * 解析 edit 限制(只约束本页,父链无关 —— Confluence 已知行为)。
  *
- *  - global admin + page 作者 始终 true(不受 edit 限制约束)
+ *  - global admin + page 作者 + space admin 始终 true(不受 edit 限制约束)
  *   - 有 edit 限制:S 必须在 allow-list 内
  *   - 无 edit 限制:回退到 canEditSpace
+ *
+ * Space admin 短路(2026-08-03):同 effectivePageReadAccess 注释里描述的
+ * 「A 把 view 限制设成只让自己」case —— 同样不能用来缩小其他 space-admin
+ * 的编辑权。
+ *
+ * 注意:space admin bypass **仍然受 archived 阻断**(P1-1 设计)。归档后整
+ * 个空间禁止写 —— 包括 admin,「admin 想改先 unarchive」。canAdminSpace
+ * 自己不查 archive(space-level metadata 写路径用 canAdminSpace 的 caller
+ * 自己挡,见 spaces.ts 的 PATCH /api/spaces/:id handler);page-level edit
+ * 这里必须显式查一次 archive,否则 spadmin 在归档空间里仍能 PATCH page
+ * —— 跟 canEditSpace 的语义不一致。
  */
 export async function effectivePageEditAccess(
   me: Principal,
@@ -753,12 +921,17 @@ export async function effectivePageEditAccess(
 ): Promise<boolean> {
   if (me.isAdmin) return true
   if (me.kind !== 'user') return false
+  // P1-1:归档阻断先于所有 bypass —— archived → false 对所有人,含 admin。
+  if (await isSpaceArchived(spaceId)) return false
   // page 作者本人:E-1 (2026-08-03) — author 短路**前**先 canEditSpace。
   // 被移除出空间 → canEditSpace false → 短路不生效 → 走完整流程(edit
   // 限制 / canEditSpace)→ false → PATCH 404。降级为 viewer 时也走同
   // 路径 —— canEditSpace false,author 不能编辑自己写的页(对齐 Confluence
   // 「空间角色决定可写性」语义,而不是 author 永远可写)。
   if (authorId === me.id && (await canEditSpace(me, spaceId))) return true
+  // space admin 短路(2026-08-03):理由同 effectivePageReadAccess。空间
+  // 管理员需要随时调整限制 / metadata,不应被自己的限制规则挡在外面。
+  if (await canAdminSpace(me, spaceId)) return true
 
   const { edit } = await loadPageRestrictions(pageId, spaceId)
   if (edit.users.size + edit.groups.size > 0) {

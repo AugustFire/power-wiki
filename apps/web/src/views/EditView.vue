@@ -27,7 +27,7 @@ import type { PageNode } from '@power-wiki/shared'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 import { formatRelativeTime } from '@/lib/relativeTime'
-import { canWritePersonalSpace, spaceRefForPage } from '@/lib/permissions'
+import { canManagePageWrite } from '@/lib/permissions'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -62,16 +62,7 @@ const rightRailEl = inject<Ref<HTMLElement | null>>('appRightRail', ref(null))
  *   拒掉,再叠加原来的 isAdmin / viewerRole / author 短路。
  */
 function canEditPageNode(p: PageNode): boolean {
-  const me = authStore.user
-  if (!me) return false
-  // 模块 1 P2:归档空间整体只读,连 admin 也不例外 —— 与后端 canEditSpace
-  // 的归档短路一致(lib/permissions.ts)。放在 isAdmin 之前,否则 admin 会
-  // 进到编辑器里写半天再吃 403。
-  if (p.spaceArchived) return false
-  if (!canWritePersonalSpace(me, spaceRefForPage(p))) return false
-  if (authStore.isAdmin) return true
-  if (p.viewerRole && p.viewerRole !== 'viewer') return true
-  return me.id === p.authorId
+  return canManagePageWrite(authStore.user, p)
 }
 
 const localId = ref<string | null>(props.id ?? null)
