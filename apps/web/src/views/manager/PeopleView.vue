@@ -65,7 +65,6 @@ const {
   groups,
   usersLoading,
   groupsLoading,
-  usersHasMore,
   groupsHasMore,
   usersTotal,
   usersSystemStats,
@@ -74,7 +73,21 @@ const {
   clearUserFilters,
   ensureUsersLoaded,
   ensureGroupsLoaded,
-  loadMoreUsers,
+  /* P1-16 · 翻页接口 + 派生状态 —— AuditView 同款 pager 用的
+   * 1-based currentPage / totalPages / pageStart / pageEnd。
+   * loadMoreUsers 不再消费(loadMore 风格的「append」被替换为正
+   * 式分页,跟 /manager/audit 节奏一致)。groups tab 仍用 loadMore,
+   *  因为该路径不挂 search / status 过滤,分页不是核心需求。*/
+  usersCurrentPage,
+  usersTotalPages,
+  usersPageSize,
+  usersPageStart,
+  usersPageEnd,
+  usersHasPrevPage,
+  usersHasNextPage,
+  nextPageUsers,
+  prevPageUsers,
+  goToPageUsers,
   loadMoreGroups,
   upsertUser,
   removeUser,
@@ -263,6 +276,7 @@ function activeFilterCount(): number {
   if (userFilters.q) n++
   if (userFilters.status !== undefined) n++
   if (userFilters.role !== undefined) n++
+  if (userFilters.includeAnonymized) n++
   return n
 }
 
@@ -491,118 +505,151 @@ watch(activeTab, (t) => {
 
       <div v-if="usersLoading && users.length === 0" class="uv-loading">加载中…</div>
       <template v-else>
-      <!-- 5.4:M17 工具栏 + active filter chips。
-           工具栏本身(filter 输入 + 两个 select + 清空按钮)控制 filter
-           入口;chips 行仅当有活跃 filter 时出现,负责「可见 + 可单删」的
-           状态呈现。两者物理相连但视觉独立(chips bg 区分),跟 Confluence
-           用户目录行为一致:清空筛选仍然走工具栏按钮一键全清,chips 上
-           的 × 走单点删除(粒度更细)。 -->
-      <div v-if="users.length > 0 || hasActiveFilter()" class="users-shell">
-        <div class="toolbar">
-          <div class="filter-group filter-group-search">
-            <div class="search-input-wrap">
-              <span class="material-symbols-outlined search-icon">search</span>
-              <input
-                id="pv-search"
-                v-model="userFilters.q"
-                type="text"
-                class="input search-input"
-                placeholder="按姓名或邮箱搜索…"
-                autocomplete="off"
-              />
-              <button
-                v-if="userFilters.q"
-                type="button"
-                class="search-clear"
-                title="清空搜索"
-                @click="userFilters.q = ''"
-              >
-                <span class="material-symbols-outlined">close</span>
-              </button>
-            </div>
+      <!-- 5.4 → P1-16:M17 工具栏 + active filter chips。
+           工具栏本身(filter 输入 + 两个 select + 包含已注销用户 checkbox
+           + 清空按钮)控制 filter 入口;chips 行仅当有活跃 filter 时出现,
+           负责「可见 + 可单删」的状态呈现。P1-16 关键调整:
+             · 工具栏从「内嵌的横向工具条」改为 AuditView 同款
+               .toolbar.card(独立 card,label 在上、控件在下、flex end
+               对齐),与 /manager/audit 视觉节奏一致;
+             · 「包含已注销用户」checkbox 取代「全表加载灰名单」的
+               默认行为 —— 默认 unchecked,勾上才显示 anonymized 行;
+             · chips 增加 includeAnonymized chip,跟其他 filter 等价
+               可单点删除。 -->
+      <div v-if="users.length > 0 || hasActiveFilter()" class="users-toolbar toolbar card">
+        <div class="filter-group filter-group-search">
+          <label class="filter-label" for="pv-search">搜索</label>
+          <div class="search-input-wrap">
+            <span class="material-symbols-outlined search-icon">search</span>
+            <input
+              id="pv-search"
+              v-model="userFilters.q"
+              type="text"
+              class="input search-input"
+              placeholder="按姓名或邮箱搜索…"
+              autocomplete="off"
+            />
+            <button
+              v-if="userFilters.q"
+              type="button"
+              class="search-clear"
+              title="清空搜索"
+              @click="userFilters.q = ''"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
           </div>
-          <div class="filter-group-select-wrapper">
-            <div class="filter-group filter-group-select">
-              <label class="filter-label" for="pv-status">状态</label>
-              <select id="pv-status" v-model="userFilters.status" class="select">
-                <option :value="undefined">全部状态</option>
-                <option value="active">正常</option>
-                <option value="must_reset_password">需重置密码</option>
-                <option value="disabled">已禁用</option>
-                <option value="anonymized">已注销</option>
-              </select>
-            </div>
-            <div class="filter-group filter-group-select">
-              <label class="filter-label" for="pv-role">角色</label>
-              <select id="pv-role" v-model="userFilters.role" class="select">
-                <option :value="undefined">全部角色</option>
-                <option value="admin">管理员</option>
-                <option value="user">普通用户</option>
-              </select>
-            </div>
-          </div>
-          <button
-            v-if="hasActiveFilter()"
-            type="button"
-            class="clear-filters"
-            @click="clearUserFilters"
-          >
-            <span class="material-symbols-outlined">filter_alt_off</span>
-            <span>清空筛选</span>
-          </button>
         </div>
-        <!-- Active filter chips —— 5.4 主目标。0 命中或全显示场景下,chip
-             strip 是 filter ↔ 数据 因果链的唯一可见锚点。原先 filter 状态
-             只藏在 select / input 内部,清空搜索词再次输入时没人意识到自
-             己到底筛了什么;现在 chips 一字排开,「筛选: 张三」、「状态:
-             已禁用」、「角色: 管理员」一眼可读,各点 × 单删。 -->
-        <div v-if="hasActiveFilter()" class="active-filters-strip">
-          <span class="af-label">已应用 {{ activeFilterCount() }} 个筛选</span>
-          <button
-            v-if="userFilters.q"
-            type="button"
-            class="filter-chip"
-            :title="`移除搜索: ${userFilters.q}`"
-            @click="userFilters.q = ''"
-          >
-            <span class="filter-chip-prefix">搜索</span>
-            <span class="filter-chip-value">{{ userFilters.q }}</span>
-            <span class="filter-chip-x" aria-hidden="true">
-              <span class="material-symbols-outlined">close</span>
-            </span>
-          </button>
-          <button
-            v-if="userFilters.status"
-            type="button"
-            class="filter-chip"
-            title="移除状态筛选"
-            @click="userFilters.status = undefined"
-          >
-            <span class="filter-chip-prefix">状态</span>
-            <span class="filter-chip-value">{{ userStatusLabel(userFilters.status).text }}</span>
-            <span class="filter-chip-x" aria-hidden="true">
-              <span class="material-symbols-outlined">close</span>
-            </span>
-          </button>
-          <button
-            v-if="userFilters.role"
-            type="button"
-            class="filter-chip"
-            title="移除角色筛选"
-            @click="userFilters.role = undefined"
-          >
-            <span class="filter-chip-prefix">角色</span>
-            <span class="filter-chip-value">{{ userRoleLabel(userFilters.role) }}</span>
-            <span class="filter-chip-x" aria-hidden="true">
-              <span class="material-symbols-outlined">close</span>
-            </span>
-          </button>
+        <div class="filter-group">
+          <label class="filter-label" for="pv-status">状态</label>
+          <select id="pv-status" v-model="userFilters.status" class="select">
+            <option :value="undefined">全部状态</option>
+            <option value="active">正常</option>
+            <option value="must_reset_password">需重置密码</option>
+            <option value="disabled">已禁用</option>
+            <option value="anonymized">已注销</option>
+          </select>
         </div>
+        <div class="filter-group">
+          <label class="filter-label" for="pv-role">角色</label>
+          <select id="pv-role" v-model="userFilters.role" class="select">
+            <option :value="undefined">全部角色</option>
+            <option value="admin">管理员</option>
+            <option value="user">普通用户</option>
+          </select>
+        </div>
+        <!-- P1-16 · 包含已注销用户 —— 默认 unchecked(灰名单不进首屏)。
+             勾上后,filter 状态走 useManagerStats.userFilters.includeAnonymized,
+             触发 300ms debounce 重新拉。跟其他 filter 走同一条 refetch 通道,
+             不会造成额外 RTT。 -->
+        <div class="filter-group">
+          <label class="filter-label" for="pv-include-anon">已注销</label>
+          <label class="checkbox-row">
+            <input
+              id="pv-include-anon"
+              v-model="userFilters.includeAnonymized"
+              type="checkbox"
+              class="checkbox"
+            />
+            <span class="checkbox-text">包含已注销用户</span>
+          </label>
+        </div>
+        <button
+          v-if="hasActiveFilter()"
+          type="button"
+          class="btn ghost clear-filters"
+          @click="clearUserFilters"
+        >
+          <span class="material-symbols-outlined">filter_alt_off</span>
+          <span>清空筛选</span>
+        </button>
       </div>
-      <!-- 表格卡 —— 5.4 收口:0 命中且 filter active 时,空表体换成
-           EmptyState「没有匹配的用户」+ 「清空筛选」CTA;避免空表身视觉
-           空洞。true 空态(无 user 且无 filter)走原本的「还没有用户」。 -->
-      <div v-if="users.length > 0" class="users-shell users-table-card">
+      <!-- Active filter chips —— 5.4 主目标。0 命中或全显示场景下,chip
+           strip 是 filter ↔ 数据 因果链的唯一可见锚点。原先 filter 状态
+           只藏在 select / input 内部,清空搜索词再次输入时没人意识到自
+           己到底筛了什么;现在 chips 一字排开,「筛选: 张三」、「状态:
+           已禁用」、「角色: 管理员」、「包含已注销」一眼可读,各点 ×
+           单删。P1-16 加入 includeAnonymized chip。 -->
+      <div v-if="hasActiveFilter()" class="active-filters-strip card">
+        <span class="af-label">已应用 {{ activeFilterCount() }} 个筛选</span>
+        <button
+          v-if="userFilters.q"
+          type="button"
+          class="filter-chip"
+          :title="`移除搜索: ${userFilters.q}`"
+          @click="userFilters.q = ''"
+        >
+          <span class="filter-chip-prefix">搜索</span>
+          <span class="filter-chip-value">{{ userFilters.q }}</span>
+          <span class="filter-chip-x" aria-hidden="true">
+            <span class="material-symbols-outlined">close</span>
+          </span>
+        </button>
+        <button
+          v-if="userFilters.status"
+          type="button"
+          class="filter-chip"
+          title="移除状态筛选"
+          @click="userFilters.status = undefined"
+        >
+          <span class="filter-chip-prefix">状态</span>
+          <span class="filter-chip-value">{{ userStatusLabel(userFilters.status).text }}</span>
+          <span class="filter-chip-x" aria-hidden="true">
+            <span class="material-symbols-outlined">close</span>
+          </span>
+        </button>
+        <button
+          v-if="userFilters.role"
+          type="button"
+          class="filter-chip"
+          title="移除角色筛选"
+          @click="userFilters.role = undefined"
+        >
+          <span class="filter-chip-prefix">角色</span>
+          <span class="filter-chip-value">{{ userRoleLabel(userFilters.role) }}</span>
+          <span class="filter-chip-x" aria-hidden="true">
+            <span class="material-symbols-outlined">close</span>
+          </span>
+        </button>
+        <button
+          v-if="userFilters.includeAnonymized"
+          type="button"
+          class="filter-chip"
+          title="移除「包含已注销用户」筛选"
+          @click="userFilters.includeAnonymized = false"
+        >
+          <span class="filter-chip-prefix">已注销</span>
+          <span class="filter-chip-value">包含</span>
+          <span class="filter-chip-x" aria-hidden="true">
+            <span class="material-symbols-outlined">close</span>
+          </span>
+        </button>
+      </div>
+      <!-- 表格卡 —— P1-16 调整:从 .users-shell.users-table-card 改用
+           .list-card(跟 AuditView 同款)包住 table,内边距 0、overflow
+           hidden、border 跟工具栏 card 一致。表头 thead 内的视觉规约
+           沿用上版本的 uppercase / bg-canvas 11px。 -->
+      <div v-if="users.length > 0" class="card list-card users-table-card">
         <table class="users-table">
           <thead>
             <tr>
@@ -675,16 +722,35 @@ watch(activeTab, (t) => {
       </EmptyState>
       </template>
 
-      <!-- Load-more 跟 table 同生死 — filter 空匹配时上方已是 EmptyState,
-           再叠一个「已加载全部」footer 没意义。 -->
-      <div v-if="usersHasMore" class="load-more-row">
+      <!-- P1-16 · 翻页 footer —— 跟 AuditView 同款 .pager:左「上一页」+
+           中 pager-info(第 N / M 页 · 共 Z 条)+ 右「下一页」。三段
+           flex 居中,纯文字按钮 + chevron icon 即可,不需要跳页 input
+           (「跳到第 N 页」在 admin 场景下使用率低,P1-13 legacy
+           UsersView 才有,这边跟 audit 节奏对齐就去掉)。空态(0 条)不
+           渲染,跟 AuditView 行为一致。-->
+      <div v-if="!usersLoading && users.length > 0 && usersTotal > 0" class="pager">
         <button
           type="button"
-          class="btn ghost load-more-btn"
-          :disabled="usersLoading"
-          @click="loadMoreUsers"
+          class="btn ghost"
+          :disabled="!usersHasPrevPage || usersLoading"
+          @click="prevPageUsers"
         >
-          {{ usersLoading ? '加载中…' : '加载更多' }}
+          <span class="material-symbols-outlined">chevron_left</span>
+          上一页
+        </button>
+        <span class="pager-info">
+          第 <strong>{{ usersCurrentPage }}</strong> / <strong>{{ usersTotalPages }}</strong> 页
+          · 显示 <strong>{{ usersPageStart }}-{{ usersPageEnd }}</strong>
+          · 共 <strong>{{ usersTotal }}</strong> 条
+        </span>
+        <button
+          type="button"
+          class="btn ghost"
+          :disabled="!usersHasNextPage || usersLoading"
+          @click="nextPageUsers"
+        >
+          下一页
+          <span class="material-symbols-outlined">chevron_right</span>
         </button>
       </div>
     </section>
@@ -865,6 +931,15 @@ watch(activeTab, (t) => {
    to keep this view self-contained. Same class names so future refactors
    can promote these to components.css. */
 
+/* P1-16 · card shell —— 跟 AuditView 同款 .card:border 1px、半径
+   4px、padding 由调用方控制。toolbar 工具栏 / chip strip / table
+   card 三段都吃这个 class,视觉边框节奏一致。 */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+}
+
 .uv-error {
   background: var(--danger-soft);
   color: var(--danger);
@@ -1042,90 +1117,48 @@ watch(activeTab, (t) => {
 .ra-btn-danger { color: var(--danger); }
 .ra-btn-danger:hover { background: var(--danger-soft); color: var(--danger); }
 
-/* ─── Filter toolbar (M17) — 工具栏跟表格合并到同一个 card shell,
- *     视觉上是一个整体。工具栏底边去掉,表格顶边内嵌。Input/Select
- *     跟 AuditView / 其他管理页的 .toolbar.card 保持 token 一致:
- *     bg-canvas 底色、radius-md 圆角、focus 加 2px accent-soft 光环;
- *     label 不强行 uppercase,留 inline 友好样式。 ─── */
-.users-shell {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 4px);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm, 0 1px 1px rgba(9, 30, 66, 0.13), 0 0 1px rgba(9, 30, 66, 0.13));
-}
-.users-shell .toolbar {
+/* ─── Filter toolbar (M17 → P1-16) — 工具栏独立 card,跟 AuditView
+ *     同款 .toolbar.card 节奏:label 在控件上方、控件 padding 14px
+ *     20px、控件之间 16px 间距、flex end 对齐、flex-wrap 自然换行。
+ *     表格独立 .list-card 包住,toolbar / chip strip / table 三段
+ *     视觉独立但同 border-radius / border 视觉对齐。 ─── */
+.users-toolbar.toolbar {
   display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 16px 24px;
+  align-items: end;
+  gap: 16px;
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  padding: 14px 20px;
 }
-.users-shell .users-table-wrap { background: var(--bg); }
-.users-shell .users-table {
-  border: 0;
-  border-radius: 0;
-}
-/* 三段式工具栏:左侧大块搜索(主输入,无外部 label),中间分组的状态/角色,
-   右侧清空筛选。两段之间用 1px 20px 高的分隔线分开,跟 Atlas section
-   风格一致。 */
-.filter-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+.users-toolbar.toolbar .filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
   flex: 0 0 auto;
-  position: relative;
-  padding-right: 28px;
 }
-.filter-group:not(:last-child)::after {
-  content: '';
-  display: block;
-  width: 1px;
-  height: 20px;
-  background: var(--border);
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+.users-toolbar.toolbar .filter-group-search {
+  width: 320px;
+  flex-shrink: 0;
 }
-.filter-group:last-child { padding-right: 0; }
-.filter-group-search { width: 400px; flex-shrink: 0; }
-.filter-group-select { flex: 0 0 auto; }
-.filter-group-select-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 28px;
-  padding-right: 28px;
-  position: relative;
-}
-.filter-group-select-wrapper::after {
-  content: '';
-  display: block;
-  width: 1px;
-  height: 20px;
-  background: var(--border);
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+.users-toolbar.toolbar .clear-filters {
+  margin-left: auto;
 }
 .filter-label {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   flex-shrink: 0;
   user-select: none;
 }
 .input, .select {
-  height: 36px;
+  height: 32px;
   padding: 0 10px;
   font-size: 13px;
   font-family: var(--font-sans, inherit);
   color: var(--text-1);
-  background: var(--bg);
+  background: var(--bg-canvas);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   outline: none;
@@ -1137,8 +1170,7 @@ watch(activeTab, (t) => {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.select { padding-right: 28px; cursor: pointer; }
-.filter-group .select { min-width: 156px; }
+.select { padding-right: 28px; cursor: pointer; min-width: 160px; }
 
 .search-input-wrap {
   position: relative;
@@ -1148,25 +1180,15 @@ watch(activeTab, (t) => {
 .search-icon {
   position: absolute;
   left: 10px;
-  font-size: 18px;
+  font-size: 16px;
   color: var(--text-3);
   pointer-events: none;
 }
-/* 视觉对齐 TrashView 的 .tt-search-input(36px / 14px / 18px icon /
-   focus-only 边框变色);保留清空按钮 → padding-right 留出 close 按钮位置,
-   跟 trash 的 12px 不一样。*/
 .search-input {
-  height: 36px;
-  font-size: 14px;
-  padding: 0 36px 0 36px;
+  padding: 0 32px 0 32px;
   width: 100%;
-  transition: border-color var(--duration-fast) var(--ease-out);
 }
-.input.search-input:hover { border-color: var(--border); }
-.input.search-input:focus {
-  border-color: var(--accent);
-  box-shadow: none;
-}
+.search-input:focus { box-shadow: none; }
 .search-clear {
   position: absolute;
   right: 4px;
@@ -1184,39 +1206,67 @@ watch(activeTab, (t) => {
 .search-clear:hover { background: var(--bg-subtle); color: var(--text-1); }
 .search-clear .material-symbols-outlined { font-size: var(--icon-sm, 14px); }
 
-.clear-filters {
-  margin-left: auto;
-  height: 32px;
-  padding: 0 12px;
+/* P1-16 · 「包含已注销用户」checkbox —— label 在上 + 自定义 checkbox
+   行,跟其他 filter-group 节奏一致。checked 走 accent token,
+   跟 Atlassian 产品表单同款视觉。 */
+.checkbox-row {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  height: 32px;
+  padding: 0 2px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-row:hover { color: var(--text-1); }
+.checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.checkbox-text { font-weight: 500; }
+
+.clear-filters {
+  height: 32px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-2);
-  background: transparent;
-  border: 0;
+  color: var(--text-1);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
 }
-.clear-filters:hover { background: var(--bg-subtle); color: var(--text-1); }
+.clear-filters:hover { background: var(--bg-canvas); border-color: var(--border-strong); }
 .clear-filters .material-symbols-outlined { font-size: var(--icon-md, 16px); }
 
-/* Active filter chip strip (5.4) — currently-applied filters as
-   removable chips. Visually distinct from the toolbar above (softer
-   bg + top divider) but inside the same shell so the strip stacks
-   cleanly below the toolbar in the same card.  The × inside each
-   chip signals "removable" with the brand-danger color on hover;
-   clicking the chip body or × both remove the filter. */
+/* Active filter chip strip (5.4 → P1-16) — currently-applied filters
+   as removable chips. Strip 自身是 card(独立于 toolbar 之外),padding
+   12px 20px,bg accent-softer 让「已应用筛选」这一行比 toolbar 视觉
+   弱一档(filter 状态是补充信息,不是主操作)。x 在 chip hover 变
+   红色,跟其他位置一致。 */
 .active-filters-strip {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 24px;
+  padding: 12px 20px;
   background: var(--accent-softer);
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
   flex-wrap: wrap;
+  margin-top: 12px;
 }
 .af-label {
   font-size: 12px;
@@ -1280,9 +1330,18 @@ watch(activeTab, (t) => {
   font-size: 14px;
 }
 
-/* Spacing between toolbar card and table card when both visible. */
+/* P1-16 · 表格 card —— 从 .users-shell.users-table-card 改成
+   .card.list-card(同 AuditView),padding 0、overflow hidden;
+   thead bg-canvas / uppercase 11px 视觉规约跟 toolbar 同款。 */
 .users-table-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
   margin-top: 12px;
+}
+.users-table-card .users-table {
+  border: 0;
+  border-radius: 0;
 }
 
 /* Group cards */
@@ -1322,8 +1381,8 @@ watch(activeTab, (t) => {
 .gc-open { color: var(--text-3); display: inline-flex; }
 .gc-open .material-symbols-outlined { font-size: 18px; }
 
-/* "Load more" footer (Stage B.1) — shared between users tab + groups tab.
- * Centered button + end-of-list marker. Tokens from tokens.css. */
+/* "Load more" footer (Stage B.1) — only used by groups tab now.
+   users tab 在 P1-16 之后改用下方的 .pager。*/
 .load-more-row {
   display: flex;
   justify-content: center;
@@ -1337,5 +1396,57 @@ watch(activeTab, (t) => {
 .load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* P1-16 · users tab 翻页 footer —— 跟 AuditView 同款 .pager:左
+   上一页 + 中 pager-info(第 N / M 页 · 显示 K-L · 共 Z 条)+
+   右下一页。视觉重量轻于 table row(13px / text-2 / text-invert
+   强调数字),不抢表头。跳页 input 故意去掉,跟 audit 节奏
+   一致。 */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px 0 4px;
+}
+.pager .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+.pager .btn:hover:not(:disabled) {
+  background: var(--bg-canvas);
+  border-color: var(--border-strong);
+}
+.pager .btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pager .btn .material-symbols-outlined {
+  font-size: 18px;
+}
+.pager-info {
+  font-size: 13px;
+  color: var(--text-2);
+  min-width: 320px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.pager-info strong {
+  color: var(--text-1);
+  font-weight: 600;
 }
 </style>

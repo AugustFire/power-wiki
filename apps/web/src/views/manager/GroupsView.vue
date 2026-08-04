@@ -449,14 +449,14 @@ function submitJump(): void {
 .gv-search-icon {
   position: absolute;
   left: 10px;
-  font-size: 18px;
+  font-size: var(--icon-md, 16px);
   color: var(--text-3);
   pointer-events: none;
 }
 .gv-search-input {
   width: 100%;
   height: 32px;
-  padding: 0 28px 0 34px;
+  padding: 0 28px 0 32px;
   font: inherit;
   font-size: 13px;
   color: var(--text-1);

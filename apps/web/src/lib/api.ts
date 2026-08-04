@@ -1035,6 +1035,10 @@ export const api = {
         if (q.q) params.set('q', q.q)
         if (q.status) params.set('status', q.status)
         if (q.role) params.set('role', q.role)
+        // P1-16 · 默认排除已注销用户;只勾上时把它显式 flag 出去。
+        // 显式 false 也写过去(空字符串就别发,让 server schema 走
+        // `undefined` 路径),保证 query string 跟用户意图一致。
+        if (q.includeAnonymized === true) params.set('includeAnonymized', 'true')
         const qs = params.toString() ? `?${params.toString()}` : ''
         const raw = await request<AdminUsersListResponse>(`/admin/users${qs}`)
         return AdminUsersListResponseSchema.parse(raw) as AdminUsersListResponse

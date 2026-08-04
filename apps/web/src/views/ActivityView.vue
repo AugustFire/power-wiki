@@ -261,22 +261,23 @@ function chipColor(kind: ActivityEvent['kind']): string {
         <div class="title-block">
           <h1 class="title">最近页面活动</h1>
           <p class="subtitle">
-            编辑/创建/复制/移动/恢复/发布/删除事件,按时间倒序,每页 20 条。
+            编辑 / 创建 / 复制 / 移动 / 恢复 / 发布 / 删除事件,按时间倒序,每页 20 条。
           </p>
           <!-- P1-11 · 「仅团队空间」明示 —— 后端 activity SQL 已经过滤
                spaces.kind = 'shared',但用户看不到 filter 规则,经常误
                以为「某人改了 X 页但没出现 = 数据丢了」。这里给 inline
                微提示(不是 callout,callout 是 warn 语义,这里是常驻指
-               引):accent-soft 圆点 + 短文案,跟 subtitle 同字号紧贴,
-               头部总高 ~50px 不抢列表。原文不重复"团队空间"字样,
-               默认上下文中「团队空间」已是隐含语义,这里只解释覆盖范围。 -->
+               引):accent-soft 圆点 + 短文案 + 一键跳转链接。跳转目标
+               是 /me(PersonalHomeView)而非 /(SpaceHomeView)—— 用户看
+               「个人草稿」三个字时心智模型是「自己的 dashboard」,而
+               SpaceHomeView 是「当前 active team 空间首页」,路由错位
+               会让用户点过去发现「还是团队空间」而误以为链接坏了。-->
           <p class="activity-scope-hint">
             <span class="scope-hint-dot" aria-hidden="true"></span>
             <span>
-              仅显示团队空间;个人草稿请到<router-link
-                to="/"
-                class="scope-hint-link"
-              >个人工作台</router-link>查看。
+              仅显示团队空间;个人草稿请到
+              <router-link to="/me" class="scope-hint-link">个人工作台</router-link>
+              查看。
             </span>
           </p>
         </div>
@@ -398,14 +399,14 @@ function chipColor(kind: ActivityEvent['kind']): string {
   font-size: 20px;
   font-weight: 700;
   color: var(--text-1);
-  margin: 0 0 4px;
+  margin: 0 0 8px;
 }
 .subtitle {
   font-size: 13px;
   color: var(--text-3);
   margin: 0;
-  max-width: 640px;
-  line-height: 1.5;
+  max-width: 720px;
+  line-height: 1.6;
 }
 /* P1-11 · 活动范围明示 —— inline 微提示替代 callout。accent 主色圆
  * 点 + 紧贴上下文的短文案 + 一键跳转链接。视觉重量比 subtitle 还
@@ -416,7 +417,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin: 6px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   background: transparent;
   color: var(--text-2);
@@ -591,14 +592,12 @@ function chipColor(kind: ActivityEvent['kind']): string {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  position: relative;
   transition: background var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out);
 }
 /* Hover affordance:浅灰背景 + 左侧 2px accent 竖线 —— 比单纯换 bg
  * 色更强,跟 sidebar row / page-tree row 的 hover 视觉对齐。*/
-.activity-row {
-  position: relative;
-}
 .activity-row::before {
   content: '';
   position: absolute;
@@ -627,21 +626,21 @@ function chipColor(kind: ActivityEvent['kind']): string {
 .row-line-1 {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 8px;
   font-size: 14px;
   color: var(--text-1);
 }
 .actor-name {
   font-weight: 600;
   color: var(--text-1);
+  flex-shrink: 0;
 }
 .kind-chip {
   display: inline-block;
   height: 18px;
   padding: 0 8px;
   border-radius: 9px;
-  color: #ffffff;
+  color: var(--text-invert);
   font-size: 11px;
   font-weight: 600;
   line-height: 18px;
@@ -657,14 +656,19 @@ function chipColor(kind: ActivityEvent['kind']): string {
 .kind-chip.kind-published  { background: var(--activity-published); }
 .kind-chip.kind-trashed    { background: var(--danger); }
 .kind-chip.kind-purged     { background: var(--activity-purged); }
+/* page-title 占满行 1 剩余空间 —— 之前 max-width: 480px + flex-wrap 让
+ * 2K 视口下 row 右半边大片留白(只有 chevron),看起来「内容挤左、空间
+ * 浪费」。flex: 1 + min-width: 0 让 ellipsis 在 title 自身宽度内发生,
+ * 行 1 一路拉到 chevron 前才结束。*/
 .ev-page-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 14px;
   font-weight: 500;
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 480px;
 }
 .row-line-2 {
   display: flex;
@@ -673,12 +677,16 @@ function chipColor(kind: ActivityEvent['kind']): string {
   font-size: 12px;
   color: var(--text-3);
 }
+/* time 右推到行尾 —— space-chip 紧贴 actor 一侧,time 走时间轴语义,
+ * 「最近一次动作发生在 X」读起来更顺。margin-left: auto 利用 row-line-2
+ * 的 flex 弹性把 time 顶到最右;space-chip 不再「漂在中间」。*/
+.row-line-2 .time { margin-left: auto; }
 .space-chip {
   display: inline-block;
   height: 18px;
   padding: 0 8px;
   border-radius: 9px;
-  color: white;
+  color: var(--text-invert);
   font-size: 11px;
   font-weight: 500;
   line-height: 18px;

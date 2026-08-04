@@ -223,6 +223,11 @@ export interface AdminUsersListQuery {
   q?: string
   status?: 'active' | 'disabled' | 'must_reset_password' | 'anonymized'
   role?: 'admin' | 'user'
+  /** P1-16 · 默认 false 排除 status='anonymized' 的行。admin 在
+   *  /manager/people 第一眼只看到活人 + 已禁用;勾上「包含已注销用
+   *  户」checkbox 才把灰名单纳进来。`status='anonymized'` 显式
+   *  选中时,后端短路,不需要再勾。 */
+  includeAnonymized?: boolean
 }
 
 /** topLoggedIn / PeopleContextPanel 用的精简 user DTO */

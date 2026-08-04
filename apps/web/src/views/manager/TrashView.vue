@@ -331,6 +331,7 @@ async function onPurge(id: string, title: string) {
       '删除后的页面不能恢复。',
     ],
     danger: true,
+    size: 'wide',
     confirmText: '永久删除',
     cancelText: '取消',
   })
@@ -411,6 +412,7 @@ async function batchPurge(): Promise<void> {
     confirmText: `永久删除 ${selectedCount.value} 个`,
     cancelText: '取消',
     danger: true,
+    size: 'wide',
   })
   if (!ok) return
   batchBusy.value = true
@@ -710,14 +712,13 @@ async function batchPurge(): Promise<void> {
     <Transition name="batchbar">
       <div v-if="selectedCount > 0" class="trash-batchbar" role="region" aria-label="批量操作">
         <div class="trash-batchbar-info">
-          <span class="material-symbols-outlined">check_box</span>
-          <span>已选 <strong>{{ selectedCount }}</strong> 项</span>
+          <span class="trash-batchbar-count">已选 <strong>{{ selectedCount }}</strong> 项</span>
           <button type="button" class="trash-batchbar-clear" @click="clearSelection">清空选择</button>
         </div>
         <div class="trash-batchbar-actions">
           <button
             type="button"
-            class="row-btn restore"
+            class="batchbar-btn primary"
             :disabled="batchBusy"
             @click="batchRestore"
           >
@@ -726,7 +727,7 @@ async function batchPurge(): Promise<void> {
           </button>
           <button
             type="button"
-            class="row-btn danger"
+            class="batchbar-btn danger"
             :disabled="batchBusy"
             @click="batchPurge"
           >
@@ -876,26 +877,31 @@ async function batchPurge(): Promise<void> {
 /* ─── Table ─── */
 .trash-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
   overflow: hidden;
-}
-.trash-table th, .trash-table td {
-  padding: 10px 12px;
-  text-align: left;
-  font-size: 13px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
+  font-size: 14px;
 }
 .trash-table th {
-  background: var(--bg-subtle);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-3);
-  font-weight: 500;
-  font-size: 12px;
-  text-transform: none;
-  letter-spacing: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 10px 16px;
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--border);
+}
+.trash-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-1);
+  vertical-align: middle;
+  font-size: 13px;
 }
 
 /* ─── P1-8 retention policy card ─── */
@@ -908,7 +914,7 @@ async function batchPurge(): Promise<void> {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 6px);
-  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.04);
+  box-shadow: var(--shadow-sm);
 }
 .retention-head {
   display: flex;
@@ -1000,7 +1006,7 @@ async function batchPurge(): Promise<void> {
   border: none;
   border-radius: var(--radius-md, 4px);
   background: var(--accent);
-  color: white;
+  color: var(--text-invert);
   font-size: 12.5px;
   font-weight: 500;
   font-family: inherit;
@@ -1132,19 +1138,31 @@ async function batchPurge(): Promise<void> {
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 4px);
-  background: var(--bg);
+  background: transparent;
   color: var(--text-2);
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
   margin-left: 6px;
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
 }
 .row-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text-1); }
 .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.row-btn.danger { color: var(--danger); border-color: var(--danger); }
-.row-btn.danger:hover:not(:disabled) { background: var(--danger); color: white; }
-.row-btn.restore { color: var(--accent); border-color: var(--accent); }
-.row-btn.restore:hover:not(:disabled) { background: var(--accent-soft); }
+/* 行级动作按钮 —— 用文字色 + hover 软底色,边框走中性色。
+ * 比「彩色边框」轻得多:复选框选中行底色已是 accent-soft,如果再
+ * 给按钮叠 accent 边框就会跟选中态视觉打架,看起来像 2 个选中标记。*/
+.row-btn.danger { color: var(--danger); }
+.row-btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft, rgba(215, 58, 58, 0.1));
+  border-color: var(--danger-soft, rgba(215, 58, 58, 0.2));
+}
+.row-btn.restore { color: var(--accent); }
+.row-btn.restore:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
 
 /* "Load more" footer (Stage B.1) — shared with PeopleView / SpacesView. */
 .load-more-row {
@@ -1167,11 +1185,16 @@ async function batchPurge(): Promise<void> {
   padding: 24px 0 8px;
 }
 
-/* P1-15 · batch action bar —— fixed 底部,sticky 在 footer 上方,
- * 用 accent 半透明背景 + elevation shadow 显式「次要但即时」权重。
+/* P1-15 · batch action bar —— fixed 底部,sticky 在 footer 上方。
  * 选中 N 项时滑入(Transition),无选中时折叠恢复视区,
- * 不浪费空间。 2 个按钮复用已有 .row-btn 视觉(只是行级用),
- * 这里 size 略放大到 28px 让底部动作更可见。*/
+ * 不浪费空间。
+ *
+ * 视觉权衡:之前的 1px accent 边框 + 中性背景 太重(整个 admin
+ * 后台只有这一个 accent 边框,会显得「这条 bar 在抢戏」)。改成
+ * 中性边框 + 略深的 canvas 背景 + elevation,让 bar 看起来像「
+ * 工具栏浮在内容上」,而不是「带描边的强调卡片」。按钮升级为
+ * filled primary / filled danger,正好对应「这是 CTA 级别动作」
+ * 的视觉权重。*/
 .trash-batchbar {
   position: sticky;
   bottom: 16px;
@@ -1182,24 +1205,24 @@ async function batchPurge(): Promise<void> {
   gap: 16px;
   padding: 10px 16px;
   margin: 16px 24px;
-  background: var(--bg);
-  border: 1px solid var(--accent);
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md, 6px);
-  box-shadow: 0 8px 24px rgba(9, 30, 66, 0.18);
+  box-shadow: var(--shadow-md);
   font-size: 13px;
   color: var(--text-1);
 }
 .trash-batchbar-info {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
-.trash-batchbar-info .material-symbols-outlined {
-  font-size: 18px !important;
-  color: var(--accent);
+.trash-batchbar-count {
+  color: var(--text-2);
 }
-.trash-batchbar-info strong {
+.trash-batchbar-count strong {
   font-weight: 600;
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
 .trash-batchbar-clear {
@@ -1223,12 +1246,35 @@ async function batchPurge(): Promise<void> {
   align-items: center;
   gap: 8px;
 }
-.trash-batchbar-actions .row-btn {
+/* 底部 batch 按钮 —— 实心填充 primary / danger,跟行级 row-btn
+ * (描边 + 软底)区分开。CTA 级别动作必须有明确的「可点」视觉,
+ * 否则 30px 的高度 + 中性边框会被误认为 info chip。*/
+.batchbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   height: 30px;
   padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 4px);
   font-size: 13px;
   font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
 }
+.batchbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.batchbar-btn.primary {
+  background: var(--accent);
+  color: var(--text-invert);
+}
+.batchbar-btn.primary:hover:not(:disabled) { filter: brightness(0.94); }
+.batchbar-btn.danger {
+  background: var(--danger);
+  color: var(--text-invert);
+}
+.batchbar-btn.danger:hover:not(:disabled) { filter: brightness(0.94); }
 
 /* batchbar Transition — 滑入 + 淡入,跟 Vue 默认 .<name>-enter / -leave-to
  * 规则对齐。*/

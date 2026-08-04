@@ -41,7 +41,14 @@ const usersLoading = ref(false)
 const usersRefreshing = ref(false)
 const usersError = ref<unknown>(null)
 let usersPromise: Promise<void> | null = null
-let usersPage = 0
+/* P1-13 · 翻页游标 —— **必须是 ref**。下方 5 个派生 computed
+ * (usersCurrentPage / usersPageStart / usersPageEnd / usersHasPrevPage /
+ * usersHasNextPage)都直接读这个值做依赖追踪。早期版本写的是
+ * `let usersPage = 0`,普通变量 → Vue 不会建立响应式依赖 →
+ * loadUsersPage 写回新值后 computed 永远不重算,UI 上「第 1 / 3 页」
+ * 在点下一页后纹丝不动。改成 ref(0) 后,所有派生 computed 自动
+ * 跟着更新。ref 内部值在 0..totalPages-1 之间,UI 上 +1 转 1-based。*/
+const usersPage = ref(0)
 const usersHasMore = ref(false)
 /** 匹配当前 filter 的总行数;无 filter = 全表总行数。来自 server 响应。 */
 const usersTotal = ref(0)
@@ -60,8 +67,13 @@ const groupsHasMore = ref(false)
  * PAGE_SIZE 收回 50,让分页 footer 真正进入用户视野。200 行的「快加载」
  * 体感并不比 50 行的「快很多」,但 50 行让「翻页」成为 admin 用户
  * 日常动作(尤其在 200+ 行团队下)。50 也呼应 Atlassian 的标准
- * user-management pageSize。*/
-const PAGE_SIZE = 50
+ * user-management pageSize。
+ * P1-16a · admin 偏好 PAGE_SIZE 50 → 20:更紧凑的列表在小团队(<
+ * 200 人)场景下让分页直接进视野(20 人以下不分页、20-40 一页就
+ * 翻页),符合管理员「看一眼就翻」的工作节奏。更大团队(200+)
+ * 之后想调,改这个常量即可,前端派生 computed + 后端 LIMIT 都
+ * 跟着走。*/
+const PAGE_SIZE = 20
 const FILTER_DEBOUNCE_MS = 300
 
 /* P1-13 · 派生分页状态 —— page = 当前页 (1-based);
@@ -72,31 +84,35 @@ const FILTER_DEBOUNCE_MS = 300
 const usersPageSize = PAGE_SIZE
 const usersTotalPages = computed(() => Math.max(1, Math.ceil(usersTotal.value / usersPageSize)))
 const usersPageStart = computed(() =>
-  usersTotal.value === 0 ? 0 : usersPage * usersPageSize + 1,
+  usersTotal.value === 0 ? 0 : usersPage.value * usersPageSize + 1,
 )
 const usersPageEnd = computed(() => {
   if (usersTotal.value === 0) return 0
-  return Math.min((usersPage + 1) * usersPageSize, usersTotal.value)
+  return Math.min((usersPage.value + 1) * usersPageSize, usersTotal.value)
 })
 /* 上一 / 下一页可用性 —— 边界检查放在 computed 里,
  * UI 直接消费,无需重复比较。*/
-const usersHasPrevPage = computed(() => usersPage > 0)
-const usersHasNextPage = computed(() => usersPage + 1 < usersTotalPages.value)
+const usersHasPrevPage = computed(() => usersPage.value > 0)
+const usersHasNextPage = computed(() => usersPage.value + 1 < usersTotalPages.value)
 
 /** 用户当前所在页(1-based),给 UI 「第 N 页 / 共 M 页」用 */
-const usersCurrentPage = computed(() => usersPage + 1)
+const usersCurrentPage = computed(() => usersPage.value + 1)
 
 /** M17 filter state。reactive 而不是 ref:filter 多了之后一组值用 reactive
  * 比一组独立 ref 更顺手(set 是原子的,不会中间态触发 watch)。空字符串 /
- * undefined 都视为「不过滤」,server 端 `q: '' / undefined` 等价。*/
+ * undefined 都视为「不过滤」,server 端 `q: '' / undefined` 等价。
+ * P1-16 · includeAnonymized 默认 false — 默认排除已注销用户(灰名
+ * 单不进首屏)。勾上才放出来。*/
 const userFilters = reactive<{
   q: string
   status: AdminUsersListQuery['status']
   role: AdminUsersListQuery['role']
+  includeAnonymized: boolean
 }>({
   q: '',
   status: undefined,
   role: undefined,
+  includeAnonymized: false,
 })
 
 /** Compose the current filter + offset into a query the server understands. */
@@ -107,6 +123,9 @@ function currentUsersQuery(offset: number): AdminUsersListQuery {
     q: userFilters.q || undefined,
     status: userFilters.status,
     role: userFilters.role,
+    // 显式只把 true 发出去;false 让 server schema 走 undefined 默认
+    // 路径(等价「排除 anonymized」),行为跟用户预期一致。
+    includeAnonymized: userFilters.includeAnonymized || undefined,
   }
 }
 
@@ -135,7 +154,7 @@ async function loadUsersPage(page: number, refresh: boolean): Promise<void> {
         if (!seen.has(u.id)) users.value.push(u)
       }
     }
-    usersPage = page
+    usersPage.value = page
     usersHasMore.value = result.hasMore
     usersTotal.value = result.total
     usersSystemStats.value = result.systemStats
@@ -207,18 +226,18 @@ async function ensureGroupsLoaded(): Promise<void> {
  * 请求顺序明确,但响应覆盖按 server 时序,放心)。*/
 async function nextPageUsers(): Promise<void> {
   if (!usersHasNextPage.value || usersLoading.value || usersRefreshing.value) return
-  await loadUsersPage(usersPage + 1, false)
+  await loadUsersPage(usersPage.value + 1, false)
 }
 
 async function prevPageUsers(): Promise<void> {
   if (!usersHasPrevPage.value || usersLoading.value || usersRefreshing.value) return
-  await loadUsersPage(usersPage - 1, false)
+  await loadUsersPage(usersPage.value - 1, false)
 }
 
 async function goToPageUsers(page: number): Promise<void> {
   if (usersLoading.value || usersRefreshing.value) return
   const target = Math.max(0, Math.min(page - 1, usersTotalPages.value - 1))
-  if (target === usersPage) return
+  if (target === usersPage.value) return
   await loadUsersPage(target, false)
 }
 
@@ -233,7 +252,7 @@ async function loadMoreUsers(): Promise<void> {
    * 跟之前不同:之前 offset 累计,现在 page 累计。append 完后
    * 继续保留同一 page 值,直到翻页动作才改。*/
   if (!usersHasMore.value || usersLoading.value || usersRefreshing.value) return
-  const nextPage = usersPage + 1
+  const nextPage = usersPage.value + 1
   await loadUsersPage(nextPage, false)
   /* loadUsersPage 内部会把 page 写回,所以这里不需要手动同步。
    * hasMore/total 同步更新。*/
@@ -260,16 +279,21 @@ async function refreshGroups(): Promise<void> {
  * 从第一页开始看,而不是停在第 5 页)。
  */
 const debouncedRefetch = debounce(() => {
-  usersPage = 0
+  usersPage.value = 0
   void refreshUsers()
 }, FILTER_DEBOUNCE_MS)
 
 function hasActiveFilter(): boolean {
-  return userFilters.q !== '' || userFilters.status !== undefined || userFilters.role !== undefined
+  return (
+    userFilters.q !== '' ||
+    userFilters.status !== undefined ||
+    userFilters.role !== undefined ||
+    userFilters.includeAnonymized === true
+  )
 }
 
 watch(
-  () => [userFilters.q, userFilters.status, userFilters.role],
+  () => [userFilters.q, userFilters.status, userFilters.role, userFilters.includeAnonymized],
   () => {
     // Always refetch on filter change. `loadUsersPage(0, …)` 跑
     // `SELECT COUNT(*) FILTER + items` + systemStats 三个并发 query,
@@ -284,11 +308,15 @@ watch(
  * 「清空筛选」 button. Does NOT auto-refetch — caller can chain
  * refreshUsers() if needed, but the watcher on filter change will
  * also fire (filters changed).
+ *
+ * P1-16 · includeAnonymized 也回 false(默认「不显示灰名单」)。把
+ * 全部 filter 一次性 reset 到出厂态,符合「清空筛选」字面语义。
  */
 function clearUserFilters(): void {
   userFilters.q = ''
   userFilters.status = undefined
   userFilters.role = undefined
+  userFilters.includeAnonymized = false
 }
 
 export function useManagerStats() {
@@ -374,7 +402,7 @@ export function useManagerStats() {
       groupsHasMore.value = false
       usersTotal.value = 0
       usersSystemStats.value = null
-      usersPage = 0
+      usersPage.value = 0
       groupsOffset = 0
       usersPromise = null
       groupsPromise = null

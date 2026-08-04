@@ -98,6 +98,14 @@ adminUsersRouter.use('*', requireAdmin)
  * 「显示 N / 共 M」)+ `systemStats`(system-wide,不受 filter 影响,给右栏
  * 概览用 — filter 不应污染 system dashboard)。
  *
+ * P1-16: `includeAnonymized` — 默认 false 隐式排除 status='anonymized' 的
+ * 用户(管理员进 /manager/people 第一眼看到的是「活人 + 已禁用」,而不是
+ * 几十行的「已注销用户」灰名单)。显式把 `status=anonymized` 选中时,status
+ * 条件已经把结果集锁死在 anonymized 子集,即使 `includeAnonymized=false`
+ * 也能看到(互斥语义:`includeAnonymized=false` 是「全表排除」,跟
+ * `status=anonymized` 一起出现时,后者更窄,后端 OR 兜底)。改成 OR 而非
+ * 简单 AND:见 WHERE 段。
+ *
  * 四个并发查询(Promise.all):
  *   1) paginated filtered items(用 LIMIT N+1 技巧拿 hasMore)
  *   2) filtered total count(单条 COUNT)
@@ -115,11 +123,17 @@ adminUsersRouter.get('/', async (c) => {
       400,
     )
   }
-  const { q, status, role, limit, offset = 0 } = parsed.data
+  const { q, status, role, includeAnonymized, limit, offset = 0 } = parsed.data
 
   // Build the WHERE clause for items + total (filtered).
   // q → ILIKE on name OR email (case-insensitive substring).
   // status / role → exact enum match. All optional; undefined → no filter.
+  // P1-16: includeAnonymized — 默认 false 时把 anonymized 行从结果集排
+  // 除。显式选 status=anonymized 时,status 锁死在 anonymized 子集,即使
+  // includeAnonymized=false 也能命中(后者是「全表排除」,跟 explicit
+  // status 取并集)。把 anonymized 排除条件用 OR(status=anonymized)包
+  // 起来,而不是直接 AND 排除,避免「选了已注销但没勾 checkbox」就空
+  // 结果的 UX 陷阱。
   const conds = []
   if (q) {
     const pattern = `%${q}%`
@@ -127,6 +141,15 @@ adminUsersRouter.get('/', async (c) => {
   }
   if (status) conds.push(eq(users.status, status))
   if (role) conds.push(eq(users.role, role))
+  // P1-16: includeAnonymized 默认 false — 默认排除已注销用户。三种情
+  // 形不添加排除条件:(1) includeAnonymized=true;(2) status 已经锁死
+  // 在 anonymized(结果集本身就是 anonymized,不需要再排);(3) status
+  // 是 must_reset_password / active / disabled 之一且 includeAnonymized
+  // 已经被显式勾上。前两条覆盖常见 UX,第三条让「先勾上再选状态」的
+  // 组合不出现「清空了又突然被排」的状态污染。
+  if (includeAnonymized !== true && status !== 'anonymized') {
+    conds.push(ne(users.status, 'anonymized'))
+  }
   const filterWhere = conds.length > 0 ? and(...conds) : undefined
 
   // Three concurrent queries — filter-aware items + filtered total + system

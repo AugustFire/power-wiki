@@ -367,37 +367,42 @@ function excerpt(html: string): string {
 </template>
 
 <style scoped>
-/* P1-12 · 归档空间 banner —— 顶部 status callout,warning 配色 + icon
- * + 三段文本(强提示 + 解释 + meta)。位置在 cover 之下、内容区之
- * 上,保证用户进入空间第一眼就看到状态。左右 padding 跟 .space-overview
- * 对齐(卡片同款 16px 内边距),跟下面正常内容区视觉一体。*/
+/* P1-12 · 归档空间 banner —— 跟 ReadView 同款中性灰 + icon。
+ * 归档是生命周期状态,不是错误或风险(见 ReadView archived-banner
+ * 注释),保持中性视觉跟「个人工作台 / 团队空间」首页节奏一致。
+ * 位置在 content-inner 顶部,保证用户进入空间第一眼看到状态。*/
 .archived-banner {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  margin: 0 0 24px;
-  padding: 14px 16px;
-  border: 1px solid var(--warning);
-  border-radius: var(--radius-md);
-  background: var(--warning-soft);
-  color: var(--text-1);
-  font-size: 13px;
-  line-height: 1.55;
+  gap: 10px;
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 .archived-banner-icon {
-  font-size: 22px !important;
-  color: var(--warning);
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--text-3);
   flex-shrink: 0;
-  margin-top: 1px;
 }
-.archived-banner-body { flex: 1; min-width: 0; }
-.archived-banner-body strong { color: var(--warning); font-weight: 700; }
-.archived-banner-body p { margin: 4px 0 0; color: var(--text-2); }
-.archived-banner-body strong + p { margin-top: 6px; }
+.archived-banner-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.archived-banner-body strong { color: var(--text-1); font-weight: 600; }
+.archived-banner-body p { margin: 0; color: var(--text-2); }
 .archived-banner-meta {
-  margin-top: 6px !important;
   color: var(--text-3) !important;
   font-size: 12px;
+  margin-top: 2px !important;
 }
 .home-hero { margin-bottom: 8px; }
 .space-overview {

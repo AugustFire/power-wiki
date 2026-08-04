@@ -18,6 +18,13 @@ export interface ConfirmOptions {
   danger?: boolean
   confirmText?: string
   cancelText?: string
+  /**
+   * 弹窗尺寸 —— 默认 420px,适合简短确认;`wide` 把宽度提到接近
+   * 表格 / 表单容器的视觉宽度,适合 details[] 较长或多行的场景
+   * (如 /manager/trash 的批量永久删除提示)。不直接接任意 width:
+   * 弹窗尺寸是设计 token,改全局尺寸比每次声明 px 更稳。
+   */
+  size?: 'default' | 'wide'
 }
 
 interface ConfirmState extends ConfirmOptions {
@@ -32,6 +39,7 @@ const state = ref<ConfirmState>({
   danger: false,
   confirmText: '确认',
   cancelText: '取消',
+  size: 'default',
   resolve: null,
 })
 
@@ -47,6 +55,7 @@ export function useConfirm() {
         danger: opts.danger ?? false,
         confirmText: opts.confirmText ?? '确认',
         cancelText: opts.cancelText ?? '取消',
+        size: opts.size ?? 'default',
         resolve,
       }
     })

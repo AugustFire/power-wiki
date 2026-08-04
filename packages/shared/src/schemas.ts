@@ -987,11 +987,16 @@ export type AdminSpacesList = z.infer<typeof AdminSpacesListResponseSchema>
 /* ---------- M17: 人员管理 server-side filter ----------
  * q/status/role 三个维度;`q` 走 name OR email ILIKE,大小写不敏感。
  * status / role 是 enum 精确匹配。`limit` / `offset` 同其他 paginated 端点。
- * 复用 PaginatedQuerySchema 的 limit / offset 字段(都 optional)。*/
+ * 复用 PaginatedQuerySchema 的 limit / offset 字段(都 optional)。
+ * P1-16: includeAnonymized — 默认 false。admin 进 /manager/people 第一
+ * 眼看到的是「活人 + 已禁用」,不是几十行灰名单;勾上之后才能看到
+ * 已注销用户。z.coerce.boolean 让 query string 的 `?includeAnonymized=true`
+ * / `=1` 都能被 parse 成 true。*/
 export const AdminUsersListQuerySchema = PaginatedQuerySchema.extend({
   q: z.string().trim().min(1).max(100).optional(),
   status: z.enum(['active', 'disabled', 'must_reset_password', 'anonymized']).optional(),
   role: z.enum(['admin', 'user']).optional(),
+  includeAnonymized: z.coerce.boolean().optional(),
 })
 
 /**

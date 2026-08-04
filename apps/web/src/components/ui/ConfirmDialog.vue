@@ -16,6 +16,7 @@ const typedInput = ref('')
 const canConfirm = computed(() => !requireText.value || typedInput.value === requireText.value)
 const confirmText = computed(() => state.value.confirmText)
 const cancelText = computed(() => state.value.cancelText)
+const size = computed(() => state.value.size ?? 'default')
 
 function onCancel() {
   typedInput.value = ''
@@ -67,7 +68,7 @@ useFocusTrap(dialogRef, () => state.value.open, {
         <div
           ref="dialogRef"
           class="confirm-dialog"
-          :class="{ danger: isDanger }"
+          :class="{ danger: isDanger, wide: size === 'wide' }"
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-title"
@@ -135,6 +136,12 @@ useFocusTrap(dialogRef, () => state.value.open, {
   grid-template-rows: auto auto;
   gap: 16px 16px;
   align-items: start;
+}
+/* 宽尺寸变体 —— 用于 details[] 长或多行的场景(/manager/trash
+ * 批量永久删除)。720px 接近 manager 后台表格的实际宽度,details
+ * 列表在宽容器内换行更自然,不再被 420px 卡成「每行 5 个字」。*/
+.confirm-dialog.wide {
+  width: 720px;
 }
 
 .confirm-icon {
