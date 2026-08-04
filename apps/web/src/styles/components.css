@@ -3159,6 +3159,53 @@ button:active:not(:disabled):not(.btn) {
 }
 
 /* ============================================================
+   Status badge — P1/5.2 状态徽章
+   4 个预设配色用现成语义 token 对(success / accent / danger / neutral),
+   跟 callout 的 4 套色板保持视觉同源。`data-status-color` 是属性选择器
+   精确匹配这 4 个值,不在白名单的脏值不会命中任何一条规则(退化成无背景
+   纯文本),不会污染样式 —— 因此 sanitize 放行 data-status-color 作为
+   自由字符串是安全的。
+   ============================================================ */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 10px;
+    margin: 0 2px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.6;
+    white-space: nowrap;
+    user-select: all;
+    vertical-align: baseline;
+}
+.status-badge[data-status-color="blue"] {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+.status-badge[data-status-color="green"] {
+    background: var(--success-soft);
+    color: var(--success-text);
+}
+.status-badge[data-status-color="red"] {
+    background: var(--danger-soft);
+    color: var(--danger-text);
+}
+.status-badge[data-status-color="gray"] {
+    background: var(--bg-subtle);
+    color: var(--text-3);
+}
+
+/* 编辑器内:双击触发编辑弹窗 */
+.ProseMirror .status-badge { cursor: pointer; }
+
+/* 选中态 — 跟 date-inline / mention 的视觉一致,告诉用户这是个整体节点 */
+.ProseMirror .ProseMirror-selectednode.status-badge {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* ============================================================
    Skeleton loader — shimmer placeholder for loading states.
    Used by Skeleton.vue (apps/web/src/components/ui/Skeleton.vue)
    to keep card / form chrome height-stable while data loads,

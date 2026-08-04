@@ -1,12 +1,12 @@
 /**
- * Blockquote 缩进深度上限的扩展。
+ * Blockquote 缩进深度上限 + 可选来源 URL 的扩展。
  *
  * 为什么独立成文件:StarterKit 的 Blockquote 是已实例化的子扩展,无法
  * 直接 override `addKeyboardShortcuts`。要新增 keyboard 行为,只能从
  * StarterKit 抽出来(`blockote: false`),用 `Blockquote.extend({...})`
  * 重新挂一份 —— 跟 heading / codeBlock 是同一种处理方式(extensions.ts)。
  *
- * 行为:
+ * 键盘行为:
  *   - Tab:当前选区所在的 blockquote 嵌套深度 < 2 → wrapIn('blockquote');
  *          ≥ 2 → 弹 info toast「已是最深缩进」并 consume,不再叠嵌套。
  *   - Shift-Tab:深度 ≥ 1 → lift 把当前 blockquote 弹回上一级;
@@ -21,10 +21,23 @@
  *
  * 共享:`runIndent` / `runOutdent` 的工具栏按钮也用 `blockquoteDepthAt`
  * 同样的判定,深度 ≥ 2 走同样的 toast。文案复用,不让键盘 / 按钮行为分裂。
+ *
+ * cite attr (P1/5.2-quote):
+ *   - 写 `/quote` 时弹小 popover 收 URL(可空),落到 blockquote 的
+ *     `cite` 属性上 —— 这是 HTML5 blockquote 标准的引用来源 URL。
+ *   - 渲染时同时写 `cite` + `data-citation-url`(DOMPurify
+ *     ALLOW_DATA_ATTR:false 时 `data-cite` 也能命中白名单里的
+ *     `data-citation-url`)。NodeView 视觉上在 footer 显示「来源:
+ *     example.com」链接,target=_blank。
+ *   - 空 URL / 没 cite → 行为跟原 Blockquote 一致(无 footer,regression free)。
+ *   - 已有页面里的 `<blockquote>` 没有 cite → parseHTML 拿到 null,
+ *     renderHTML 不会再写 attr —— 旧数据零迁移。
  */
 import { Blockquote } from '@tiptap/extension-blockquote'
 import type { Editor } from '@tiptap/core'
+import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import { useToast } from '@/composables/useToast'
+import BlockquoteIndentView from '@/components/editor/BlockquoteIndentView.vue'
 
 const MAX_DEPTH = 2
 
@@ -57,6 +70,31 @@ export function blockquoteDepthAt($pos: ResolvedPosLike): number {
  * 的 indent(outdent)命令走的是 Tiptap 默认 commands,跟这里互不干扰。
  */
 export const BlockquoteIndent = Blockquote.extend({
+  addAttributes() {
+    return {
+      cite: {
+        default: null as string | null,
+        // 读时优先 HTML5 标准 cite;再退回自定义 data-citation-url(用
+        // 同一份 attr 双写,sanitize 友好)。trim 后空串视为 null。
+        parseHTML: (el: HTMLElement) => {
+          const raw = el.getAttribute('cite') || el.getAttribute('data-citation-url') || ''
+          const t = raw.trim()
+          return t || null
+        },
+        renderHTML: (attrs: Record<string, unknown>) => {
+          const c = attrs.cite
+          if (typeof c !== 'string' || !c.trim()) return {}
+          return { cite: c, 'data-citation-url': c }
+        },
+      },
+    }
+  },
+
+  addNodeView() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return VueNodeViewRenderer(BlockquoteIndentView as any)
+  },
+
   addKeyboardShortcuts() {
     return {
       Tab: ({ editor }: { editor: Editor }) => {

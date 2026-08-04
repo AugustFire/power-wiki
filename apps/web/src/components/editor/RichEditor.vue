@@ -79,17 +79,22 @@ function computeWordCount(html: string): { words: number } {
   return { words: cjk + en }
 }
 
-// 防抖:编辑后 800ms 同步到父组件 / store
-let saveTimer: number | null = null
-function scheduleSave(editor: Editor) {
-  if (saveTimer) window.clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(() => {
-    const json = editor.getJSON()
-    const html = editor.getHTML()
-    emit('update:modelValue', json as Record<string, unknown>)
-    emit('update:html', html)
-    emit('word-count', computeWordCount(html))
-  }, 800)
+/**
+ * P0/5.1 — 这里**不再防抖**,onUpdate 直接 emit。
+ *
+ * 以前是 800ms 防抖再 emit,跟 EditView 的 500ms auto-save 防抖串联 →
+ * 最坏 1.3s 才落盘,而且「编辑后立刻点关闭」时 EditView 只能绕过 emit
+ * 直接读 editor 实例才拿得到最新内容。防抖现在统一下沉到
+ * `usePageAutoSave`(单一 500ms 窗口),本组件只负责「内容变了就往上报」。
+ *
+ * 高频 typing 下 emit 次数变多,但下游全是同步赋值 ref + Vue 的 flush
+ * 批处理,开销可忽略;真正贵的 PATCH 由 composable 的防抖挡住。
+ */
+function emitContent(editor: Editor) {
+  const html = editor.getHTML()
+  emit('update:modelValue', editor.getJSON() as Record<string, unknown>)
+  emit('update:html', html)
+  emit('word-count', computeWordCount(html))
 }
 
 const { activePageId } = useActivePageId()
@@ -252,7 +257,7 @@ const editor = useEditor({
     },
   },
   onUpdate({ editor }) {
-    scheduleSave(editor)
+    emitContent(editor)
   },
 })
 
@@ -300,7 +305,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (saveTimer) window.clearTimeout(saveTimer)
   unbindHover?.()
   if (fileInputEl) {
     fileInputEl.remove()

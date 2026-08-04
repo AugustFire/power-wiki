@@ -207,6 +207,62 @@ function scrollTo(id: string) {
   }, 2000)
 }
 
+/* ─── P1/4.5 · H2 折叠 / 展开 ───────────────────────────────
+ *
+ * H3 不单独折叠 — 跟最近的 H2 联动(简化交互,Confluence 同款)。
+ * · items:已收集的 heading 列表(level 1/2/3)
+ * · h2Ids:本页所有 H2 的 id(用于「展开/收起所有 H2」按钮)
+ * · visibleItems:H3 如果其前最近的 H2 在折叠态 → 隐藏
+ * · allH2Collapsed:本页所有 H2 都已折叠 → 「全部展开」按钮
+ * · onItemClick:点 H2 行 = 折叠 / 展开该 H2(通过 caret 视觉),
+ *   也保留点文字 → 滚到锚点的能力(读 caret 区域 / 文字区分)
+ * · onToggleAllH2:整页 H2 全折叠 / 全展开
+ *
+ * 「上一个 H2」算法:从 items 里从头扫到当前 H3,记录最后一个 H2 id。
+ */
+const pageId = computed(() => (typeof props.pageKey === 'string' ? props.pageKey : ''))
+const h2Ids = computed(() => items.value.filter((i) => i.level === 2).map((i) => i.id))
+/** 「全部折叠/展开 H2」按钮的可见性:本页至少有 1 个 H3 时才显示。
+ * 没有 H3 时按钮点了零视觉反馈(没东西可藏),反而误导。无 H2 时
+ * 自然也走这条,因为没有 H3 就肯定没 H2 包着它。*/
+const hasCollapsibleH2 = computed(() => items.value.some((i) => i.level === 3))
+const allH2Collapsed = computed(() => {
+  const ids = h2Ids.value
+  if (ids.length === 0) return false
+  return ids.every((id) => uiStore.isH2Collapsed(pageId.value, id))
+})
+const visibleItems = computed<TocItem[]>(() => {
+  const list = items.value
+  let lastH2Id: string | null = null
+  const out: TocItem[] = []
+  for (const item of list) {
+    if (item.level === 2) {
+      lastH2Id = item.id
+      out.push(item)
+    } else if (item.level === 3) {
+      // H3 在最近 H2 折叠时隐藏
+      if (lastH2Id && uiStore.isH2Collapsed(pageId.value, lastH2Id)) continue
+      out.push(item)
+    } else {
+      // level 1 (h1) 永远显示
+      out.push(item)
+    }
+  }
+  return out
+})
+
+function onToggleAllH2(): void {
+  if (!pageId.value) return
+  uiStore.setAllH2Collapsed(pageId.value, h2Ids.value, !allH2Collapsed.value)
+}
+
+function onItemCaretClick(item: TocItem, e: MouseEvent): void {
+  e.stopPropagation()
+  if (item.level === 2) {
+    uiStore.toggleH2Collapsed(pageId.value, item.id)
+  }
+}
+
 onMounted(async () => {
   await nextTick()
   collectHeadings()
@@ -343,30 +399,53 @@ watch(
   <aside class="toc-panel">
     <div class="toc-title-row">
       <div class="toc-title">本页目录</div>
-      <button
-        type="button"
-        class="toc-collapse-btn"
-        title="收起目录"
-        aria-label="收起目录"
-        @click="uiStore.setTocCollapsed(true)"
-      >
-        <span class="material-symbols-outlined">keyboard_double_arrow_right</span>
-      </button>
+      <div class="toc-title-actions">
+        <!-- P1/4.5 — 「展开/收起所有 H2」:只有本页有 H3(且归属 H2)时才
+             显示。没有 H3 时点这个按钮零视觉反馈,会误导用户。无 H2 时
+             自然也没有 H3,所以单看 hasCollapsibleH2 一条已经足够。-->
+        <button
+          v-if="hasCollapsibleH2"
+          type="button"
+          class="toc-icon-btn"
+          :title="allH2Collapsed ? '展开所有 H2' : '收起所有 H2'"
+          :aria-label="allH2Collapsed ? '展开所有 H2' : '收起所有 H2'"
+          @click="onToggleAllH2()"
+        >
+          <span class="material-symbols-outlined">{{ allH2Collapsed ? 'unfold_more' : 'unfold_less' }}</span>
+        </button>
+        <button
+          type="button"
+          class="toc-collapse-btn"
+          title="收起目录"
+          aria-label="收起目录"
+          @click="uiStore.setTocCollapsed(true)"
+        >
+          <span class="material-symbols-outlined">keyboard_double_arrow_right</span>
+        </button>
+      </div>
     </div>
     <div v-if="items.length === 0" class="toc-empty">没有目录</div>
     <div v-else class="toc-list">
       <button
-        v-for="item in items"
+        v-for="item in visibleItems"
         :key="item.id"
         class="toc-item"
         :class="[`level-${item.level}`, {
           active: activeId === item.id || currentHashId === item.id,
+          'h2-row': item.level === 2,
+          'h2-collapsed': item.level === 2 && uiStore.isH2Collapsed(pageId, item.id),
         }]"
         :title="item.text"
         type="button"
         @click="scrollTo(item.id)"
       >
-        {{ item.text }}
+        <span
+          v-if="item.level === 2"
+          class="material-symbols-outlined toc-item-caret"
+          :title="uiStore.isH2Collapsed(pageId, item.id) ? '展开该 H2' : '收起该 H2'"
+          @click.stop="onItemCaretClick(item, $event)"
+        >expand_more</span>
+        <span class="toc-item-text">{{ item.text }}</span>
       </button>
     </div>
 
@@ -535,15 +614,24 @@ watch(
   font-variant-numeric: tabular-nums;
 }
 
-/* ─── 折叠按钮 ───
-   专题 12:点击 → uiStore.setTocCollapsed(true) → grid 第三列收为 0,
-   右边缘展开手柄接管(由 ReadView 渲染)。 */
+/* ─── 标题行 + 折叠按钮 + Pin 按钮 ───
+   专题 12:点 collapse-btn → uiStore.setTocCollapsed(true) → grid 第 3 列
+   收为 0,右边缘展开手柄接管(由 ReadView 渲染)。
+   P1/4.5:toc-icon-btn = Pin + 全展开/全收起 两个 icon 按钮,
+   .active 时 accent 色,跟 collapse-btn 节奏对齐。 */
 .toc-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 4px;
+  gap: 4px;
 }
+.toc-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.toc-icon-btn,
 .toc-collapse-btn {
   background: transparent;
   border: 0;
@@ -554,13 +642,61 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
+.toc-icon-btn:hover,
 .toc-collapse-btn:hover {
   background: var(--bg-subtle);
   color: var(--accent);
 }
+.toc-icon-btn.active,
+.toc-collapse-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft, #DEEBFF);
+}
+.toc-icon-btn .material-symbols-outlined,
 .toc-collapse-btn .material-symbols-outlined {
   font-size: 18px;
   font-variation-settings: 'wght' 300;
+}
+/* pin 图标在 active 状态加 45° 旋转,跟其他「已启用」icon 一致 */
+.toc-icon-btn.active .material-symbols-outlined {
+  transform: rotate(45deg);
+  font-variation-settings: 'wght' 600;
+  transition: transform var(--duration-fast, 0.1s) ease-out;
+}
+
+/* ─── H2 行 + caret ───
+   H2 行左侧多一个 caret,点击 caret = 折叠/展开该 H2(其下 H3 隐藏);
+   点击文字区域 = 滚到锚点(原行为不变)。
+   h2-collapsed 时 caret rotate -90deg。*/
+.toc-item.h2-row {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 4px;
+}
+.toc-item-caret {
+  font-size: 16px !important;
+  color: var(--text-3);
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--duration-fast, 0.1s) ease-out;
+  flex-shrink: 0;
+}
+.toc-item-caret:hover {
+  color: var(--accent);
+  background: var(--bg-subtle);
+}
+.toc-item.h2-collapsed .toc-item-caret {
+  transform: rotate(-90deg);
+}
+.toc-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  min-width: 0;
 }
 </style>

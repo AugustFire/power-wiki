@@ -8,6 +8,7 @@ const toast = useToast()
 import { api } from '@/lib/api'
 import type { MentionCandidate, PageNode } from '@power-wiki/shared'
 import DateTimePicker from './DateTimePicker.vue'
+import EmojiPicker from './EmojiPicker.vue'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
 import { useRecentSlashItems } from '@/composables/useRecentSlashItems'
@@ -125,13 +126,20 @@ const items: SlashItem[] = [
     run: (e) => e.chain().focus().toggleCodeBlock().run(),
   },
   {
+    // P1/5.2 — /quote:可选 URL 引用块。needsPicker 模式弹小 popover 收
+    // 来源 URL(可空),落到 blockquote 的 cite 属性 —— BlockquoteIndent
+    // 渲染时在底部显示「来源: example.com」链接,target=_blank。
+    // 空 URL 也允许,等同不带来源的普通引用,regression free。
     id: 'quote',
     label: '引用块',
-    description: '左侧蓝条引用',
+    description: '左侧蓝条引用(可附来源 URL)',
     icon: 'format_quote',
     group: 'basic',
     aliases: ['引用', 'quote', 'blockquote'],
-    run: (e) => e.chain().focus().toggleBlockquote().run(),
+    kind: 'needsPicker',
+    run: () => {
+      // needsPicker:由 onSelectIndex 后续 openQuotePicker 弹 URL 输入框
+    },
   },
   {
     id: 'divider',
@@ -173,6 +181,21 @@ const items: SlashItem[] = [
     },
   },
   {
+    // P1/5.2 — /emoji slash 命令。复用现成 EmojiPicker(同 toolbar
+    // 「表情」按钮的同一份组件),不新建 Tiptap 节点 —— emoji 走文本节点,
+    // insertContent 直接传 unicode 字符即可,sanitize 也不需要新 attr。
+    id: 'emoji',
+    label: '表情',
+    description: '选一个 emoji 插入到光标处',
+    icon: 'add_reaction',
+    group: 'media',
+    aliases: ['emoji', '表情', '笑脸', 'emoticon', 'reaction', 'reactions'],
+    kind: 'needsPicker',
+    run: () => {
+      // needsPicker:由 onSelectIndex 调 openEmojiPicker 渲染 picker 容器
+    },
+  },
+  {
     id: 'pageRef',
     label: '页面引用',
     description: '插入一个可跳转的页面卡片',
@@ -196,6 +219,45 @@ const items: SlashItem[] = [
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openAtPicker
     },
   },
+  {
+    // P1/5.2 — 4 个状态徽章 slash 命令。每个直接 insertStatus,不需要 picker。
+    // label 用「状态 · 进行中」完整文案,用户在菜单里一眼分辨颜色 + 用途;
+    // description 保持「状态徽章」简短,作为同组共享的语义标签。
+    id: 'status-progress',
+    label: '状态 · 进行中',
+    description: '状态徽章(蓝色)',
+    icon: 'progress_activity',
+    group: 'basic',
+    aliases: ['状态', 'status', '进行中', 'progress', 'in progress'],
+    run: (e) => e.chain().focus().insertStatus({ text: '进行中', color: 'blue' }).run(),
+  },
+  {
+    id: 'status-done',
+    label: '状态 · 已完成',
+    description: '状态徽章(绿色)',
+    icon: 'check_circle',
+    group: 'basic',
+    aliases: ['状态', 'status', '已完成', 'done', 'complete', '完成'],
+    run: (e) => e.chain().focus().insertStatus({ text: '已完成', color: 'green' }).run(),
+  },
+  {
+    id: 'status-blocked',
+    label: '状态 · 已阻塞',
+    description: '状态徽章(红色)',
+    icon: 'block',
+    group: 'basic',
+    aliases: ['状态', 'status', '已阻塞', 'blocked', '阻塞', 'block', '卡住'],
+    run: (e) => e.chain().focus().insertStatus({ text: '已阻塞', color: 'red' }).run(),
+  },
+  {
+    id: 'status-draft',
+    label: '状态 · 草稿',
+    description: '状态徽章(灰色)',
+    icon: 'edit_note',
+    group: 'basic',
+    aliases: ['状态', 'status', '草稿', 'draft', 'wip'],
+    run: (e) => e.chain().focus().insertStatus({ text: '草稿', color: 'gray' }).run(),
+  },
 ]
 
 const open = ref(false)
@@ -211,6 +273,16 @@ const recentItemsState = useRecentSlashItems()
 // /Enter 路径之前能过纯属巧合,实际 ref 一直停在 false。
 const pickerOpen = ref(false)
 const atPickerOpen = ref(false)
+// P1/5.2 — /emoji 命令的 picker 容器开关。复用现成 EmojiPicker 组件
+// (跟 toolbar 「表情」按钮是同一份),不新建节点。
+const emojiPickerOpen = ref(false)
+// P1/5.2 — /quote 收 URL 的小 popover。空 URL 也允许(等同不带来源的
+// 普通引用,regression free)。不用 reuse emoji 的 picker 容器 —— 内容是
+// 单 input + 两个按钮,跟 emoji 的分类列表完全不同形态,抽公共组件是
+// over-abstraction,直接 inline 一份更直白。
+const quotePickerOpen = ref(false)
+const quoteUrlDraft = ref('')
+const quoteUrlInputEl = ref<HTMLInputElement | null>(null)
 
 /**
  * 把 localStorage 里的最近使用 id 数组解析成 SlashItem[],找不到的 id 跳过
@@ -343,6 +415,8 @@ function hideMenu() {
   activeIndex.value = 0
   closePagePicker()
   closeAtPicker()
+  closeEmojiPicker()
+  closeQuotePicker()
 }
 
 // 检测编辑器文本中最后一个 "/" 触发菜单
@@ -350,7 +424,7 @@ function checkForSlash() {
   if (!props.editor) return
   // Picker-needing 项选中后,slash 被删但 picker 接管菜单:此时不应当被
   // 误判为「没 slash」而 hideMenu 把整块连同 picker 一起关掉。
-  if (pickerOpen.value || atPickerOpen.value) return
+  if (pickerOpen.value || atPickerOpen.value || emojiPickerOpen.value || quotePickerOpen.value) return
   const { state } = props.editor
   const { $from } = state.selection
   // 当前 paragraph 的文本
@@ -411,6 +485,14 @@ function onSelectIndex(idx: number) {
     openAttachmentUpload()
     return
   }
+  if (item.kind === 'needsPicker' && item.id === 'emoji') {
+    openEmojiPicker()
+    return
+  }
+  if (item.kind === 'needsPicker' && item.id === 'quote') {
+    openQuotePicker()
+    return
+  }
 
   item.run(props.editor)
   // builtin 项立即生效,这里 record 即可;picker-needing 项在完成路径 record
@@ -446,6 +528,14 @@ function onEditorKey(e: KeyboardEvent) {
   }
   if (atPickerOpen.value) {
     onAtPickerKey(e)
+    return
+  }
+  if (emojiPickerOpen.value) {
+    onEmojiPickerKey(e)
+    return
+  }
+  if (quotePickerOpen.value) {
+    onQuotePickerKey(e)
     return
   }
   if (!open.value) return
@@ -486,7 +576,7 @@ function attach() {
   // P 元素,不是 menu 本身;此时 picker 已开,不应当把整个 menu(picker 一起)
   // 关掉 — 由 picker 自身的取消/完成路径决定何时 hideMenu。
   const outside = (e: MouseEvent) => {
-    if (pickerOpen.value || atPickerOpen.value) return
+    if (pickerOpen.value || atPickerOpen.value || emojiPickerOpen.value || quotePickerOpen.value) return
     if (!(e.target as HTMLElement).closest('.slash-menu')) hideMenu()
   }
   document.addEventListener('mousedown', outside)
@@ -709,6 +799,28 @@ function closeAtPicker() {
   atPickerError.value = null
 }
 
+// P1/5.2 — /emoji picker 容器开关。EmojiPicker 自己管选择 / 搜索 / 分类
+// tab,这里只开 / 关 + 转发「选完一个 emoji」事件。
+// 关键:必须先把焦点拉回 ProseMirror,否则 EmojiPicker.insert() 的
+// resolveInputTarget() 会把 emoji 落到「当前 activeElement 是
+// HTMLInputElement/Textarea」的输入框里 —— slash 菜单的 filter input
+// 或者 EmojiPicker 自己的搜索 input 都会截胡,emoji 永远不会到 editor。
+function openEmojiPicker() {
+  // 先聚焦 editor(让 document.activeElement 变成 .ProseMirror 的 contenteditable,
+  // 它不是 HTMLInputElement,resolveInputTarget 走 ProseMirror 分支)。
+  props.editor?.commands.focus()
+  emojiPickerOpen.value = true
+}
+function closeEmojiPicker() {
+  emojiPickerOpen.value = false
+}
+function onPickEmoji() {
+  // EmojiPicker 内部已经把字符插进 editor 了(insertContent 走 :editor prop),
+  // 这里只负责 record + 收尾菜单。
+  recentItemsState.recordUse('emoji')
+  hideMenu()
+}
+
 function switchAtTab(t: AtTab) {
   atTab.value = t
   if (t === 'user' && atCandidates.value.length === 0 && !atCandidatesLoading.value) {
@@ -792,6 +904,59 @@ function onAtPickerKey(e: KeyboardEvent) {
   }
   // Tab 不再拦截 —— 改用鼠标点 tab 切换(早先 Tab 键切到日期 tab 后
   // 焦点会跳到 tab 按钮上,影响日历交互体验)
+}
+
+// Emoji picker 只接管 Esc —— EmojiPicker 内部已经处理点击 / Enter / 搜索,
+// 把它放在 slash 容器里,焦点自然就在 picker 内,不需要 ↑↓ 路由。
+function onEmojiPickerKey(e: KeyboardEvent) {
+  if (!emojiPickerOpen.value) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    hideMenu()
+  }
+}
+
+// P1/5.2 — /quote popover:Enter 提交(允许空 URL),Esc 取消。其他键
+// 全部透传给 input 自身,跟 emoji / at 一致。
+function onQuotePickerKey(e: KeyboardEvent) {
+  if (!quotePickerOpen.value) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    hideMenu()
+    return
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    commitQuote()
+  }
+}
+
+// P1/5.2 — /quote picker。Enter 提交,Esc 取消,空 URL 也允许。
+// 用 `editor.commands.setBlockquote({ cite })` 是 Blockquote 扩展自带的
+// typed command,直接接受 cite attr,不需要在扩展里新加 command。
+function openQuotePicker() {
+  quotePickerOpen.value = true
+  quoteUrlDraft.value = ''
+  void nextTick(() => quoteUrlInputEl.value?.focus())
+}
+function closeQuotePicker() {
+  quotePickerOpen.value = false
+  quoteUrlDraft.value = ''
+}
+function commitQuote() {
+  if (!props.editor) return
+  // trim 后空串 → 显式存 null(sanitize + NodeView 视觉都更干净),
+  // 而不是存空字符串(在 renderHTML 那里我会过滤掉)。
+  const url = quoteUrlDraft.value.trim()
+  // Tiptap Blockquote 的 typed `setBlockquote` 是 0-arg 的(只切到
+  // blockquote 节点,不接受 attrs),所以 cite 必须走低阶 `wrapIn` 命令
+  // 显式传 —— wrapIn('blockquote', { cite }) 在空选区上等价于
+  // setBlockquote + 写 attr。
+  props.editor.chain().focus().wrapIn('blockquote', { cite: url || null }).run()
+  recentItemsState.recordUse('quote')
+  hideMenu()
 }
 </script>
 
@@ -908,6 +1073,43 @@ function onAtPickerKey(e: KeyboardEvent) {
           <DateTimePicker @insert="onPickDate" @cancel="hideMenu" />
         </div>
       </template>
+    </div>
+
+    <!-- P1/5.2 — /emoji picker:EmojiPicker 本身自带分类 + 搜索 + 点击
+         插入,slash 容器只负责外框 + Esc 取消 + hide 收尾。 -->
+    <div v-else-if="emojiPickerOpen" class="slash-picker">
+      <div class="slash-title">
+        <span>插入表情</span>
+        <span class="slash-hint">点选一个 emoji · Esc 取消</span>
+      </div>
+      <EmojiPicker :editor="editor" :target="null" @close="onPickEmoji" />
+    </div>
+
+    <!-- P1/5.2 — /quote 收来源 URL 的小 popover。空 URL 允许(等同普通
+         引用,regression free)。Enter 提交,Esc 取消。 -->
+    <div v-else-if="quotePickerOpen" class="slash-picker quote-picker">
+      <div class="slash-title">
+        <span>插入引用块</span>
+        <span class="slash-hint">Enter 提交 · Esc 取消</span>
+      </div>
+      <label class="qp-label" for="quote-url-input">来源 URL(可选)</label>
+      <input
+        id="quote-url-input"
+        ref="quoteUrlInputEl"
+        v-model="quoteUrlDraft"
+        class="qp-input"
+        type="url"
+        placeholder="https://example.com/article"
+        @keydown.enter.prevent="commitQuote"
+        @keydown.esc.prevent="hideMenu"
+      />
+      <div class="qp-actions">
+        <button type="button" class="btn ghost" @mousedown.prevent="hideMenu">取消</button>
+        <button type="button" class="btn primary" @mousedown.prevent="commitQuote">
+          <span class="material-symbols-outlined">add_link</span>
+          插入
+        </button>
+      </div>
     </div>
 
     <!-- 正常模式:slash item 列表 -->
@@ -1147,5 +1349,44 @@ function onAtPickerKey(e: KeyboardEvent) {
 .at-user-item.active .at-user-email { color: var(--accent); opacity: 0.7; }
 
 .date-picker-wrap { padding: 8px 8px 12px; }
+
+/* P1/5.2 — /quote popover。单 input + 两按钮,跟 date-picker 共用外层
+   .slash-picker 容器,内部垂直布局。 */
+.quote-picker { padding: 10px 12px 12px; }
+.quote-picker .qp-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.quote-picker .qp-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.quote-picker .qp-input:focus { border-color: var(--accent); }
+.quote-picker .qp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.quote-picker .qp-actions .btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.quote-picker .qp-actions .btn .material-symbols-outlined {
+  font-size: 14px;
+  margin-right: 2px;
+  vertical-align: -2px;
+}
 </style>
 

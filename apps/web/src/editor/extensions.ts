@@ -25,6 +25,7 @@ import { PageRef } from './pageRefExtension'
 import { DateInline } from './dateInlineExtension'
 import { Mention } from './mentionExtension'
 import { ImageAttachment } from './imageAttachmentExtension'
+import { StatusBadge } from './statusExtension'
 import { BlockquoteIndent } from './extensions/blockquoteIndent'
 import { TableRowColumnActions } from './tableRowColumnActions'
 
@@ -228,6 +229,9 @@ const extensions = [
   // 上传走 presigned PUT(见 editor/uploadAndInsert.ts),src 恒为
   // /api/attachments/{id}/raw(sanitize.ts img src 白名单只放行这个模式)。
   ImageAttachment,
+  // 状态徽章:inline atom 胶囊,4 个预设配色(进行中/已完成/已阻塞/草稿),
+  // 双击弹窗改文案 + 换色。P1/5.2。
+  StatusBadge,
 ]
 
 export default extensions

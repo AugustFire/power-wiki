@@ -6,6 +6,7 @@ import { PERSIST_KEYS } from '@power-wiki/shared/keys'
 const KEY_EXPANDED = PERSIST_KEYS.TREE_EXPANDED
 const KEY_SCROLL = PERSIST_KEYS.TREE_SCROLL
 const KEY_TOC_COLLAPSED = PERSIST_KEYS.TOC_COLLAPSED
+const KEY_TOC_H2_COLLAPSED = PERSIST_KEYS.TOC_H2_COLLAPSED
 const KEY_SIDEBAR_SECTIONS = PERSIST_KEYS.SIDEBAR_SECTIONS
 const LEGACY_KEY = '__legacy__'
 
@@ -99,6 +100,45 @@ export const useUiStore = defineStore('ui', () => {
   }
   function toggleTocCollapsed(): void {
     tocCollapsed.value = !tocCollapsed.value
+  }
+
+  /**
+   * P1/4.5 — TOC H2 折叠态。`{ [pageId]: headingId[] }`:每页独立记录用户
+   * 折叠的 H2 heading,刷新 / 切回该页保留。空数组或不在 record 里的 page
+   * = 全部展开。H2 折叠 → 其下 H3 隐藏;H3 自身不单独折叠(简化交互,
+   * 「展开/收起全部」走 H2 维度)。
+   */
+  function readTocH2CollapsedInitial(): Record<string, string[]> {
+    const raw = readJSON<unknown>(KEY_TOC_H2_COLLAPSED, {})
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return raw as Record<string, string[]>
+    }
+    return {}
+  }
+  const tocH2Collapsed = ref<Record<string, string[]>>(readTocH2CollapsedInitial())
+  watch(tocH2Collapsed, (val) => writeJSON(KEY_TOC_H2_COLLAPSED, val), { deep: true })
+
+  function isH2Collapsed(pageId: string, headingId: string): boolean {
+    const list = tocH2Collapsed.value[pageId]
+    return Array.isArray(list) && list.includes(headingId)
+  }
+  function toggleH2Collapsed(pageId: string, headingId: string): void {
+    const cur = tocH2Collapsed.value[pageId] ?? []
+    const next = cur.includes(headingId)
+      ? cur.filter((id) => id !== headingId)
+      : [...cur, headingId]
+    tocH2Collapsed.value = { ...tocH2Collapsed.value, [pageId]: next }
+  }
+  function setAllH2Collapsed(pageId: string, headingIds: string[], collapsed: boolean): void {
+    if (collapsed) {
+      // 合并:不要丢用户之前单独折叠过的(其实是同一组 headingIds,所以覆盖即可)
+      tocH2Collapsed.value = { ...tocH2Collapsed.value, [pageId]: [...headingIds] }
+    } else {
+      // 全部展开:把该 pageId 键从 record 里删掉(空数组 = 默认展开)
+      const next = { ...tocH2Collapsed.value }
+      delete next[pageId]
+      tocH2Collapsed.value = next
+    }
   }
 
   /**
@@ -355,6 +395,10 @@ export const useUiStore = defineStore('ui', () => {
     tocCollapsed,
     setTocCollapsed,
     toggleTocCollapsed,
+    tocH2Collapsed,
+    isH2Collapsed,
+    toggleH2Collapsed,
+    setAllH2Collapsed,
     sidebarSections,
     isSectionCollapsed,
     toggleSection,

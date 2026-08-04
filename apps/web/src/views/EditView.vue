@@ -19,6 +19,7 @@ import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { usePageAutoSave } from '@/composables/usePageAutoSave'
 import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
@@ -80,21 +81,45 @@ useDocumentTitle(() => {
   if (localTitle.value.trim()) return `编辑: ${localTitle.value}`
   return null
 })
-/** Stage 8: dedup baseline. Whatever these refs hold is what the server
- *  most recently acknowledged for this page. `persistNow()` skips PATCH
- *  when the live editor state matches these — the 500ms debounce would
- *  otherwise fire on every edit-then-undo back to original, on editor
- *  mount (B.3 clientId pages), and on opens-without-edits, each creating
- *  a history row. Backend has its own dedup too (apps/api/src/routes/pages.ts),
- *  but the frontend dedup also saves the round-trip + UI flicker.
- *
- *  `lastSavedTitle` holds the *normalized* title (post-normalizeTitle)
- *  because that's what the server actually stores. */
-const lastSavedTitle = ref<string>('')
-const lastSavedJSON = ref<Record<string, unknown>>(emptyDoc())
-const lastSavedHTML = ref<string>(EMPTY_HTML)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const editorRef = ref<any>(null)
+
+/** Version 边界:停笔 N 秒就当一个「编辑会话」结束,打一个 checkpoint
+ *  (POST /:id/snapshots)。跟 Notion / Google Docs 的习惯一致 —— PATCH
+ *  永远静默,version 只在 idle / route leave 这种机器化边界打。
+ *  用户偏好:不提供手动「保存为版本」按钮。 */
+const IDLE_SNAPSHOT_MS = 30_000
+const idleSnapshotSeconds = computed(() => IDLE_SNAPSHOT_MS / 1000)
+
+/**
+ * P0/5.1 — 防抖 + 5 态状态机 + 30s idle snapshot 全部下沉到
+ * `usePageAutoSave`。本视图只负责「内容变了 → scheduleSave()」和
+ * 「要离开了 → flushSave()」两件事,不再自持 saveTimer /
+ * lastSaved* 指纹 / justHydrated / hasUnsnapshottedEdits。
+ *
+ * 注册位置很关键:必须在下方 `watch([localTitle, localJSON, localHTML])`
+ * **之前**调用 —— composable 内部的 pageId watch 要先于内容 watch 触发,
+ * 这样切页时「先重置状态、再消费首次触发写 baseline」的顺序才成立。
+ *
+ * `getPatch` 直接从 editor 实例读 getJSON()/getHTML(),而不是读 local
+ * refs —— RichEditor 的 emit 走 Vue 微任务,「编辑后立即 flush」时
+ * local refs 可能还差最后一次 emit。editor 实例永远是最新的。
+ */
+const autoSave = usePageAutoSave({
+  pageId: localId,
+  getPatch: () => {
+    const ed = editorRef.value
+    return {
+      title: normalizeTitle(localTitle.value),
+      contentJSON: (ed ? ed.getJSON() : localJSON.value) as Record<string, unknown>,
+      contentHTML: ed ? ed.getHTML() : localHTML.value,
+    }
+  },
+  save: (patch) => pagesStore.updatePage(localId.value!, patch),
+  snapshot: (changeNote) => pagesStore.snapshotPage(localId.value!, changeNote),
+  idleSnapshotMs: IDLE_SNAPSHOT_MS,
+})
+const { saveState, isDirty } = autoSave
 // Stage 7: 右侧 TOC 锚定的 ProseMirror DOM 节点。TocPanel 用
 // IntersectionObserver 做 scroll-spy,只要传一个含 h1/h2/h3 的容器即可。
 // 编辑态下 heading-wrapper 是 <div class="heading-content">,TOC 会用
@@ -217,48 +242,12 @@ function focusTitle(): void {
   titleInputRef.value?.select()
 }
 
-const isDirty = ref(false)
-const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
-
-/**
- * case 2 修复:hydration 一次性抑制。
- *
- * onMounted 把 published 内容灌进 local refs 时会触发
- * `watch([localTitle, localJSON, localHTML])` —— 那是本视图**唯一**排
- * auto-save 的地方。此刻用户还没编辑,若照常排 auto-save,`persistNow` 读到
- * 的是 editor 归一化后的 getJSON()/getHTML()(跟 stored baseline 有细微差异)
- * → dedup 落空 → 凭空写一份「没改过」的 PATCH。置真后,watcher 首次
- * (hydration)触发被消费掉;后续真实编辑才正常排 auto-save。
- */
-let justHydrated = false
-
 /** Tiptap 编辑器 :key —— 切换编辑对象 / 强制刷新时 +1 让 RichEditor
  *  重挂载,确保 ProseMirror 内部状态跟 model-value 一致。Tiptap 的
  *  internal content 不会主动重读 model-value(只 watch 初次),必须
  *  unmount + mount 才能换骨架。 */
 const editorKey = ref(0)
 
-/**
- * Stage 8: precise dirty check. The optimistic `isDirty` flag stays true once
- * the user types anything, even if they then undo back to the original —
- * that flag is just a fast "user touched the editor" marker. For save
- * decisions (autosave, close, route-leave) we use `isContentDirty()`, which
- * compares the live local refs against `lastSaved*`. Cheap O(n) where n is
- * doc length; no `editor.getJSON()` round-trip.
- */
-function isContentDirty(): boolean {
-  const title = normalizeTitle(localTitle.value)
-  if (title !== lastSavedTitle.value) return true
-  if (localHTML.value !== lastSavedHTML.value) return true
-  // JSON is the structural source of truth; HTML is canonical-rendered.
-  // Compare JSON defensively — protects against the rare editor emit where
-  // HTML was unchanged but JSON differed (e.g. mark normalization).
-  return (
-    JSON.stringify(localJSON.value ?? {}) !==
-    JSON.stringify(lastSavedJSON.value ?? {})
-  )
-}
-let savedHideTimer: number | null = null
 const wordCount = ref<{ words: number }>({ words: 0 })
 const titleInputRef = ref<HTMLInputElement | null>(null)
 
@@ -325,23 +314,20 @@ const bylineUpdatedAt = computed(() => {
 })
 
 function hydrateExistingPage(p: PageNode): void {
+  // dedup baseline 不在这里写:composable 的 pageId watch 已经把内部状态
+  // 重置成 justHydrated=true,下面这几行赋值触发的内容 watch 会被它消费掉,
+  // 顺手把 hydration 后的 getPatch() 当 baseline 落下 —— 比在这里手写
+  // lastSaved* 更准(那时读的是 stored HTML,跟 editor 归一化后的 getHTML()
+  // 有细微差异,dedup 会落空,凭空写一份「没改过」的 PATCH)。
   localId.value = p.id
   localTitle.value = p.title
   localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
   localHTML.value = p.contentHTML ?? EMPTY_HTML
-  lastSavedTitle.value = p.title
-  lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
-  lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
-  isDirty.value = false
-  hasUnsnapshottedEdits.value = false
   setActivePageId(p.id)
   requestAnimationFrame(() => titleInputRef.value?.focus())
 }
 
 onMounted(async () => {
-  // hydration 抑制:local refs 被首次灌值前置真,消费掉 watcher 的第一次
-  // (hydration)触发,避免空打开凭空 PATCH 出 noise UPDATE。
-  justHydrated = true
   if (props.id) {
     try {
       const path = `/pages/${encodeURIComponent(props.id)}`
@@ -380,12 +366,6 @@ onMounted(async () => {
   const clientId = newId()
   localId.value = clientId
   localTitle.value = DEFAULT_TITLE
-  // 新页面服务端初始 title 是 ''(DB default),用 '' 起 baseline 比
-  // DEFAULT_TITLE 更准 —— normalize 在 PATCH 时才跑,dedup 不该假装
-  // 已经存了 DEFAULT_TITLE。
-  lastSavedTitle.value = ''
-  lastSavedJSON.value = emptyDoc()
-  lastSavedHTML.value = EMPTY_HTML
   setActivePageId(clientId)
   router.replace(`/p/${clientId}/edit`)
   // 编辑器立刻可用
@@ -398,32 +378,18 @@ onMounted(async () => {
   }
 })
 
+// 三个 on*Input / on*Editor 回调只更新 local refs —— dirty 判定 + 'pending'
+// 态 + 防抖排程统一由下方 `watch([localTitle, localJSON, localHTML])` →
+// `autoSave.scheduleSave()` 处理。以前这里各自手写 isContentDirty() +
+// saveState='pending',跟 watcher 里的排程逻辑重复且容易漂移。
 function onTitleInput(e: Event) {
-  const v = (e.target as HTMLInputElement).value
-  localTitle.value = v
-  // Precise dirty check — the user may have typed then deleted back to the
-  // original, in which case `isDirty` should already be false again so the
-  // "有未保存的修改" dialog at close-time doesn't pop for nothing.
-  isDirty.value = isContentDirty()
-  // 进入"待保存"态:有改动但 500ms 防抖还没 fire
-  // 真正的 saving 态由 scheduleAutoSave 的 timer 回调里设置
-  if (saveState.value !== 'saving' && saveState.value !== 'saved') {
-    saveState.value = 'pending'
-  }
+  localTitle.value = (e.target as HTMLInputElement).value
 }
 
 function onEditorJSON(v: Record<string, unknown>) {
   localJSON.value = v
-  isDirty.value = isContentDirty()
-  if (saveState.value !== 'saving' && saveState.value !== 'saved') {
-    saveState.value = 'pending'
-  }
 }
 function onEditorHTML(html: string) {
-  // Sync localHTML. We don't set isDirty here — that's `onEditorJSON`'s
-  // job, and JSON is the source of truth for diff detection. Setting it
-  // twice would race; JSON handler runs first in practice (Tiptap emits
-  // JSON before HTML).
   localHTML.value = html
 }
 
@@ -433,61 +399,6 @@ function onEditorWordCount(v: { words: number }) {
 
 function onEditorReady(ed: AnyEditor) {
   editorRef.value = ed ?? null
-}
-
-async function persistNow(): Promise<boolean> {
-  if (!localId.value) return false
-  // 直接从 editor 实例读最新内容 — 绕开 RichEditor 800ms 防抖,
-  // 避免「编辑后立即保存」丢掉刚改的内容
-  const ed = editorRef.value
-  const json = ed ? ed.getJSON() : localJSON.value
-  const html = ed ? ed.getHTML() : localHTML.value
-  const title = normalizeTitle(localTitle.value)
-
-  // Stage 8: dedup against `lastSaved*`. The 500ms autosave debounce fires
-  // even on mounts/closes-without-changes and undo cycles; without this the
-  // backend would see a flood of no-op PATCHes. (Backend has its own dedup
-  // as a safety net — apps/api/src/routes/pages.ts — but skipping the round
-  // trip also avoids the visible "正在保存… → 已自动保存" flicker.)
-  if (
-    title === lastSavedTitle.value &&
-    html === lastSavedHTML.value &&
-    JSON.stringify(json ?? {}) === JSON.stringify(lastSavedJSON.value ?? {})
-  ) {
-    isDirty.value = false
-    return true
-  }
-
-  try {
-    await pagesStore.updatePage(localId.value, {
-      title,
-      contentJSON: json as Record<string, unknown>,
-      contentHTML: html,
-    })
-    lastSavedTitle.value = title
-    lastSavedJSON.value = json
-    lastSavedHTML.value = html
-    isDirty.value = false
-    // PATCH 之后标记「还有未打 checkpoint 的改动」,由 idle 计时器或
-    // route leave hook 触发 boundary snapshot(POST /:id/snapshots)。
-    // Auto-save 永远静默,不直接写 page_versions —— version 只在 idle
-    // / route leave 边界自动打。
-    hasUnsnapshottedEdits.value = true
-    scheduleIdleSnapshot()
-    return true
-  } catch {
-    // 失败时 store 已经弹 banner,这里只翻状态
-    saveState.value = 'error'
-    return false
-  }
-}
-
-function flashSaved() {
-  saveState.value = 'saved'
-  if (savedHideTimer) window.clearTimeout(savedHideTimer)
-  savedHideTimer = window.setTimeout(() => {
-    if (saveState.value === 'saved') saveState.value = 'idle'
-  }, 1600)
 }
 
 async function closeEditor() {
@@ -544,148 +455,41 @@ watch(
     if (newId && newId !== localId.value) {
       const p = pagesStore.getPage(newId)
       if (p) {
+        // 只灌 local refs。dedup baseline / saveState / idle snapshot 定时器
+        // 全部由 composable 内部的 pageId watch 重置 —— 它注册得更早,同一
+        // 个 flush 里先于内容 watch 跑,顺序天然对。
         localId.value = p.id
         localTitle.value = p.title
         localJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
         localHTML.value = p.contentHTML ?? EMPTY_HTML
-        // Stage 8: re-prime dedup baseline when navigating between pages
-        // so the new page's first autosave isn't compared against the
-        // previous page's lastSaved.
-        lastSavedTitle.value = p.title
-        lastSavedJSON.value = (p.contentJSON as Record<string, unknown>) ?? emptyDoc()
-        lastSavedHTML.value = p.contentHTML ?? EMPTY_HTML
-        isDirty.value = false
-        saveState.value = 'idle'
-        // 切到另一个 page:idle timer 还可能持有上一 page 的 callback,清掉。
-        // hasUnsnapshottedEdits 也重置,避免跨 page 误触发 snapshot。
-        if (idleSnapshotTimer) {
-          window.clearTimeout(idleSnapshotTimer)
-          idleSnapshotTimer = null
-        }
-        hasUnsnapshottedEdits.value = false
       }
     }
   }
 )
-
-let saveTimer: number | null = null
-async function scheduleAutoSave() {
-  if (!localId.value) return
-  if (saveTimer) window.clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(async () => {
-    // 防抖 fire 时才设 'saving' 态,避免假反馈
-    saveState.value = 'saving'
-    const ok = await persistNow()
-    if (ok) flashSaved()
-  }, 500)
-}
-
-/** Version 边界:停笔 N 秒就当一个「编辑会话」结束,打一个 checkpoint
- *  (POST /:id/snapshots)。跟 Notion / Google Docs 的习惯一致 —— PATCH
- *  永远静默,version 只在 idle / route leave 这种机器化边界打。
- *  用户偏好:不提供手动「保存为版本」按钮。 */
-const IDLE_SNAPSHOT_MS = 30_000
-const idleSnapshotSeconds = computed(() => IDLE_SNAPSHOT_MS / 1000)
-let idleSnapshotTimer: number | null = null
-const hasUnsnapshottedEdits = ref(false)
-
-function scheduleIdleSnapshot() {
-  if (idleSnapshotTimer) window.clearTimeout(idleSnapshotTimer)
-  idleSnapshotTimer = window.setTimeout(async () => {
-    // timer fire 时如果用户已经走了(`localId` 变了,或 `flushPendingSave`
-    // 已把 hasUnsnapshottedEdits 翻回 false),直接退出。
-    if (!localId.value || !hasUnsnapshottedEdits.value) return
-    try {
-      await pagesStore.snapshotPage(localId.value)
-      hasUnsnapshottedEdits.value = false
-    } catch {
-      // 静默。失败只是少一个 checkpoint,用户下次的 snapshot 还会
-      // 自然触发。已经在 store 里弹过 ui().setError 才到这里的。
-    }
-  }, IDLE_SNAPSHOT_MS)
-}
-
-/**
- * Stage 7: route-leave guard. If there's a pending autosave timer, flush
- * it BEFORE the route actually changes — otherwise the user can set color /
- * type something, click "View" within the 500ms debounce window, and the
- * save never fires. The browser's `beforeunload` only covers full reloads;
- * SPA navigation needs this explicit guard.
- *
- * `persistNow()` returns true on success; we only block navigation on a
- * real save failure so the user gets to see the banner.
- *
- * 追加:flush 成功后,若仍有未打 checkpoint 的改动,补一个 boundary
- * snapshot —— 离开页面自然结束一个编辑会话。
- */
-let isFlushingOnLeave = false
-async function flushPendingSave(): Promise<void> {
-  if (!localId.value) return
-  if (saveTimer) {
-    window.clearTimeout(saveTimer)
-    saveTimer = null
-  }
-  if (idleSnapshotTimer) {
-    window.clearTimeout(idleSnapshotTimer)
-    idleSnapshotTimer = null
-  }
-  // 早返条件:**不**用 `!isDirty` 一刀切 —— auto-save 防抖 fire 时
-  // 已经把 isDirty 翻回 false,但 hasUnsnapshottedEdits 还是 true(刚刚那次
-  // PATCH 没打 boundary snapshot)。这时进 flushPendingSave 仍应补一个
-  // checkpoint,所以两个 flag 都要看。
-  if (!isDirty.value && !hasUnsnapshottedEdits.value) return
-
-  isFlushingOnLeave = true
-  if (isDirty.value) {
-    saveState.value = 'saving'
-    const ok = await persistNow()
-    if (ok) flashSaved()
-  }
-  // 走到这里时 isDirty=false 但 hasUnsnapshottedEdits=true:刚刚那次
-  // PATCH 已经成功,只需补 boundary snapshot 这一段。
-  if (hasUnsnapshottedEdits.value) {
-    try {
-      await pagesStore.snapshotPage(localId.value)
-      hasUnsnapshottedEdits.value = false
-    } catch {
-      /* 同 scheduleIdleSnapshot 的静默:失败不阻塞导航 */
-    }
-  }
-  isFlushingOnLeave = false
-}
 
 onBeforeRouteLeave(async (_to, _from) => {
   if (isDirty.value) {
     const ok = await confirmDirtyLeave()
     if (!ok) return false
   }
-  await flushPendingSave()
+  // flushSave 内部同时取消防抖 + idle 定时器、同步 PATCH、补 boundary
+  // snapshot(若仍有未打 checkpoint 的改动),不需要再单独调 flushSnapshot。
+  await autoSave.flushSave()
   return true
 })
 
 watch([localTitle, localJSON, localHTML], () => {
-  // 首次触发一定是 hydration(onMounted 灌 local refs)。此刻用户没编辑,
-  // 消费掉不排 auto-save —— 否则凭空写「没改过」的 PATCH(case 2)。
-  if (justHydrated) {
-    justHydrated = false
-    return
-  }
-  if (localId.value) {
-    isDirty.value = true
-    scheduleAutoSave()
-  }
+  // composable 内部消费首次(hydration)触发写 baseline,后续真实编辑才
+  // 真正 arm 定时器 —— 这里无条件调即可,不必再自持 justHydrated。
+  autoSave.scheduleSave()
 })
 
 onBeforeUnmount(() => {
-  if (saveTimer) window.clearTimeout(saveTimer)
-  if (savedHideTimer) window.clearTimeout(savedHideTimer)
-  if (idleSnapshotTimer) window.clearTimeout(idleSnapshotTimer)
-  // Stage 7: best-effort flush for navigations that bypass the router guard
-  // (e.g. tab close, hard reload). For SPA navigation the `onBeforeRouteLeave`
-  // guard above awaits `persistNow()` first; this is a defensive backstop.
-  if (isDirty.value && !isFlushingOnLeave) {
-    void flushPendingSave()
-  }
+  // 兜底 flush:绕过 router guard 的导航(tab 关闭 / 硬刷新)走这条。
+  // SPA 导航已经在上面的 onBeforeRouteLeave 里 await 过了,composable 的
+  // isFlushingOnLeave 守卫保证不会重复 PATCH。
+  if (isDirty.value) void autoSave.flushSave()
+  // 定时器由 composable 的 onScopeDispose 自动清,这里不用手动 dispose。
   // Stage 6: clear active page id so a stray Suggestion that fires after
   // route unmount (e.g. async callback still pending) sees an empty id and
   // bails out instead of polluting the next page's Mention candidates.

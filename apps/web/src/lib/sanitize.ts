@@ -53,6 +53,9 @@ const ALLOWED_ATTR = [
   'data-attachment-mime', // 页面附件:MIME 类型
   'data-attachment-filename', // 页面附件:原始文件名
   'data-attachment-size', // 页面附件:字节数
+  'data-status-color', // StatusBadge:4 个预设色名(blue/green/red/gray),CSS 属性选择器精确匹配
+  'cite', // blockquote 标准的引用来源 URL(HTML5 属性);走 isSafeHref 协议白名单
+  'data-citation-url', // cite 镜像,DOMPurify 友好形式;跟 cite 同值
 ]
 
 // 自定义 hook:URL 协议白名单,挡掉 javascript: / data: 等

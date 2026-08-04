@@ -16,6 +16,9 @@ export const PERSIST_KEYS = {
   TREE_SCROLL: 'power-wiki:tree-scroll',
   /** TOC 折叠态 — 刷新后保留用户偏好 */
   TOC_COLLAPSED: 'power-wiki:toc-collapsed',
+  /** TOC 折叠的 H2 heading id 集合 — `{ [pageId]: headingId[] }`,
+   *  每页各自记住哪些 H2 折叠,刷新后保留用户偏好。空数组 = 全部展开。 */
+  TOC_H2_COLLAPSED: 'power-wiki:toc-h2-collapsed',
   /** 侧栏各 section 折叠态 — `{ [sectionKey]: collapsed }`,刷新后保留 */
   SIDEBAR_SECTIONS: 'power-wiki:sidebar-sections',
 } as const

@@ -56,7 +56,13 @@ const expiryChoice = ref<ExpiryOption>(30)
 /** 最近一次创建的结果,展示「一次性明文 + 复制 URL」banner。 */
 const justCreated = ref<CreateShareResponse | null>(null)
 const justCreatedCopied = ref(false)
+/** 行级「复制 URL」反馈:P2/4.6 — 替代 toast.success('已复制公开链接')。
+ *  inline banner 挂在 share list 上方,3s 自动消失,有手动关闭按钮,
+ *  附「复制链接」+「撤销分享」按钮。点击 banner 按钮直接复用 row 的
+ *  copy / revoke 流程(revoke 成功后 banner 自动消失)。*/
+const copyFeedback = ref<ShareRow | null>(null)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
+let feedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 async function load() {
   loading.value = true
@@ -78,6 +84,7 @@ async function load() {
 onMounted(load)
 onBeforeUnmount(() => {
   if (copyTimer) clearTimeout(copyTimer)
+  if (feedbackTimer) clearTimeout(feedbackTimer)
 })
 watch(
   () => props.open,
@@ -85,11 +92,16 @@ watch(
     if (isOpen) {
       justCreated.value = null
       justCreatedCopied.value = false
+      copyFeedback.value = null
       createError.value = null
       void load()
     } else if (copyTimer) {
       clearTimeout(copyTimer)
       copyTimer = null
+    }
+    if (!isOpen && feedbackTimer) {
+      clearTimeout(feedbackTimer)
+      feedbackTimer = null
     }
   },
 )
@@ -107,9 +119,9 @@ function cachedTokenFor(s: ShareRow): string | undefined {
   return pagesStore.shareTokens[props.pageId]?.[s.id]
 }
 
-/** 「复制 URL」反馈 —— 缓存命中走公开 URL toast,否则走「不可恢复」toast。
- *  「不可恢复」是 Confluence 风格的诚实反馈:不假装能复制,但明确告诉
- *  owner 「为什么」「下一步」(撤销 + 重建),不让用户对着 UI 干瞪眼。 */
+/** 「复制 URL」反馈 —— P2/4.6:缓存命中走 inline banner(替代旧 toast),
+ *  「不可恢复」仍走 toast,因为它有教育价值(解释 token 一次性 + 下一步)。
+ *  inline banner 上挂「再复制一次」+「撤销分享」按钮,免去滚回列表的来回。*/
 async function onCopyShareUrl(s: ShareRow): Promise<void> {
   const token = cachedTokenFor(s)
   if (token && s.revokedAt === null && (s.expiresAt === null || s.expiresAt > Date.now())) {
@@ -136,8 +148,11 @@ async function onCopyShareUrl(s: ShareRow): Promise<void> {
         ok = false
       }
     }
-    if (ok) toast.success('已复制公开链接')
-    else toast.error('复制失败,请手动复制')
+    if (ok) {
+      showCopyFeedback(s)
+    } else {
+      toast.error('复制失败,请手动复制')
+    }
     return
   }
   // 没缓存 token(创建后从未在本会话复制 / 已被 revoke / 已 expire):
@@ -146,6 +161,23 @@ async function onCopyShareUrl(s: ShareRow): Promise<void> {
   toast.info(
     `此分享的链接无法恢复(token 仅创建时展示一次)。如需重新分发,请撤销后创建新的分享链接。`,
   )
+}
+
+function showCopyFeedback(s: ShareRow): void {
+  copyFeedback.value = s
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  feedbackTimer = setTimeout(() => {
+    copyFeedback.value = null
+    feedbackTimer = null
+  }, 3000)
+}
+
+function dismissCopyFeedback(): void {
+  copyFeedback.value = null
+  if (feedbackTimer) {
+    clearTimeout(feedbackTimer)
+    feedbackTimer = null
+  }
 }
 
 async function onCreate() {
@@ -161,6 +193,9 @@ async function onCreate() {
     // 接」按 pageId 查到 → 复制公开 URL 而不是内部 URL。缓存命中与否不影响
     // banner 的 1.2s 自动收起;ShareDialog 自己不依赖这个 token。
     pagesStore.cacheShareToken(props.pageId, resp.id, resp.token)
+    // P2/4.6 — banner 3s 自动消失(从创建时起算,不依赖是否点过复制)。
+    // 旧实现只在 copyUrl() 启动定时器 → 用户不复制就常驻,违反 spec。
+    startJustCreatedTimer()
     // 自动选中文本框方便用户复制
     setTimeout(() => {
       const el = document.getElementById('share-just-created-url') as HTMLInputElement | null
@@ -230,25 +265,59 @@ async function copyUrl() {
       document.body.appendChild(ta)
       ta.select()
       copied = document.execCommand('copy')
-      document.body.removeChild(ta)
+        document.body.removeChild(ta)
     } catch {
       copied = false
     }
   }
   if (copied) {
-    // 跟 UsersView 重置密码的 otp-banner 同节奏:点 复制 → 立刻给「已复制」
-    // 反馈 → 短暂保留(1.2s 够看清一次)→ 自动收起整个「分享链接已创建」
-    // banner。链接已经进剪贴板,banner 留着是冗余 —— 跟「明文 token 仅
-    // 此一次展示」的警告语义一致:用完即丢。
+    // P2/4.6:复制成功 → 视觉反馈「已复制」+ 重置 3s 自动消失计时。
+    // 这样用户复制完后还有完整 3s 看清反馈 / 决定是否撤销;旧的 1.2s
+    // 太短,看完一眼就消失,用户来不及反应。
     justCreatedCopied.value = true
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => {
-      justCreated.value = null
-      justCreatedCopied.value = false
-    }, 1200)
+    startJustCreatedTimer()
   } else {
     toast.error('复制失败,请手动选中链接复制')
   }
+}
+
+/** P2/4.6 — 启动 / 重置 justCreated banner 的 3s 自动消失定时器。
+ * onCreate 调一次(从出现开始 3s 必消失),copyUrl 调一次(用户复制后
+ * 还想有时间决定要不要撤销,把 3s 窗口从复制瞬间重新算起)。 */
+function startJustCreatedTimer(): void {
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    justCreated.value = null
+    justCreatedCopied.value = false
+    copyTimer = null
+  }, 3000)
+}
+
+function dismissJustCreated(): void {
+  justCreated.value = null
+  justCreatedCopied.value = false
+  if (copyTimer) {
+    clearTimeout(copyTimer)
+    copyTimer = null
+  }
+}
+
+async function revokeJustCreated(): Promise<void> {
+  if (!justCreated.value || revokingId.value) return
+  // onCreate() 后调过 load(),shares 列表已经包含刚创建的 row —
+  // 这里查 ShareRow 而不是用 justCreated 拼,避免字段缺失。
+  const row = shares.value.find((s) => s.id === justCreated.value!.id)
+  if (!row) {
+    // 理论上不会发生(load 已跑过);保护一下,撤销按钮 graceful no-op。
+    justCreated.value = null
+    justCreatedCopied.value = false
+    return
+  }
+  await onRevoke(row)
+  // 撤销成功后 banner 已经在 onRevoke 内被 load() 刷新,justCreated 仍
+  // 指向旧值 —— 显式清掉避免残留 input 显示已撤销 share 的 URL。
+  justCreated.value = null
+  justCreatedCopied.value = false
 }
 
 function statusLabel(s: ShareRow): string {
@@ -281,8 +350,18 @@ function expiresLabel(s: ShareRow): string {
         仅 <strong>共享空间</strong> 且 <strong>无查看限制</strong> 的页面可分享。
       </p>
 
-      <!-- 一次性明文 banner(创建成功) -->
+      <!-- P2/4.6 — 一次性明文 banner(创建成功)。3s 自动消失,挂「复制链
+           接」+「撤销分享」两个按钮,免去滚回列表操作的来回。手动 × 关
+           闭 = 立即清掉(banner 上的 URL 是一次性敏感信息,不留冗余)。-->
       <div v-if="justCreated" class="just-created">
+        <button
+          type="button"
+          class="banner-close"
+          aria-label="关闭提示"
+          @click="dismissJustCreated"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
         <div class="jc-title">
           <span class="material-symbols-outlined">link</span>
           分享链接已创建
@@ -307,11 +386,64 @@ function expiresLabel(s: ShareRow): string {
             @click="copyUrl"
           >
             <span class="material-symbols-outlined">{{ justCreatedCopied ? 'check' : 'content_copy' }}</span>
-            {{ justCreatedCopied ? '已复制' : '复制' }}
+            {{ justCreatedCopied ? '已复制' : '复制链接' }}
           </button>
         </div>
         <div class="jc-meta">
           过期:{{ justCreated.expiresAt ? new Date(justCreated.expiresAt).toLocaleString() : '永不过期' }}
+        </div>
+        <div class="banner-actions">
+          <button
+            class="btn ghost danger-text"
+            type="button"
+            :disabled="revokingId !== null"
+            @click="revokeJustCreated"
+          >
+            <span class="material-symbols-outlined">link_off</span>
+            撤销分享
+          </button>
+        </div>
+      </div>
+
+      <!-- P2/4.6 — 行级「复制 URL」成功反馈 inline banner。3s 自动消失,
+           有「复制链接」+「撤销分享」按钮 + 手动 × 关闭。
+           替代旧的 toast.success('已复制公开链接')。-->
+      <div v-if="copyFeedback" class="copy-feedback">
+        <button
+          type="button"
+          class="banner-close"
+          aria-label="关闭提示"
+          @click="dismissCopyFeedback"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+        <div class="cf-icon">
+          <span class="material-symbols-outlined">check_circle</span>
+        </div>
+        <div class="cf-text">
+          公开链接已复制到剪贴板
+          <span v-if="copyFeedback.expiresAt" class="cf-meta">
+            · {{ expiresLabel(copyFeedback) }}
+          </span>
+        </div>
+        <div class="banner-actions">
+          <button
+            class="btn ghost"
+            type="button"
+            @click="onCopyShareUrl(copyFeedback)"
+          >
+            <span class="material-symbols-outlined">content_copy</span>
+            复制链接
+          </button>
+          <button
+            class="btn ghost danger-text"
+            type="button"
+            :disabled="revokingId !== null"
+            @click="onRevoke(copyFeedback)"
+          >
+            <span class="material-symbols-outlined">link_off</span>
+            撤销分享
+          </button>
         </div>
       </div>
 
@@ -386,9 +518,9 @@ function expiresLabel(s: ShareRow): string {
                 <code class="token-prefix" :title="`分享链接标识:${s.tokenPrefix}`">…{{ s.tokenPrefix }}</code>
               </td>
               <td class="actions">
-                <!-- 行级「复制 URL」:有缓存 token → 复制公开 URL;无缓存 →
-                     toast 告知 URL 不可恢复。active 才显示,已撤销 / 过期
-                     的 share 复制无意义。 -->
+                <!-- 行级「复制 URL」:有缓存 token → 复制公开 URL → inline
+                     banner;无缓存 → toast 告知 URL 不可恢复。active 才显
+                     示,已撤销 / 过期的 share 复制无意义。 -->
                 <button
                   v-if="s.revokedAt === null && (s.expiresAt === null || s.expiresAt > Date.now())"
                   class="btn ghost"
@@ -480,6 +612,7 @@ function expiresLabel(s: ShareRow): string {
 
 /* ── just-created banner ── */
 .just-created {
+  position: relative;
   padding: 14px 16px;
   background: var(--warning-soft);
   color: var(--warning-text);
@@ -545,6 +678,84 @@ function expiresLabel(s: ShareRow): string {
   background: var(--success);
   border-color: var(--success);
   color: var(--text-invert);
+}
+
+/* P2/4.6 — banner 关闭按钮 + banner 底部 action 区:
+   两个 banner(just-created + copy-feedback)共用同一组 affordance —
+   右上角 × 关闭,底部「复制链接 / 撤销分享」row。
+   just-created 的 URL 是一次性敏感信息,允许用户立刻 × 关掉;copy-feedback
+   没有敏感信息,但 × 关掉能让用户提前清屏。 */
+.banner-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.banner-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
+}
+.banner-close .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.banner-actions .btn {
+  font-size: 12px;
+  height: 28px;
+  padding: 0 10px;
+}
+
+/* P2/4.6 — copy-feedback banner:行级「复制 URL」成功后展示的 inline banner,
+   替代 toast.success。3s 自动消失,有手动 × 关闭 + 「再复制一次 / 撤销分享」按钮。
+   走 success-soft 配色,跟 just-created 的 warning-soft 区分语义。 */
+.copy-feedback {
+  position: relative;
+  padding: 10px 16px 12px 16px;
+  background: var(--success-soft);
+  color: var(--success-text);
+  border: 1px solid var(--success);
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+.cf-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+}
+.cf-icon .material-symbols-outlined {
+  font-size: 22px;
+}
+.cf-text {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+}
+.cf-meta {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 12px;
+}
+.copy-feedback .banner-actions {
+  margin-top: 0;
 }
 
 /* ── create section ── */
