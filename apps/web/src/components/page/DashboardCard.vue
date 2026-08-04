@@ -2,11 +2,14 @@
 /**
  * DashboardCard — Dashboard section 卡片。
  *
- * 两个变体:`'page' | 'mention'`,对应 Dashboard 4 个 section 中
- * 的 2 种 row shape:
- *   - 'page'    — created / watched / recent / personalSpace section 用的
- *                 PageNode 卡(标题 + space chip + 时间 + 创建者)
- *   - 'mention' — mentions section 用的通知卡(actor 头像 + 通知文本 + 跳转)
+ * 三个变体:`'page' | 'mention' | 'compact'`,对应 Dashboard 6 个 section 中
+ * 的 3 种 row shape:
+ *   - 'page'    — 主区 section 用的 PageNode 卡(标题 + space chip + 时间 +
+ *                 icon 列 + chevron)
+ *   - 'mention' — mentions section 用的通知卡(actor 头像 + 通知文本 +
+ *                 跳转,带 mention-verb chip)
+ *   - 'compact' — 次区 section 用的紧凑 row(单行:标题 + chip + 时间;无
+ *                 icon 列、无 chevron),信息密度更高
  *
  * 设计目标:复用 ReadView byline 视觉风格(icon + 标题 + space chip + 时间)。
  * 点击 → 路由跳转;mention 用 `?hash=#comment-{id}` 锚点跳到评论。
@@ -21,13 +24,13 @@ import type { PageNode, Notification } from '@power-wiki/shared'
 
 const props = withDefaults(
   defineProps<{
-    variant: 'page' | 'mention'
-    /** 'page':PageNode; 'mention':Notification */
+    variant: 'page' | 'mention' | 'compact'
+    /** 'page' / 'compact':PageNode;'mention':PageNode 从 notification 派生 */
     page?: PageNode | null
     /** 'mention' variant:the notification to render */
     notification?: Notification | null
     /** space chip 显示。mention variant 用 notification 的 pageTitle 渲染时,
-     * 这里额外提供 space 信息。'page' variant 从 page.spaceId 派生。 */
+     * 这里额外提供 space 信息。'page' / 'compact' variant 从 page.spaceId 派生。 */
     spaceName?: string | null
     spaceColor?: string | null
     spaceKind?: 'personal' | 'shared' | null
@@ -48,33 +51,38 @@ const emit = defineEmits<{
   (e: 'openMention', pageId: string, commentId: string | null): void
 }>()
 
+const isCompact = computed(() => props.variant === 'compact')
+
 const pageId = computed<string | null>(() => {
-  if (props.variant === 'page') return props.page?.id ?? null
-  return props.notification?.pageId ?? null
+  if (props.variant === 'mention') return props.notification?.pageId ?? null
+  return props.page?.id ?? null
 })
 
 const pageTitle = computed<string>(() => {
-  if (props.variant === 'page') return props.page?.title?.trim() || '(无标题)'
-  return props.notification?.pageTitle?.trim() || '(无标题)'
+  if (props.variant === 'mention') {
+    return props.notification?.pageTitle?.trim() || '(无标题)'
+  }
+  return props.page?.title?.trim() || '(无标题)'
 })
 
 const pageIcon = computed<string | undefined>(() => {
-  if (props.variant === 'page') return props.page?.icon || undefined
-  return undefined
+  // compact variant 默认不显示 page icon(去掉 icon 列换单行布局)
+  if (props.variant === 'compact' || props.variant === 'mention') return undefined
+  return props.page?.icon || undefined
 })
 
 const authorName = computed<string | null>(() => {
-  if (props.variant === 'page') return props.page?.authorName ?? null
-  return props.notification?.actorName ?? null
+  if (props.variant === 'mention') return props.notification?.actorName ?? null
+  return props.page?.authorName ?? null
 })
 const authorColor = computed<string | null>(() => {
-  if (props.variant === 'page') return props.page?.authorColor ?? null
-  return props.notification?.actorColor ?? null
+  if (props.variant === 'mention') return props.notification?.actorColor ?? null
+  return props.page?.authorColor ?? null
 })
 
 const updatedAt = computed<number | null>(() => {
-  if (props.variant === 'page') return props.page?.updatedAt ?? null
-  return props.notification?.createdAt ?? null
+  if (props.variant === 'mention') return props.notification?.createdAt ?? null
+  return props.page?.updatedAt ?? null
 })
 
 function handleClick(): void {
@@ -109,7 +117,7 @@ const mentionLabel = computed<string>(() => {
     @click="handleClick"
     @keydown="handleKeydown"
   >
-    <div class="dash-icon" aria-hidden="true">
+    <div v-if="!isCompact" class="dash-icon" aria-hidden="true">
       <span v-if="pageIcon" class="material-symbols-outlined">{{ pageIcon }}</span>
       <UserAvatar
         v-else-if="variant === 'mention'"
@@ -124,23 +132,39 @@ const mentionLabel = computed<string>(() => {
       <span v-else class="material-symbols-outlined">description</span>
     </div>
     <div class="dash-body">
-      <div class="dash-line-1">
-        <span v-if="variant === 'mention'" class="mention-verb">{{ mentionLabel }}</span>
-        <span v-if="variant === 'mention'" class="mention-actor">{{ authorName ?? '(已删除用户)' }}</span>
-        <span class="dash-title" :title="pageTitle">{{ pageTitle }}</span>
-      </div>
-      <div class="dash-line-2">
-        <span
-          v-if="spaceName"
-          class="space-chip"
-          :style="{ background: spaceColor ?? 'var(--text-3)' }"
-          :title="spaceKind === 'personal' ? `${spaceName} (个人空间)` : `${spaceName} (团队空间)`"
-        >{{ spaceName }}</span>
-        <span v-if="variant === 'mention'" class="mention-comment">在评论里</span>
-        <span v-if="updatedAt" class="time">{{ formatRelativeTime(updatedAt) }}</span>
-      </div>
+      <!-- compact:单行(标题 + chip + 时间);其余变体走原来的双行(标题行 /
+           元数据行)。紧凑格子里 chip + 时间作为辅助文本放在 title 行尾。-->
+      <template v-if="isCompact">
+        <div class="dash-line-single">
+          <span class="dash-title" :title="pageTitle">{{ pageTitle }}</span>
+          <span
+            v-if="spaceName"
+            class="space-chip"
+            :style="{ background: spaceColor ?? 'var(--text-3)' }"
+            :title="spaceKind === 'personal' ? `${spaceName} (个人空间)` : `${spaceName} (团队空间)`"
+          >{{ spaceName }}</span>
+          <span v-if="updatedAt" class="time">{{ formatRelativeTime(updatedAt) }}</span>
+        </div>
+      </template>
+      <template v-else>
+        <div class="dash-line-1">
+          <span v-if="variant === 'mention'" class="mention-verb">{{ mentionLabel }}</span>
+          <span v-if="variant === 'mention'" class="mention-actor">{{ authorName ?? '(已删除用户)' }}</span>
+          <span class="dash-title" :title="pageTitle">{{ pageTitle }}</span>
+        </div>
+        <div class="dash-line-2">
+          <span
+            v-if="spaceName"
+            class="space-chip"
+            :style="{ background: spaceColor ?? 'var(--text-3)' }"
+            :title="spaceKind === 'personal' ? `${spaceName} (个人空间)` : `${spaceName} (团队空间)`"
+          >{{ spaceName }}</span>
+          <span v-if="variant === 'mention'" class="mention-comment">在评论里</span>
+          <span v-if="updatedAt" class="time">{{ formatRelativeTime(updatedAt) }}</span>
+        </div>
+      </template>
     </div>
-    <span class="dash-arrow material-symbols-outlined" aria-hidden="true">chevron_right</span>
+    <span v-if="!isCompact" class="dash-arrow material-symbols-outlined" aria-hidden="true">chevron_right</span>
   </div>
 </template>
 
@@ -161,6 +185,15 @@ const mentionLabel = computed<string>(() => {
   outline-offset: -2px;
   border-radius: var(--radius-sm, 3px);
 }
+/* compact variant — 去掉 icon 列 + chevron 列,单行排版让次区格子里的
+   row 更紧凑,行高从 ~58px 降到 ~40px,信息密度提升约 35%。*/
+.dash-card.variant-compact {
+  grid-template-columns: 1fr;
+  padding: 8px 12px;
+  min-height: 40px;
+}
+.dash-card.variant-compact:last-child { border-bottom: 0; }
+
 .dash-icon {
   display: flex;
   align-items: center;
@@ -180,6 +213,8 @@ const mentionLabel = computed<string>(() => {
   gap: 4px;
   min-width: 0;
 }
+.dash-card.variant-compact .dash-body { gap: 0; }
+
 .dash-line-1 {
   display: flex;
   align-items: baseline;
@@ -189,6 +224,22 @@ const mentionLabel = computed<string>(() => {
   flex-wrap: wrap;
   min-width: 0;
 }
+/* compact 单行:title 占 1fr,chip + 时间右贴。让 chip 不会截断 title →
+   title 优先截断(`min-width: 0`),chip + time 保持可见。*/
+.dash-line-single {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.dash-line-single .dash-title {
+  flex: 1;
+  min-width: 0;
+}
+.dash-line-single .space-chip { flex-shrink: 0; }
+.dash-line-single .time { flex-shrink: 0; }
+
 .mention-verb {
   font-size: 11px;
   font-weight: 600;
@@ -214,6 +265,7 @@ const mentionLabel = computed<string>(() => {
   white-space: nowrap;
   min-width: 0;
 }
+.dash-card.variant-compact .dash-title { font-size: 13px; }
 .dash-line-2 {
   display: flex;
   align-items: center;
@@ -236,6 +288,14 @@ const mentionLabel = computed<string>(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
+}
+/* compact 下 chip 更小:row 高度紧,chip 高度对齐 16px。*/
+.dash-card.variant-compact .space-chip {
+  max-width: 100px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 6px;
+  font-size: 10px;
 }
 .mention-comment {
   color: var(--text-3);

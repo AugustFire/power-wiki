@@ -33,6 +33,15 @@ interface RecentEntry {
    * 让「最近访问」section 直接渲染空间头像,而不是通用 history icon
    * (PersonalHomeView 的视觉对齐要求)。 */
   spaceId?: string
+  /**
+   * 累计访问次数(upsert 同 id 时自增)。PersonalHomeView 用此渲染
+   * 「常读」频次 badge —— N ≥ 3 时 row 右上角显示 star + tooltip "访问
+   * 过 N 次"。老 cache 里缺失视为 0;新访问触发 recordVisit 后写 1。
+   *
+   * 暂不同步 server:`user_recent_pages` 表当前不存累计,本批纯前端
+   * localStorage 维护。syncFromServer 用 server items 覆盖时 visits
+   * 默认 0,直到该 id 被再次访问才被 +1 上来。 */
+  visits?: number
 }
 
 function isValid(e: unknown): e is RecentEntry {
@@ -79,12 +88,21 @@ export function useRecentPages() {
     if (!auth.user) return
     try {
       const { items } = await api.users.me.recent.list({ limit: 50 })
-      const next: RecentEntry[] = items.slice(0, MAX).map((p) => ({
-        id: p.id,
-        title: p.title,
-        visitedAt: p.updatedAt,
-        spaceId: p.spaceId,
-      }))
+      // 合并 server items(server 端的 visitedAt 是真值)与本地 visits
+      // 计数(server `user_recent_pages` 不存累计,本地才有)。
+      // 否则 syncFromServer 会把 visits 一律清零,常读 badge 跨刷新
+      // 重置回 0,直到用户再次访问才能累积。
+      const existingById = new Map(list.value.map((e) => [e.id, e]))
+      const next: RecentEntry[] = items.slice(0, MAX).map((p) => {
+        const prev = existingById.get(p.id)
+        return {
+          id: p.id,
+          title: p.title,
+          visitedAt: p.updatedAt,
+          spaceId: p.spaceId,
+          visits: prev?.visits ?? 0,
+        }
+      })
       list.value = next
       save(next)
     } catch {
@@ -94,10 +112,21 @@ export function useRecentPages() {
 
   function recordVisit(page: { id: string; title: string; spaceId?: string }): void {
     if (!page.id || !page.title) return
-    // 移到最前 + 去重 + 截断。Date.now() 而不是去重旧 visitedAt,保证
+    // upsert:同 id 已有则 visits +1 + 更新 visitedAt + 移到列表头;
+    // 没有则推新行,visits = 1。Date.now() 而不是旧 visitedAt,保证
     // 重新访问时刷新"刚刚"。
+    const existing = list.value.find((e) => e.id === page.id)
+    const now = Date.now()
+    const updated: RecentEntry = existing
+      ? {
+          ...existing,
+          visitedAt: now,
+          spaceId: page.spaceId ?? existing.spaceId,
+          visits: (existing.visits ?? 0) + 1,
+        }
+      : { id: page.id, title: page.title, visitedAt: now, spaceId: page.spaceId, visits: 1 }
     const next: RecentEntry[] = [
-      { id: page.id, title: page.title, visitedAt: Date.now(), spaceId: page.spaceId },
+      updated,
       ...list.value.filter((e) => e.id !== page.id),
     ].slice(0, MAX)
     list.value = next

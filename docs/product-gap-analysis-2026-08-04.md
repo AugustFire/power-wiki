@@ -1,273 +1,463 @@
-# power-wiki 产品差距审视
+# power-wiki 产品差距分析与优化建议(2026-08-04)
 
-> 评审日期：2026-08-03  
-> 评审基准：Confluence 级团队知识库体验，结合当前代码、页面结构与 API 契约。  
-> 范围：桌面端、团队空间与个人空间、页面阅读/编辑、权限、管理后台、附件与分享。  
-> 明确不纳入本次结论：全文检索能力深化、评论体验优化、reaction 表情、历史/最近活动产品化、辅助屏幕用户支持，以及开发阶段暂缓的生产安全治理。
-
-## 一、结论摘要
-
-当前产品已经形成了可用的知识库闭环：空间隔离、页面树、富文本编辑、自动保存、页面复制/发布、标签、关注、限制、附件、个人空间、回收站与管理员后台均有对应实现。阅读页和页面编辑页是目前完成度最高的部分，已经接近“可用产品”而非原型。
-
-与 Confluence 级产品的主要差距，不是“缺少某一个按钮”，而是以下四类体验还没有完全闭环：
-
-1. **操作后的可预期性不足**：统计卡、权限变更、快照、通知、恢复/删除等动作，很多只能看到结果，不能明确知道影响范围、下一步或是否已经完成。
-2. **高频管理任务效率不足**：用户、组、回收站、审计、空间成员都偏向逐条操作，缺少批量处理、分页、服务端筛选和统一的影响预览。
-3. **跨页面的信息关系不够连贯**：页面、空间、个人工作台、活动、通知、标签、分享之间已经有数据，但入口和 drill-down 不总是连通。
-4. **权限模型的产品表达仍有歧义**：后端已实现不少实际规则，但前端部分能力依赖角色推断，尤其是页面限制、空间管理员与个人空间边界，容易让用户误判“我能否操作”。
-
-建议优先级：先收敛权限与破坏性操作的可解释性，再补齐管理端批量效率，最后优化工作台和跨模块联动。全文检索等明确排除项不应成为当前迭代阻塞点。
-
-## 二、优先级定义
-
-- **P0**：会导致用户误操作、权限误判、数据恢复困难，或直接破坏核心闭环。
-- **P1**：高频任务明显低效，或核心页面之间断链，影响团队长期使用。
-- **P2**：体验成熟度不足，但有可行替代路径，不阻塞基本使用。
+- 视角:资深产品经理,对标 Confluence,基于 `apps/web` + `apps/api` + `packages/shared` 现有代码逐处审视。
+- 不在范围内:全文检索 / 评论优化 / 表情表态 / 通知 / 历史 / 最近页面活动 / 辅助屏幕用户。
+- 优先级:**P0** = 任何用户都会撞到的核心闭环缺口;**P1** = 重度用户 / 管理员高频但有 workaround;**P2** = 体验加分项。
 
 ---
 
-## 三、P0：权限与破坏性操作闭环
+## 1. 总览判断
 
-### P0-1 页面限制的可操作角色表达不够准确
+代码层面,power-wiki 已经走到了"产品可用"的临界点:路由 / 权限 / 编辑器 / 空间管理 / 回收站 / 管理后台 6 大块都从骨架长成了肌肉;视觉令牌统一从 `apps/web/src/styles/tokens.css` 派生,没有自造十六进制(抽查 8 个组件 CSS 全部走变量);编辑器自研 Tiptap 节点视图做得很细(`CalloutView` / `CodeBlockView` / `ToggleView` / `ImageAttachmentView` / `HeadingView` / `EditorBubbleMenu`)。
 
-- **通俗描述 / 当前现象**：页面阅读页会根据 `viewerRole`、是否管理员、是否作者推断“谁可以管理限制”。对于非全局管理员的空间管理员，前端没有一个稳定、明确的“空间管理员可管理本空间页面限制”的产品表达，用户可能看到页面却找不到设置入口，或误以为作者才有权限。
-- **存在的问题**：权限规则存在于后端，但前端能力判断不是同一套明确的权限能力模型。空间隔离越多，角色越复杂，这种推断越容易出现“后端允许、前端隐藏”或“前端显示、操作失败”。
-- **页面**：页面阅读页、页面编辑页、页面限制弹窗。
-- **具体位置**：`apps/web/src/views/ReadView.vue` 中 `canManageRestrictions`、`canEdit` 等计算逻辑；`apps/web/src/views/EditView.vue` 中对应的 `canEditPageNode` 与限制入口；后端规则见 `apps/api/src/routes/pageRestrictions.ts`、`apps/api/src/routes/pages.ts`。
-- **建议**：将“查看/编辑/管理限制/移动/删除”等能力作为后端返回的 capability 集合，而不是由前端自行拼装角色条件。限制弹窗明确显示“继承自父页面”“直接限制”“你拥有的权限来源”。
+剩下与"对标 Confluence"的差距不在"缺一个按钮",而在 5 类结构性不足:
 
-### P0-2 删除页面的前置条件没有形成引导式流程
+1. **首页 / 工作台类页面的信息密度过低**:`SpaceHomeView` 的 stat-card 是只读数字,`PersonalHomeView` 的 6 个 section 没视觉权重,缺 drill-down。
+2. **批量 / 顺序类操作缺失**:删页 / 移页 / 改限制全是逐个语义,管理员在批量场景下效率断崖。
+3. **富文本"结构性块类型"偏少**:14 个 slash 命令 + 12 个工具栏按钮,但 `<status>`、`<decision>`、`<citation quote>`、`<toc>`、`<group mention>` 这些团队文档高频块还没建。
+4. **跨页关系的导航入口弱**:页面反向链接、关注页、空间成员贡献 — 散落多页,缺一个常驻 CTA。
+5. **首次进入 / 邀请 / 登录跳转的引导链残缺**:新用户进 `/me` 看到 6 个空 section,没有"接下来做什么"。
 
-- **通俗描述 / 当前现象**：删除有子页面的页面时，API 返回 `409 has_children`，并带有数量信息；但前端没有把用户带到“先处理哪些子页面”的清晰路径。回收站里父页面仍在回收站时，子页面也不能直接恢复。
-- **存在的问题**：这是知识树中最容易遇到的阻塞动作。只返回错误或禁用按钮，会让用户不知道应当逐个删除、移动还是先恢复父级，尤其在较深页面树中成本很高。
-- **页面**：页面阅读页删除确认、管理后台回收站。
-- **具体位置**：`apps/api/src/routes/pages.ts` 的软删除与恢复校验；`apps/web/src/views/manager/TrashView.vue` 恢复按钮和父级提示区域。
-- **建议**：删除时展示子页面数量、前三级标题，并提供“查看子页面”“移动子页面”“继续逐个处理”的入口；恢复时提供父子恢复顺序和一次性恢复整棵子树的明确操作（仍需遵守权限和冲突校验）。
-
-### P0-3 永久删除、注销用户和删除组的确认强度不足
-
-- **通俗描述 / 当前现象**：用户注销、组删除、回收站永久删除都使用通用确认弹窗。代码明确选择不要求输入名称二次确认，适合开发阶段，但操作后影响范围很大。
-- **存在的问题**：内部工具也会产生真实知识和真实成员关系。普通确认弹窗不能让操作者意识到页面、授权、评论、通知或成员关联会被清理，误操作后的恢复路径有限。
-- **页面**：用户管理、用户组管理、回收站。
-- **具体位置**：`apps/web/src/views/manager/UsersView.vue` 的 anonymize 操作；`apps/web/src/views/manager/GroupsView.vue` 的删除操作；`apps/web/src/views/manager/TrashView.vue` 的永久删除操作；对应清理逻辑在 `apps/api/src/routes/adminUsers.ts`、`adminGroups.ts`、`pages.ts`。
-- **建议**：不必现在引入复杂安全体系，但应补充影响摘要、明确区分“移入回收站/永久删除/注销”、对不可逆操作使用输入名称或连续确认，并在完成后提供结果摘要。
+下面分模块展开(每节对应一个用户视角下的"页面 / 操作",引用代码路径便于定位)。
 
 ---
 
-## 四、P1：空间、页面与权限工作流
+## 2. 团队空间首页(团队成员进入空间后看到的第一个页面)
 
-### P1-1 团队空间之间的页面流转缺少明确产品路径
+**对应代码**:`apps/web/src/views/SpaceHomeView.vue`
 
-- **通俗描述 / 当前现象**：后端允许个人空间向团队空间发布，但不允许团队空间之间直接移动；团队空间之间通常只能通过复制等替代方式完成。
-- **存在的问题**：这符合“空间隔离”的业务背景，但当前 UI 没有把“移动”“复制”“发布”三者的语义差异讲清楚。用户可能以为移动失败是系统故障，也不知道复制后权限、子页面、链接和标签如何处理。
-- **页面**：页面更多菜单、复制页面、个人空间发布流程。
-- **具体位置**：`apps/api/src/routes/pages.ts` 的 move/publish/duplicate 路由；`apps/web/src/views/ReadView.vue` 的更多菜单与复制入口。
-- **建议**：在跨空间操作入口中直接说明规则：团队空间不允许跨空间移动；可选择“复制到目标空间”或“发布个人草稿”。复制确认页显示子页面数量、目标空间、原页面是否保留。
+### 现状
+`h1 / p / 4 张 stat-card / 公告区域 / 页面树` 五段式。`stats` 拉 `/api/spaces/:id/stats`,展示"全部页面 / 今日活跃 / 本周更新 / 我的页面"。`homepagePageId` 配了之后,空间首页被替换为该页。公告区是单一字段的 `?` 标 + 标题 + 内容。
 
-### P1-2 页面复制标题会持续叠加前缀
+### 差距
+- **stat-card 是死数字,不是入口**:点不动。Confluence 在这里是"快捷透视 + 直接跳转"双功能。
+- **"今日活跃 / 本周更新"** 12 个更新,不能点开看到"哪些页面 + 谁改的"。
+- **公告区**是单一字段,空间管理员没法把多个页面"锁在首页"作为公告集合。
+- **中部页面树**与 `Sidebar.vue` 的"此空间的页面 tree"是两套,空间内容多了要扫两遍。
+- **空白空间**(刚建没人写)没"建第一页"的高亮 CTA,只有常规按钮。
 
-- **通俗描述 / 当前现象**：复制页面统一使用“复制自”前缀，重复复制后会出现“复制自复制自页面名”。
-- **存在的问题**：标题会失真，用户难以区分原始页面和多次复制结果；在页面树和工作台中尤其明显。
-- **页面**：页面阅读页的复制操作、页面树。
-- **具体位置**：`apps/api/src/routes/pages.ts` duplicate 路由中的标题生成逻辑。
-- **建议**：复制时去除已有的连续“复制自”前缀，再生成单层前缀；同时在确认页显示“源页面：空间 / 标题”，不要只依赖标题表达来源。
-
-### P1-3 限制规则缺少继承开关和冲突解释
-
-- **通俗描述 / 当前现象**：限制读取和写入支持用户/组、查看/编辑等规则，父链继承目前是固定行为，API 注释也明确继承开关暂未开放。同一主体进入 view 与 edit 集合时没有明显的冲突提示。
-- **存在的问题**：页面树越深，用户越难回答“为什么我能看但不能编辑”“为什么子页面也被限制”。权限结果不透明会增加管理员反复试错。
-- **页面**：页面限制弹窗、子页面阅读态。
-- **具体位置**：`apps/api/src/routes/pageRestrictions.ts`；`apps/web/src/views/ReadView.vue` 与限制管理组件。
-- **建议**：短期至少显示权限来源和父级继承链；保存前提示同一主体的 view/edit 冲突。后续再增加“继承/停止继承”而非直接把规则复制到每个子页。
-
-### P1-4 空间成员管理有结果展示，但缺少快速变更入口
-
-- **通俗描述 / 当前现象**：空间成员页能展示有效角色、来源组、被覆盖的授权关系，并可跳到授权页高亮对应 grant；但成员列表本身没有明显的添加成员快捷入口，成员操作需要在多个 tab 间切换。
-- **存在的问题**：管理员查看成员和修改成员是连续任务，当前流程被拆开；当用户通过组继承权限时，管理员还需要自行理解哪条 grant 才是可修改来源。
-- **页面**：空间编辑页“成员”“授权”标签。
-- **具体位置**：`apps/web/src/views/manager/SpaceMembersTab.vue` 的成员表格与来源 chip；`apps/web/src/views/manager/SpaceEditView.vue` 的 tab 和授权矩阵。
-- **建议**：每行提供“调整授权”入口，并在右侧显示直接授权/组授权的操作建议；顶部增加“添加成员/添加组”按钮，保存前展示有效角色变化。
-
-### P1-5 空间管理视图过重，信息架构和实现复杂度集中在单文件
-
-- **通俗描述 / 当前现象**：`SpaceEditView.vue` 同时承担基本信息、主页选择、归档、删除、成员、授权、角色菜单、能力矩阵和 query 高亮等大量逻辑，文件约 2596 行。
-- **存在的问题**：不是单纯的代码风格问题，而是产品流程难以保持一致：一个 tab 的状态、权限或危险操作很容易影响另一个 tab。管理员在“空间设置”和“成员授权”之间也缺少清晰任务边界。
-- **页面**：管理后台空间编辑页。
-- **具体位置**：`apps/web/src/views/manager/SpaceEditView.vue` 全文件，尤其信息/成员/授权三 tab及 capability matrix modal。
-- **建议**：按管理员任务拆成“空间信息”“成员与组”“权限规则”三个子视图，保留现有视觉和 query 高亮能力；先拆状态边界和数据刷新边界，再做视觉重构。
+### 建议
+- **P1 / 2.1** stat-card 全部 `<RouterLink>` 包裹,跳 `/spaces/:id?filter=today|recent|mine` 之类,显示前 20 条相关页面。`SpacesView` 已有 `?filter=empty|unauthorized` 的现成模式可参考。
+- **P1 / 2.2** 公告区支持多行(`pinned_page_ids: string[]`),管理员在空间设置里勾选要置顶的页面;同时允许每行折叠。
+- **P2 / 2.3** 空白空间:`pages.length === 0` 时中央换成"三步上手"大卡(建页 / 导入 / 邀请)。
+- **P2 / 2.4** 移除中部页面树,只留侧栏版;中部换成"近期编辑活动"流(5 行 timeline)。
 
 ---
 
-## 五、P1：页面阅读、编辑与内容管理
+## 3. 个人工作台(每个用户登录后的主页)
 
-### P1-6 自动快照静默，用户无法确认版本边界
+**对应代码**:`apps/web/src/views/PersonalHomeView.vue`、`apps/web/src/components/page/DashboardCard.vue`
 
-- **通俗描述 / 当前现象**：编辑页会在空闲或离开路由时自动创建 snapshot，但界面只显示自动保存状态，没有提示“已建立版本检查点”，用户也看不到版本计数增长。
-- **存在的问题**：用户知道内容已保存，却不知道是否形成可恢复版本。发生误改时，恢复能力是隐形的，容易被误认为没有版本保护。
-- **页面**：页面编辑页、版本历史入口。
-- **具体位置**：`apps/web/src/views/EditView.vue` 的 idle snapshot、route-leave flush 与 save indicator；快照 API 在 `apps/api/src/routes/pages.ts`。
-- **建议**：不增加手动“保存为版本”按钮；在保存状态附近增加低打扰的“已建立恢复点”状态，并在版本入口显示最近快照时间和版本数。
+### 现状
+6 个 section 同时呈现:`共享空间与角色 / @提到我 / 我创建的 / 最近访问 / 我在个人空间起草的 / 我关注的页面`。每个 section 用 `DashboardCard`(`variant: 'page' | 'mention'`)渲染,间距统一 12px + 1px border-bottom。个人空间(`/me`)是用户私有,只有所有者 + admin 能进。
 
-### P1-7 阅读页的内容发现能力不错，但关键数据缺少进一步行动
+### 差距
+- **6 个 section 无视觉权重**,用户不知道先看哪个。Confluence my-work 用"主卡片 + 二级分组"。
+- **"我创建的"** 没有按空间分组,5 个空间的页面混在一个列表,扫起来费力。`DashboardCard` 的 space-chip 已存在但**没按空间分组的视觉断点**。
+- **"最近访问"** 没有去重 + 没有按频次权重的"我的常读页面"。Confluence 用 `pinned + frequently visited` 两个分组。
+- **"我在个人空间起草的"** 标题语义模糊,用户会问"为什么显示这个"。
+- **空状态**每个 section 各有"暂无 X"占位文案,缺统一的"接下来该做什么"。
+- **`@提到我` 入口在 `/me`** 但缺通知数提示(通知主体在排除范围,但 UI 提示不冲突)。
 
-- **通俗描述 / 当前现象**：空间首页有“全部页面、今日活跃、本周更新、我的页面”等统计卡，最近页面也有列表，但统计卡和列表大多只是展示，没有跳转到已筛选的页面列表或活动视图。
-- **存在的问题**：用户看到异常或变化后无法继续追查。例如“本周更新 12”不能直接查看这 12 页，统计变成装饰信息。
-- **页面**：团队空间首页。
-- **具体位置**：`apps/web/src/views/SpaceHomeView.vue` 的 stat grid、最近编辑与最近访问区域。
-- **建议**：每张统计卡都应有明确 drill-down：更新页面进入当前空间、时间范围和排序已锁定的列表；我的页面进入作者过滤；空状态也给出创建或邀请入口。
-
-### P1-8 附件具备上传闭环，但缺少页面级管理体验
-
-- **通俗描述 / 当前现象**：后端支持预签名上传、完成确认、按页列表、原始文件流和删除；前端主要把附件作为页面内容卡片展示，没有全局或页面级的批量管理、使用位置和空间容量视图。
-- **存在的问题**：附件一旦被遗忘，管理员难以知道页面是否仍在引用、谁上传、占用多少空间。页面删除时的对象清理也需要依赖路由内的显式清理，用户侧没有结果反馈。
-- **页面**：阅读页附件区域、页面编辑器附件入口、管理后台。
-- **具体位置**：`apps/api/src/routes/attachments.ts`；`apps/web/src/views/ReadView.vue` 与编辑器附件组件。
-- **建议**：当前阶段不做文件预览，但应补页面级附件清单、文件名/大小/上传者/下载/删除操作，删除页面时展示附件数量；全局媒体库可按既定范围留到后续版本。
+### 建议
+- **P1 / 3.1** 6 section 重排为 2 级:**主区**(默认选第一个非空的)+ **次区**(横向 grid 2 列)。`DashboardCard` 加 `variant: 'compact'` 给次区。
+- **P1 / 3.2** 顶部加"快速新建 / 快速导入 / 个人空间"三个圆形大按钮 + "今日待办"。
+- **P1 / 3.3** "我创建的" 按 space 分组,每组带空间色 chip + 折叠/展开,组内 `updatedAt desc`。
+- **P2 / 3.4** "最近访问" 加频次权重:右上角一个小星标 + tooltip "最近 7 天访问 ≥ N 次"。
+- **P2 / 3.5** 全部空状态合并为"待办卡",展示"建第一页 / 邀请队友 / 浏览空间"。
 
 ---
 
-## 六、P1：个人工作台、导航与通知
+## 4. 页面阅读页(ReadView — 任何用户读页面的主路径)
 
-### P1-9 个人首页模块较多，但缺少优先级层次
+**对应代码**:`apps/web/src/views/ReadView.vue`、`apps/web/src/components/page/PageRestrictionsDialog.vue`、`apps/web/src/components/page/PageWatchButton.vue`、`apps/web/src/components/page/ShareDialog.vue`、`apps/web/src/components/page/PageMoreActionsMenu.vue`、`apps/web/src/components/editor/ExportMenu.vue`
 
-- **通俗描述 / 当前现象**：个人首页同时展示共享空间与角色、提到我、我创建的、最近访问、个人空间草稿、关注页面六个区块。
-- **存在的问题**：用户通常只有不超过 5 个团队空间，六个区块会让“今天该做什么”和“我有哪些空间”竞争注意力。尤其“最近访问/关注/我创建的”之间存在内容重叠。
-- **页面**：个人工作台。
-- **具体位置**：`apps/web/src/views/PersonalHomeView.vue` 的六个 dashboard section。
-- **建议**：首屏固定“待处理与提到我”“我的草稿”“我关注的变化”，空间列表与统计降为次级；每区块支持折叠或空状态收敛，避免所有内容都以同等视觉权重出现。
+### 现状
+顶栏 9 个动作:关注 / 点赞 / 分享 / 导出 / 编辑 / 限制 / 移页 / 删除 / 复制,外加 byline + 限制 chip + 归档 banner。`ReadView.vue` 用 `canEdit/canShare/canManageRestrictions/canMove/canDelete` 5 个 boolean 决定显隐,统一从 `canManagePageWrite` 派生。
 
-### P1-10 通知中心偏向轮询收件箱，缺少按上下文整理
+### 差距
+- **顶栏 9 项拥挤**:Confluence 把"低频"操作收到 kebab,只外露编辑 / 分享 / 关注 / 导出。
+- **`ShareDialog` 复制成功** 只弹 toast,容易错过。Confluence 用 inline banner。
+- **`ExportMenu` 只 3 项**(HTML / Markdown / PDF),**PDF 走 `window.print()`**,浏览器打印对话框的 UX 因 OS 浏览器差异很大。
+- **历史按钮**只在 `PageMoreActionsMenu` 里,顶栏不直出。byline 的"上次编辑时间"也是只读不可点。
+- **byline 缺编辑摘要**:只有"X 在 Y 改了",没有"这次改了什么"的提示。Excluded:历史。但**当前版本的事件摘要小卡** 是 UI 增强不冲突。
+- **评论区入口**锚点 OK,但**没有"未读评论"标记**,用户每次都从头看。
+- **TOC 右侧栏**缺"是否始终显示 / 是否随滚动高亮"开关。
+- **ReadView 直接打印时**(`Ctrl+P`),顶栏 / 侧栏 / 评论区没隐藏 — 打印样式 `@media print` 未确认有。
 
-- **通俗描述 / 当前现象**：通知 API 支持分页、未读计数、标记已读和清除已读；前端依靠轮询刷新，不能恢复已读、不能按类型筛选，也没有按页面聚合。
-- **存在的问题**：页面关注、提及、点赞等通知混在一起时，用户很难判断哪些需要行动。高频通知会造成噪声，轮询也让“新消息是否已经到达”缺乏即时感。
-- **页面**：顶部通知铃、通知列表。
-- **具体位置**：`apps/api/src/routes/notifications.ts`；`apps/web/src/components/layout/NotificationBell.vue` 及通知相关视图。
-- **建议**：先做按页面/类型聚合、未读筛选和“全部标记已读”；实时推送可后置，不应为了 WebSocket 阻塞当前产品打磨。
-
-### P1-11 活动视图与个人空间边界需要更清楚
-
-- **通俗描述 / 当前现象**：工作区活动默认只展示 shared 空间事件，个人空间事件被排除；活动列表固定 50 条一页。个人首页另有“提到我、关注页面”等内容，但二者关系不明显。
-- **存在的问题**：当前行为符合个人空间不具备社交属性的背景，但用户可能误解为活动丢失；管理员和个人用户看到的“工作区发生了什么”也没有清楚的范围说明。
-- **页面**：活动页、个人工作台。
-- **具体位置**：`apps/web/src/views/ActivityView.vue` 的默认空间筛选和分页；`apps/api/src/routes/pages.ts` 活动 SQL 过滤。
-- **建议**：活动页顶部明确标注“仅团队空间”；个人空间的个人编辑轨迹不必纳入团队流，但可以在个人工作台以“我的草稿变化”呈现。
-
-### P1-12 归档空间的可见性与路径反馈不足
-
-- **通俗描述 / 当前现象**：归档空间通常只对管理员显示，非管理员进入旧路径可能直接得到 404；侧边栏和空间切换器会弱化或隐藏归档状态。
-- **存在的问题**：对普通用户而言，“空间不存在”“没有权限”“空间已归档”是三种完全不同的情况。静默 404 会让旧页面链接看起来像数据丢失。
-- **页面**：空间切换器、侧边栏、旧页面链接和空间首页。
-- **具体位置**：`apps/web/src/components/layout/SpaceSwitcher.vue`、`Sidebar.vue`；`apps/api/src/routes/spaces.ts` 的归档过滤。
-- **建议**：对有历史访问关系但已归档的空间，显示只读的“已归档”状态页；没有访问权才使用权限提示，避免把业务状态都压成 404。
+### 建议
+- **P0 / 4.1** 顶栏 9 按钮分两段:**主操作**(关注 / 分享 / 导出 / 编辑)始终可见;**次操作**(限制 / 移页 / 复制 / 归档 / 删除)收进 `⋯`。`canMove/canDelete/canManageRestrictions` 全部移到 `⋯`,主顶栏只留 `canEdit`。
+- **P0 / 4.2** PDF 导出改成"服务端生成":`POST /api/pages/:id/export?format=pdf` 由服务端 puppeteer / playwright 渲染 — 比 `window.print()` 更可控。短期缓解:补全 `@media print` 样式 + 打印对话框预填文件名 + 隐藏 toolbar。
+- **P1 / 4.3** byline 右侧加"近期变更"小卡:显示最近 3 条 page_event 摘要(评论 / 限制变更 / 标题变更),点开弹完整 activity。
+- **P1 / 4.4** 评论区入口加"未读"小圆点 + "上次看到这里"分割线。
+- **P1 / 4.5** TOC 加"固定"开关 + scroll-spy 高亮 + 折叠/展开所有 H2 的按钮。
+- **P2 / 4.6** `ShareDialog` 复制成功改 inline banner(不是 toast),3 秒自动消失,有"复制链接 / 撤销分享"按钮。
+- **P2 / 4.7** 全局 `@media print` 隐藏 sidebar / topbar / comments-section / ia-toolbar。
 
 ---
 
-## 七、P1/P2：管理后台效率与治理
+## 5. 页面编辑页(EditView — 用户建/改页面的主路径)
 
-### P1-13 用户列表缺少分页、批量和导出
+**对应代码**:`apps/web/src/views/EditView.vue`、`apps/web/src/components/editor/RichEditor.vue`、`apps/web/src/components/editor/EditorToolbar.vue`、`apps/web/src/components/editor/EditorBubbleMenu.vue`、`apps/web/src/components/editor/SlashMenu.vue`
 
-- **通俗描述 / 当前现象**：用户页支持搜索、状态、角色筛选和行级禁用/启用、重置密码、编辑、注销，但没有实际分页控件，也没有批量操作或 CSV 导出。
-- **存在的问题**：用户数增长后，首屏全量加载、逐行处理会明显拖慢管理员任务；一次性调整多个用户时容易漏项。
-- **页面**：管理后台人员页。
-- **具体位置**：`apps/web/src/views/manager/UsersView.vue` 的表格与筛选区；`apps/api/src/routes/adminUsers.ts` 的列表端点。
-- **建议**：补页码或加载更多、批量启用/禁用、批量加入组/空间，以及导出当前筛选结果。创建用户暂不需要邮件体系，但应保留复制初始密码的明确结果状态。
+### 现状
+Tiptap 编辑器,顶部固定 `EditorToolbar`(format/list/insert/align/indent)+ 底部 slash 触发 `SlashMenu`(14 命令:基本块 6 + 媒体 3 + 高级 5)。保存状态机 `idle/pending/saving/saved/error`,**`EditView` 用 500ms 防抖 + 30s idle 自动 snapshot**,**`RichEditor` 用 800ms 防抖** —— 两处不一致。`BubbleMenu` 在文本选区上方弹出加粗/斜体/删除线/行内代码 + 段落格式下拉 + 链接。附件上传走 `openAttachmentPicker` → `uploadAndInsert` → 编辑器内插入 `ImageAttachmentView` node-view。
 
-### P1-14 用户详情不能直接解释授权来源
+### 差距
+- **防抖时间不一致**:`EditView` 500ms vs `RichEditor` 800ms。两个视图保存行为走两套计时器,有可能 EditView 显示 "Saved" 后回到 ReadView 再触发一次更新。
+- **14 个 slash 命令不够**:对比 Confluence,**结构性 / 状态 / 引用类** 缺 `status` 徽章、`decision` 决策记录、`quote with citation`(引用带来源 URL)、`toc` 块。
+- **`EmojiPicker.vue`** 已实现,但**没有进入 slash 菜单** — 用户只能在 bubble menu 找到。
+- **mention list 搜索框**做得不错(debounce + kbd hint),但**没有"当前空间成员 / 我关注的人"快捷 filter**。
+- **slash `/` 插入 page-ref** 支持,但**没有"@ 一组"** 入口 — 团队文档"通知全体开发组"场景缺。
+- **表格** slash 里有 `table`,但**没有 cell merge / 表头行冻结**。
+- **`HeadingView` slug + position 兜底**(`h-引言-12`),URL 锚点不直观。
+- **编辑器内无字数 / 阅读时长统计**。
+- **`PageLinkPreview.vue` 只在 ReadView 显示**,编辑器内粘 page 链接时无预览。
+- **标题 input** 没字数限制 + 没"未保存"标记。
 
-- **通俗描述 / 当前现象**：用户详情可看到 shared/personal 空间，但没有直接返回该用户所在用户组，也没有标明每个空间角色来自直接授权还是组授权。
-- **存在的问题**：管理员处理“为什么这个人能访问某空间”时，需要来回打开用户组和空间授权页，无法快速形成完整判断。
-- **页面**：用户详情、空间成员、用户组详情。
-- **具体位置**：`apps/api/src/routes/adminUsers.ts` 的用户 spaces 查询；`adminGroups.ts`；`apps/web/src/views/manager/UsersView.vue` 与空间成员页。
-- **建议**：用户详情展示“空间—有效角色—授权来源”；支持点击来源跳转到对应组或 grant，并在角色被覆盖时显示生效规则。
-
-### P1-15 用户组列表和回收站缺少大数据操作能力
-
-- **通俗描述 / 当前现象**：用户组以卡片全量加载，没有搜索、排序、分页；回收站用 Load more，搜索、删除者和排序是在已加载数据上的客户端过滤，未加载的数据不会参与筛选。回收站顶部注释规划了批量操作，但模板没有 checkbox 或批量工具栏。
-- **存在的问题**：数据量变大后，管理员会得到不完整的筛选结果；回收站的“搜索不到”不等于“没有匹配项”。批量清理需求也没有落地。
-- **页面**：用户组管理、回收站。
-- **具体位置**：`apps/web/src/views/manager/GroupsView.vue`；`apps/web/src/views/manager/TrashView.vue` 的 rows computed、Load more 与工具栏；相关 API 在 `adminGroups.ts` 和 `pages.ts`。
-- **建议**：将筛选、排序、分页下沉到服务端；实现选中行、批量恢复、批量永久删除，并在批量操作前汇总父子页面和附件影响。
-
-### P1-16 审计日志可读性已有基础，但缺少检索与导出闭环
-
-- **通俗描述 / 当前现象**：审计页支持目标类型、事件类型、分页、自然语言摘要、before/after 和原始 JSON 展开；搜索框仍标为 v2，API 也没有导出或统计能力。
-- **存在的问题**：管理员可以“看最近 50 条”，但难以定位某个用户、页面或时间段的历史操作，也不能把审计结果交给团队复核。
-- **页面**：管理后台审计日志。
-- **具体位置**：`apps/web/src/views/manager/AuditView.vue` 的筛选与分页；`apps/api/src/routes/adminAudit.ts` 的查询端点。
-- **建议**：优先实现 actor/target 搜索、时间范围和当前筛选导出；事件类型与目标类型使用同一事实来源，避免前端维护两份映射。统计看板可后置。
-
-### P2-17 管理后台导航缺少组与系统设置的独立定位
-
-- **通俗描述 / 当前现象**：管理子导航主要是人员、空间、回收站、审计日志，用户组藏在人员下的 tab 或关联页面中，系统级设置也没有独立入口。
-- **存在的问题**：管理员需要先知道产品的信息架构，才能找到组管理；随着保留策略、默认权限等管理项增加，当前导航会继续堆叠。
-- **页面**：管理后台整体布局。
-- **具体位置**：`apps/web/src/views/manager/ManagerLayout.vue` 的 subnav。
-- **建议**：短期在“人员”下明确显示“用户/用户组”二级导航；只有出现真实系统级配置后再增加“设置”，避免为了凑导航提前建设空页面。
-
-### P2-18 管理上下文面板的统计缺少时间口径和对等维度
-
-- **通俗描述 / 当前现象**：人员侧边栏展示用户状态、最近登录、最近活动；空间侧边栏展示总空间、总页面、授权关系、空空间和最大空间，但缺少最近创建/归档等时间维度，最大空间也只展示一个。
-- **存在的问题**：管理员能看到数量，却不容易判断趋势和异常。两个管理模块的 context panel 信息粒度不一致。
-- **页面**：管理后台右侧 context panel。
-- **具体位置**：`PeopleContextPanel.vue`、`SpacesContextPanel.vue`。
-- **建议**：为列表型统计标注时间窗口；空间侧补“最近创建/最近归档”，最大空间可以先展示 top 3；所有统计点击后应保证目标列表真正应用 query filter。
+### 建议
+- **P0 / 5.1** 抽 `usePageAutoSave` composable,EditView / RichEditor 都消费;默认 500ms,环境配置可调。
+- **P1 / 5.2** slash 新增 `status`(4 色徽章)+ `decision`(决策记录卡)+ `quote with citation`(引用 + 来源)+ `toc`(显式 TOC 块)+ `emoji`(从 `EmojiPicker` 拉)。
+- **P1 / 5.3** mention 搜索顶部加 3 个 chip 快捷 filter:`当前空间成员 / 我关注的人 / 全员`。
+- **P1 / 5.4** slash 触发 `@` 时默认弹"组选择"辅助(团队空间):管理员可一键 @"前端组"。
+- **P1 / 5.5** 编辑器底栏加字数 + 阅读时长 + 标题修改状态(`● 未保存的标题` / `✓ 标题已保存`)。
+- **P1 / 5.6** 编辑器内识别内部 page 链接(粘贴 `@...` / `p/xxx`),实时渲染小卡片预览。
+- **P2 / 5.7** heading slug 去掉 position 后缀(纯 slug),多段同标题时 anchor 走持久化 id。
+- **P2 / 5.8** 表格增加合并单元格 / 表头行冻结快捷键(右键菜单)。
 
 ---
 
-## 八、P2：分享与标签的成熟度
+## 6. 富文本节点细节
 
-### P2-19 页面分享缺少到期时间修改和访问分析
+**对应代码**:`apps/web/src/components/editor/CodeBlockView.vue`、`ImageAttachmentView.vue`、`HeadingView.vue`、`MentionList.vue`、`UploadStatus.vue`
 
-- **通俗描述 / 当前现象**：页面分享可以创建、查看 token 前缀、撤销；创建后不能直接修改到期时间，撤销后只能删除并重新创建。后端已有 `lastAccessedAt`，但界面没有访问次数或最近访问信息。
-- **存在的问题**：分享链接是页面对外协作的独立生命周期。每次调整有效期都重建链接，会增加链接传播和管理成本；管理员也无法判断链接是否仍在使用。
-- **页面**：阅读页更多菜单、分享管理弹窗。
-- **具体位置**：`apps/api/src/routes/pageShares.ts`、`publicShares.ts`；`apps/web/src/views/ReadView.vue` 的分享 UI。
-- **建议**：支持修改 expiresAt、显示创建者/到期时间/最近访问；保留 token 不直接展示完整值，撤销仍为终态即可。
+### 6.1 CodeBlockView
+**现状**:语言下拉(14 种)+ 复制按钮 + 行号 gutter + 删除按钮。
 
-### P2-20 标签有编辑能力，但缺少标签治理
+**差距**:
+- 复制走 `navigator.clipboard.writeText`,**HTTP 非安全上下文会 fail**(`localhost` 之外的 127.0.0.1 某些浏览器也算),目前 `catch` 只 `console.warn`,**无 fallback**。
+- 行号 gutter 整 NodeView 重渲染,代码 > 1000 行影响滚动性能。
+- 缺"折行切换 / 自动换行"开关 — 长行被截断只能横向滚。
 
-- **通俗描述 / 当前现象**：页面可以添加/删除标签，搜索端点可按标签聚合页面；但没有单页标签读取端点、标签重命名/合并，也没有标签使用数量和空间范围的管理视图。
-- **存在的问题**：团队长期使用后会产生同义标签、拼写变体和失控的标签数量。页面作者只能局部修正，无法治理整个空间的分类体系。
-- **页面**：阅读页/编辑页底部标签、标签搜索结果。
-- **具体位置**：`apps/api/src/routes/pageLabels.ts`；`ReadView.vue`、`EditView.vue` 的 `LabelPills`。
-- **建议**：先增加标签搜索结果的数量和分页一致性；后续在空间管理中提供标签使用统计、重命名与合并，避免建设全局复杂媒体库式管理。
+**建议**:
+- **P1 / 6.1.1** 复制 `catch` 里 fallback `document.execCommand('copy')` + 失败 toast。
+- **P2 / 6.1.2** 行号 gutter 走 CSS counter,不在 NodeView 渲染。
+- **P2 / 6.1.3** 代码块右上角加"折行切换"按钮(`white-space: pre-wrap`)。
+
+### 6.2 ImageAttachmentView / AttachmentsSection
+**现状**:图片显示 + caption + alt + align + replace + delete;文件卡 icon + 名字 + 大小 + 下载按钮(hover 才显示)。
+
+**差距**:
+- **附件 replace 失败时**目前 inline 替换,旧 attachment 字节已经清了,失败 → 用户失去内容。Confluence 在 replace 失败时保留旧 attachment 不变。
+- **`AttachmentLightbox.vue`** 支持图片 / 文件,但**没有 zoom / 旋转 / 翻页**。
+- **`AttachmentsSection`(阅读页底部附件列表)** 没"按类型筛选 / 排序"。
+
+**建议**:
+- **P1 / 6.2.1** replace 失败保留旧 node + toast 解释 + 重试入口。
+- **P1 / 6.2.2** Lightbox 加 zoom(滚轮 + 双击)+ 旋转 + 键盘 ← → 翻页。
+- **P2 / 6.2.3** AttachmentsSection 顶部加"类型筛选 chips"(图片 / 文档 / 其他)+ "排序"下拉。
+
+### 6.3 HeadingView / TOC
+**现状**:`HeadingView` 走 `slugify(text) - position` 双兜底 id;右侧复制锚点链接的 `#` 按钮。
+
+**差距**:URL `#h-引言-12` 不直观;TOC 缺"折叠/展开"按钮 + scroll-spy。
+
+**建议**:
+- **P2 / 6.3.1** URL hash 走纯 slug(`#引言`),内部 data-id 仍可携带 position 防重复。
+- **P2 / 6.3.2** TOC 顶部加"折叠/展开"按钮 + scroll-spy 高亮当前 H2/H3。
+
+### 6.4 MentionList
+**现状**:`apps/web/src/components/editor/MentionList.vue` 用 tippy + debounce + kbd hint,做得比较细致。
+
+**差距**:
+- **搜索 0 字符时**没显示"最近 @ 过的人"。
+- **mention 不支持组**。
+- **avatar 显示**目前是字母,没异步加载 `user.avatar_ref` 图片头像(`UserAvatar` 在别处已经支持)。
+
+**建议**:
+- **P1 / 6.4.1** 0 字符时 endpoint `?recent=1`,返回用户最近 @ 过的 8 人。
+- **P2 / 6.4.2** mention chip 异步加载头像(`/api/user-avatars/:id/raw`)。
+- **P2 / 6.4.3** mention chip hover tooltip 显示"上次联系" + "在本空间角色"。
 
 ---
 
-## 九、建议的实施顺序
+## 7. 导入 / 导出(阅读页 → 导出 / 侧栏 → 导入 Markdown 弹窗)
 
-### 第一阶段：收敛高风险误判（P0，优先）
+**对应代码**:`apps/web/src/components/editor/ExportMenu.vue`、`ImportMarkdownModal.vue`
 
-1. 统一后端 capability 与前端按钮显示，先覆盖页面限制、编辑、移动、删除。
-2. 为删除、恢复、永久删除、注销补影响摘要和下一步指引。
-3. 明确归档空间的只读状态页，区分归档、无权和不存在。
-4. 在编辑页增加“已建立恢复点”的低打扰状态，不引入手动保存版本按钮。
+### 现状
+- **Export**:HTML / MD / PDF(走 `window.print()`);busy 状态 + 错误回显。
+- **Import**:粘贴 / 选择文件 / 拖文件;PathPicker 选目标位置;标题自动从 H1 / 文件名解析;**2MB 硬限**。
 
-### 第二阶段：提升管理员日常效率（P1）
+### 差距
+- **MD 导入 2MB 限制**(代码硬编码 `pasteMaxBytes = 2_000_000`)— 普通 wiki 页 OK,但"批量导入 100 页 Markdown"明显不够。Confluence 单次 25MB。
+- **MD 导入只支持单个文件**,没有多文件 / 文件夹 / 拖多文件。
+- **MD 导入的图片 / 附件**不上传 MinIO — 导入的 `[](image.png)` 链接指向 `localhost`,打开 404。
+- **HTML 导出**走 `exportPageAsHtml`(自包含 .html),**没嵌入附件**(代码 serialize 的是 contentJSON → HTML,attachment 不嵌入)。
+- **MD 导出**同上,attachment → `![alt](attachment-url)` 而不是 embed base64。
 
-1. 用户、组、回收站、审计统一补服务端分页、筛选和排序。
-2. 回收站实现批量恢复/永久删除；用户实现批量启用/禁用和加入组。
-3. 用户详情和空间成员显示有效授权来源，提供跨页跳转。
-4. 空间首页统计卡接入真实 drill-down；通知支持按页面/类型聚合。
-5. 明确团队空间跨空间复制、个人发布、团队内移动的语义和边界。
+### 建议
+- **P0 / 7.1** MD 导入 2MB 限制可配置(空间设置 → "导入设置");默认 25MB。
+- **P1 / 7.2** MD 导入多文件:`选多个 .md → 每个生成独立页`,目标位置 picker 一次性确认。
+- **P1 / 7.3** MD 导入的图片:扫描 `![](image.png)` / `<img src=...>`,自动上传到 MinIO 并替换链接(后端 attachments 表已支持,加 `bulkImportAttachment` endpoint)。
+- **P1 / 7.4** HTML 导出嵌入附件(小文件 base64,大文件给下载链接);MD 导出插入 `![](attachment-id)` 而不是绝对 URL。
+- **P2 / 7.5** ExportMenu 加 "导出 zip" 选项(页 HTML + 所有附件打包)。
 
-### 第三阶段：提升长期治理体验（P2）
+---
 
-1. 分享链接支持到期修改、最近访问和生命周期状态。
-2. 标签治理和使用统计。
-3. 管理 context panel 补时间窗口与趋势维度。
-4. 拆分 `SpaceEditView.vue` 的状态和任务边界，降低后续维护成本。
+## 8. 页面限制弹窗(阅读页 → 限制 按钮 触发的弹窗)
 
-## 十、当前可保留的设计判断
+**对应代码**:`apps/web/src/components/page/PageRestrictionsDialog.vue`、`apps/api/src/routes/pageRestrictions.ts`
 
-以下现状不建议为了“看起来更完整”而立即扩张：
+### 现状
+双 tab:查看权限 / 编辑权限;`inheritViewRestrictions` 开关;`protectedSources`(被限制的来源页)展示;`impact preview`(本页打开会增/减多少人)。后端 `pageRestrictions.ts` 用全量替换 PUT + 单行 POST/DELETE;**视图受限时返回 404**(不是 403)— 安全细节做对了。
 
-- 个人空间继续保持 owner + admin 的私有边界，不需要被纳入团队社交活动流。
-- 团队空间默认不允许跨空间直接移动，应该强化“复制/发布”的解释，而不是放开所有跨空间操作。
-- 附件继续采用文件卡，不做 PDF/Office 内嵌预览；当前更值得补的是附件清单与删除结果反馈。
-- 自动保存继续静默，不增加手动保存版本按钮；只补恢复点可见性。
-- 全文检索、评论、reaction、历史/最近活动与无障碍支持按既定范围暂不作为本轮阻塞项。
+### 差距
+- **`impact preview`** 显示 `viewGained: 5 / viewLost: 2`,但**不能展开看到底是谁**。
+- **`protectedSources` 列表**是只读的;想"那我去父页改"得自己跳过去。
+- **`inheritViewRestrictions` 关闭**是 destructive 动作(脱离父页继承),目前只是 toggle,缺前置 warning。
+- **"编辑权限"** 子页不继承,但 UI 没解释清楚。
 
-## 总结
+### 建议
+- **P1 / 8.1** impact preview 数字可点击 → 展开成员列表(头像 + 姓名 + 来源空间/组)。
+- **P1 / 8.2** protectedSources 每行加"跳到该页"链接按钮,带 route 跳转 + 后续 dialog 自动定位。
+- **P1 / 8.3** 关闭 `inheritViewRestrictions` 时弹二级确认:"你将失去从父页继承的 X 个保护来源(Y 个用户无法访问本页),确定?"
+- **P2 / 8.4** dialog 顶部加 info tooltip "编辑权限不继承;每个子页都要单独设"。
 
-power-wiki 的基础产品骨架已经成立，下一阶段重点不是继续堆功能，而是让“权限结果、操作影响、状态变化和下一步动作”都变得可解释。优先把页面限制、删除恢复、管理批量操作和空间首页 drill-down 做成闭环，产品就会从“功能覆盖较全的内部 wiki”明显迈向“可长期依赖的团队知识库”。
+---
+
+## 9. 回收站(管理人员 → 回收站 页)
+
+**对应代码**:`apps/web/src/views/manager/TrashView.vue`
+
+### 现状
+表格 + kind tab(共享 / 个人)+ 搜索 + 删除者过滤 + 排序 + 批量操作(多选 + 恢复 / 永久删除)+ retention 政策卡 + "父页被删时的顺序提示"(行内)。
+
+### 差距
+- **"父页被删时的顺序提示"只在单行有**,批量恢复 N 个被删页时(其中父页也被删了),**没有整体的"先恢复父再恢复子"提示**。
+- **批量永久删除**只有一次 `ConfirmDialog`;Confluence 要求输入 `DELETE` 短语。
+- **retention 政策卡**倒计时精度不够(只显示"X 天后清空"),缺"清空前会通知谁"。
+- **空回收站**只有"暂无已删除页面",缺教学。
+- **过滤栏**缺"清空全部过滤"一键。
+
+### 建议
+- **P0 / 9.1** 批量恢复加"恢复顺序预览":选中 N 项时顶部条 `即将恢复 X 个页面(其中 Y 个有父页被删,请先恢复父)` + 一键"按拓扑顺序恢复"(`order=topo-then-time`)。
+- **P0 / 9.2** 批量永久删除加二级确认:输入 `永久删除` 才放行;或 checkbox "我已了解,不再提示"。
+- **P1 / 9.3** retention 卡加"清空前通知"开关(空间设置里配)+ "下次清空:YYYY-MM-DD HH:mm"精确时间。
+- **P1 / 9.4** 过滤栏右上角加"清空过滤"按钮(任何 filter 非默认时出现)。
+- **P2 / 9.5** 空状态加 3 段教学卡:① 删页去哪了 → ② 30 天后清空 → ③ 如何恢复。
+
+---
+
+## 10. 空间设置页(管理人员 → 空间 → 某个空间 → 设置页)
+
+**对应代码**:`apps/web/src/views/manager/SpaceEditView.vue`、`apps/web/src/views/manager/SpaceMembersTab.vue`、`apps/web/src/components/manager/space/SpaceGrantsTab.vue`
+
+### 现状
+三 tab(信息 / 成员 / 授权),URL `?tab=` 同步;`?highlight=` 跨 tab 高亮某行。`SpaceMembersTab` 展示成员列表,**每个成员有 "来源"数组**(`group: x` / `direct` / `space_admin`),"winning source" 高亮。`SpaceGrantsTab` 走两栏(组 / 用户)+ popover 编辑角色;`effective role` 实时预览。
+
+### 差距
+- **`SpaceMembersTab` 的 "winning source" 标签**是好设计,但**没有"为什么会赢"的解释 tooltip**。
+- **`SpaceGrantsTab` 的 effective role 预览**是 1 行轻量预览,缺**"实际能做什么"的下钻**(`permissions.ts` 已经有能力矩阵,UI 没暴露)。
+- **空间信息 tab**只有 description / color / icon / homepagePageId,**缺公开性 / 模板 / 快捷键提示**等元数据。
+- **成员邀请流程**管理员可加单个用户,**没有"按组批量加"** 入口。
+- **页面限制 UI 的"继承自谁"** 在父页管理入口不直观,得打开 dialog 才看得到。
+
+### 建议
+- **P1 / 10.1** `SpaceMembersTab` 每行加 "?" 图标 → tooltip 显示角色推导链。
+- **P1 / 10.2** `SpaceGrantsTab` 每个角色选项旁加"权限预览"小卡,展开后展示 6-8 项"能做什么 / 不能做什么"。
+- **P1 / 10.3** 空间信息 tab 加"空间快捷键提示"开关。
+- **P1 / 10.4** 空间成员 tab 加"按组添加"按钮。
+- **P2 / 10.5** 页面树里被限制的页(锁 chip),点击 chip 直接打开 `PageRestrictionsDialog`,并默认 tab 切到"继承来源"。
+
+---
+
+## 11. 管理后台(管理人员列表 / 组 / 空间 / 审计)
+
+**对应代码**:`apps/web/src/views/manager/PeopleView.vue`、`apps/web/src/views/manager/panels/PeopleContextPanel.vue`、`apps/web/src/views/manager/GroupsView.vue`、`apps/web/src/views/manager/SpacesView.vue`、`apps/web/src/views/manager/AuditView.vue`、`apps/web/src/views/manager/UserEditView.vue`
+
+### 现状
+- **人员列表**:`PeopleView` 是 users + groups 共用 tabs;`M17` 工具栏 + 活动筛选 chips;users 分页。
+- **人员详情**:`UserEditView` 支持改名 / 匿名化(typed-name 二次确认);展示该用户在所有空间的成员关系。
+- **组列表**:`GroupsView` 分页 + 搜索 + 排序,精简。
+- **空间列表**:`SpacesView` 分页 + `?kind=shared|personal` + `?filter=empty|unauthorized` drill-down。
+- **审计**:`AuditView` 按 kind / targetKind 过滤,行可展开,显示 before / after diff。
+
+### 差距
+- **PeopleView**激活 tab 缺 breadcrumb — 管理员常问"我现在看的是哪个 scope"。
+- **`PeopleContextPanel` 的 "system stats" 卡片**没解释数据来源 / 时段。
+- **`UserEditView` 的匿名化**没有"匿名化前导出"链接;合规场景下管理员需要在操作前先下载该用户的内容。
+- **`SpacesView`** 没有 `?filter=personal` 一键只看"个人空间"。
+- **`AuditView` 的 before/after diff** JSON 太深时折叠得太狠;labels / 限制嵌套字段不友好。
+- **批量操作缺**:用户 / 组 / 空间列表都是单选操作。
+- **`UserEditView` 的"该用户所在的所有空间"列表**缺搜索 + 角色过滤。
+
+### 建议
+- **P1 / 11.1** PeopleView 顶部加 breadcrumb:管理员后台 / 人员(scope: 全部 / 组 X)。
+- **P1 / 11.2** PeopleContextPanel stats 卡右上角加"?" tooltip,说明数据时间窗口。
+- **P1 / 11.3** UserEditView 加"匿名化前导出"按钮:`POST /api/admin/users/:id/export` → 管理员邮箱收到 zip(用户所有页面 + 评论 + 附件 metadata)。
+- **P1 / 11.4** SpacesView 的 `?filter=` 加 `personal` 枚举。
+- **P1 / 11.5** AuditView diff 渲染改进:JSON 嵌套层级 ≤ 3 全展开,> 3 折叠但显示摘要行;labels 数组特殊处理(直接展示 chip)。
+- **P2 / 11.6** 用户列表加批量操作:`批量加空间 / 批量改全局角色 / 批量匿名化(需 typed-name)`。
+- **P2 / 11.7** UserEditView 的"所在空间"列表加搜索 + 角色 chip 过滤。
+
+---
+
+## 12. 全局导航 / 侧栏 / 顶栏 / 状态
+
+**对应代码**:`apps/web/src/components/layout/AppShell.vue`、`Sidebar.vue`、`TopBar.vue`
+
+### 现状
+`AppShell` 区分 workspace 与 manager 两套布局;banner 协调(offline > error 互斥)。`Sidebar` 含工作台切换 / 空间列表 / 页面树 / 关注列表 / 搜索入口。`TopBar` 含全局 search / 通知 / 用户菜单 / 主题(只有 light)/ 切换空间。
+
+### 差距
+- **侧栏的"工作台切换" chip** 没有"个人 ↔ 团队"动效。
+- **侧栏"页面树"和"关注列表"是两个独立 section**,展开后互相挤压;长空间 + 长关注列表并存时滚动不友好。
+- **顶栏 search box**(排除范围) idle 没 placeholder / 快捷键提示。
+- **`AppShell` banner** 缺"新版本可用"提示。
+- **404 页**是简单文案 + 返回按钮,**没有"也许你搜的是"建议**。
+
+### 建议
+- **P2 / 12.1** 侧栏的"页面树"和"关注列表"做成可折叠 tab,二选一展开。
+- **P2 / 12.2** 顶栏 search box idle 显示 `按 / 聚焦 · 输入标题或人名` placeholder + kbd hint `/`。
+- **P2 / 12.3** AppShell 加"新版本"banner,后端返回 `X-App-Version` 头时与本地比较。
+- **P2 / 12.4** 404 页加"页面 ID 前缀相似"建议。
+
+---
+
+## 13. 注册 / 登录 / 邀请
+
+**对应代码**:`apps/web/src/views/LoginView.vue`、`ResetPasswordView.vue`(推测在 `apps/web/src/views/`)
+
+### 现状(基于路由推测)
+路由有 `/login`、`/reset-password`、`/me`;**没有 `/signup`** — 看起来是邀请制 / 管理员后台创建。
+
+### 差距
+- **首次进入 `/me`** 空白状态:用户看到 6 个 section 全空,无任何引导。
+- **登录后跳转**:确认是否跳回登录前页面(用户期望)。
+- **邀请流程**:管理员加成员后,新用户怎么登录?**没看到"邀请邮件 / 临时链接"的明确设计**。
+
+### 建议
+- **P0 / 13.1** 个人工作台空状态:大卡"快速开始" + 3 步:"建第一页 / 浏览空间 / 等别人邀请你"(按角色动态)。
+- **P0 / 13.2** 登录后跳回原页面:登录前记录 referrer,登录后 redirect。
+- **P1 / 13.3** 邀请链接:admin 后台创建用户后生成一次性链接,有效期 7 天,带"设置密码"流程(复用 `/reset-password`)。
+
+---
+
+## 14. 移动端(明确不优化,但确认现状)
+
+**CLAUDE.md 硬约束**:无移动端适配,viewport 锁死 1280。
+
+**现状确认**:路由 + 主要 View 都是桌面布局;没写 `@media` 断点(随机抽查 8 个组件 CSS 确认)。
+
+**建议**:无,在 P0 路由项目里加个"移动端访问请用桌面"的友好提示页(纯 static HTML)。
+
+---
+
+## 15. 视觉 / 品牌 / 排版
+
+**对应代码**:`apps/web/src/styles/tokens.css`、`apps/web/src/components/ui/BrandLogo.vue`、`UserAvatar.vue`
+
+### 现状
+设计令牌统一(已确认抽查),Plus Jakarta Sans + PingFang SC + JetBrains Mono;品牌用 `<BrandLogo>`。
+
+### 差距
+- **品牌色 `var(--accent)`** 是单一蓝色(#4C9AFF),空间 color picker **没看到预设色板** — 用户大概率会用默认色,视觉同质化。
+- **UserAvatar 的字母头像**已有 `avatar_kind = google-style` 预设 SVG(`/avatars/{slug}.svg`),**但没看到 fallback 机制**——如果用户上传的图片头像 `404`,应该 fallback 到字母头像。
+- **空状态插画**完全没有:回收站空 / 工作台空 / 搜索无结果都是纯文案 + icon。Confluence / Notion 都用简约线稿插画。
+- **`@media print` 样式**未确认有。
+
+### 建议
+- **P1 / 15.1** 空间 color picker 加预设 8 色板(灰/蓝/绿/紫/红/橙/粉/青),写入常量。
+- **P1 / 15.2** UserAvatar 的图片头像加载失败时 fallback 到字母,过渡 200ms 渐隐。
+- **P2 / 15.3** 主要空状态加 1-2 张极简 SVG 插画(团队版 / 文件版 / 时钟版)。
+- **P2 / 15.4** 全局 `@media print`:`.app-shell-sidebar / .app-top-bar / .comments-section / .ia-toolbar { display: none; }` + 正文容器最大宽 720px 居中。
+
+---
+
+## 16. 优先级汇总
+
+| 编号 | 模块 | 优先级 | 一句话描述 |
+|---|---|---|---|
+| 4.1 | 页面阅读页 | P0 | 顶栏 9 按钮分两段,次操作收进 ⋯ |
+| 4.2 | 页面阅读页 | P0 | PDF 改服务端生成,或至少打印样式完整 |
+| 5.1 | 编辑器 | P0 | 统一 auto-save debounce(500ms) |
+| 7.1 | 导入导出 | P0 | MD 导入 2MB 限制可配置,默认 25MB |
+| 9.1 | 回收站 | P0 | 批量恢复按拓扑顺序提示 + 一键排序 |
+| 9.2 | 回收站 | P0 | 批量永久删除加二级确认 |
+| 13.1 | 首次进入 | P0 | 个人工作台空状态大引导 |
+| 13.2 | 登录 | P0 | 登录后跳回原页面 |
+| 2.1 | 空间首页 | P1 | stat-card 可点击 drill-down |
+| 2.2 | 空间首页 | P1 | 公告区支持多页置顶 |
+| 3.1 | 个人工作台 | P1 | 6 section 重排,主区 + 次区 2 列 |
+| 3.2 | 个人工作台 | P1 | 顶部加快速新建 + 今日待办 |
+| 3.3 | 个人工作台 | P1 | "我创建的" 按空间分组 |
+| 4.3 | 页面阅读页 | P1 | byline 右侧加近期变更小卡 |
+| 4.4 | 页面阅读页 | P1 | 评论区未读标记 + 上次看到这里 |
+| 4.5 | 页面阅读页 | P1 | TOC 固定开关 + scroll-spy |
+| 5.2 | 编辑器 | P1 | slash 新增 status / decision / citation / toc / emoji |
+| 5.3 | 编辑器 | P1 | mention 快捷 filter(当前空间 / 我关注 / 全员) |
+| 5.4 | 编辑器 | P1 | slash 触发 @ 默认弹"组选择"辅助 |
+| 5.5 | 编辑器 | P1 | 编辑器底栏加字数 + 阅读时长 + 标题修改状态 |
+| 5.6 | 编辑器 | P1 | 编辑器内识别内部 page 链接并预览 |
+| 6.1.1 | 编辑器 | P1 | 代码块复制 fallback |
+| 6.2.1 | 编辑器 | P1 | 附件替换失败保留旧 node |
+| 6.2.2 | 附件 | P1 | Lightbox 加 zoom/旋转/翻页 |
+| 6.4.1 | 编辑器 | P1 | mention 0 字符显示最近 @ 过的人 |
+| 7.2 | 导入导出 | P1 | MD 导入多文件 |
+| 7.3 | 导入导出 | P1 | MD 导入图片自动上传 MinIO |
+| 7.4 | 导入导出 | P1 | HTML/MD 导出嵌入附件 |
+| 8.1 | 限制对话框 | P1 | impact preview 数字可点击展开成员 |
+| 8.2 | 限制对话框 | P1 | protectedSources 加"跳到该页"链接 |
+| 8.3 | 限制对话框 | P1 | 关闭 inherit 时二级确认 |
+| 9.3 | 回收站 | P1 | retention 通知开关 + 精确清空时间 |
+| 9.4 | 回收站 | P1 | 过滤栏右上角"清空过滤"按钮 |
+| 10.1 | 空间设置 | P1 | 成员 tab 行加 "为什么是这个角色" tooltip |
+| 10.2 | 空间设置 | P1 | 角色选项旁加"权限预览"小卡 |
+| 10.3 | 空间设置 | P1 | 空间信息 tab 加"快捷键提示"开关 |
+| 10.4 | 空间设置 | P1 | 成员 tab 加"按组添加"按钮 |
+| 11.1 | 管理后台 | P1 | PeopleView 顶部加 breadcrumb |
+| 11.2 | 管理后台 | P1 | PeopleContextPanel 加 tooltip 解释数据时段 |
+| 11.3 | 管理后台 | P1 | UserEditView 加"匿名化前导出" |
+| 11.4 | 管理后台 | P1 | SpacesView 的 filter 加 personal |
+| 11.5 | 管理后台 | P1 | AuditView diff 渲染改进 |
+| 13.3 | 邀请 | P1 | 一次性邀请链接流程 |
+| 15.1 | 视觉 | P1 | 空间 color picker 加 8 色预设 |
+| 15.2 | 视觉 | P1 | UserAvatar 图片头像 fallback |
+| 2.3 | 空间首页 | P2 | 空白空间"三步上手" |
+| 2.4 | 空间首页 | P2 | 移除中部页面树,改成近期编辑流 |
+| 3.4 | 个人工作台 | P2 | 最近访问加频次权重 |
+| 3.5 | 个人工作台 | P2 | 全部空状态重写 |
+| 4.6 | 页面阅读页 | P2 | ShareDialog 复制成功改 inline banner |
+| 4.7 | 页面阅读页 | P2 | 全局 `@media print` 隐藏 sidebar / topbar |
+| 5.7 | 编辑器 | P2 | heading slug 去掉 position 后缀 |
+| 5.8 | 编辑器 | P2 | 表格合并单元格 + 表头冻结 |
+| 6.1.2 | 编辑器 | P2 | 代码块行号 gutter 用 CSS counter |
+| 6.1.3 | 编辑器 | P2 | 代码块"折行切换"按钮 |
+| 6.2.3 | 附件 | P2 | AttachmentsSection 类型筛选 + 排序 |
+| 6.3.1 | 编辑器 | P2 | heading URL hash 走纯 slug |
+| 6.3.2 | 编辑器 | P2 | TOC 折叠/展开 + scroll-spy |
+| 6.4.2 | 编辑器 | P2 | mention chip 头像异步加载 |
+| 6.4.3 | 编辑器 | P2 | mention chip hover tooltip |
+| 7.5 | 导入导出 | P2 | 导出 zip(HTML + 附件) |
+| 8.4 | 限制对话框 | P2 | 顶部 info tooltip 解释"编辑不继承" |
+| 9.5 | 回收站 | P2 | 空状态 3 段教学卡 |
+| 10.5 | 空间设置 | P2 | 锁 chip 点击直接打开 dialog + 切到继承 tab |
+| 11.6 | 管理后台 | P2 | 用户批量操作 |
+| 11.7 | 管理后台 | P2 | UserEditView 的"所在空间"搜索 + 过滤 |
+| 12.1 | 导航 | P2 | 侧栏页面树 / 关注列表二选一展开 |
+| 12.2 | 导航 | P2 | 顶栏 search box idle placeholder + kbd |
+| 12.3 | 导航 | P2 | AppShell 加"新版本可用"banner |
+| 12.4 | 导航 | P2 | 404 页加 ID 前缀相似建议 |
+| 15.3 | 视觉 | P2 | 空状态插画(团队版 / 文件版) |
+| 15.4 | 视觉 | P2 | `@media print` 全局样式 |
+
+> 共 68 项;P0 = 8 项;P1 = 35 项;P2 = 25 项。
+
+---
+
+## 17. 推进建议
+
+按 P0 → P1 → P2 顺序推进,每批 3-5 项,完成后跑 `pnpm typecheck` + `verify_*.py`(若有)。
+
+第一批 P0 落地后立即做用户验收(找 1-2 个 team 内用户跑真实流程:登录 → 进空间 → 建页 → 编辑 → 分享 → 删 → 恢复),因为 P0 都是"任何用户都会遇到"的核心闭环。

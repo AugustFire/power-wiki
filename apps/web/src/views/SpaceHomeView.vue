@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useUiStore } from '@/stores/ui'
@@ -11,9 +11,13 @@ import { newId } from '@/lib/id'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import StatCard from '@/components/space/StatCard.vue'
+import DrillDownPanel from '@/components/space/DrillDownPanel.vue'
+import EmptySpaceOnboarding from '@/components/space/EmptySpaceOnboarding.vue'
 import { excerpt as makeExcerpt } from '@/lib/textMetrics'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { canCreateInSpace as canCreateInSpaceOf } from '@/lib/permissions'
+import type { PageNode } from '@power-wiki/shared'
 
 const pagesStore = usePagesStore()
 const spacesStore = useSpacesStore()
@@ -21,6 +25,7 @@ const uiStore = useUiStore()
 const authStore = useAuthStore()
 const { list: recentList } = useRecentPages()
 const router = useRouter()
+const route = useRoute()
 const activeSpaceId = computed(() => spacesStore.activeSpaceId.value)
 const activeSpace = computed(() => spacesStore.activeSpace.value)
 const isPersonal = computed(() => activeSpace.value?.kind === 'personal')
@@ -125,6 +130,66 @@ const stats = computed(() => {
   }
 })
 
+/* P2-1 · stat-card drill-down —— 4 张 stat-card 改为 RouterLink,点击切换
+ * `?filter=all|today|week|mine`。模式参考 SpacesView.vue 的 `?filter=empty
+ * |unauthorized`。drillDownPages 依赖 inSpace / rootPages,所以放在它们
+ * 之后声明。DrillDownPanel 只在 activeFilter 非空时挂载 —— 当 drill-down
+ * 激活时,模板里把「推荐浏览 / 最近编辑」两个 section 隐藏(drill-down
+ * 本身就是针对性列表),避免视觉冗余。*/
+type StatFilter = '' | 'all' | 'today' | 'week' | 'mine'
+const VALID_FILTERS: ReadonlySet<StatFilter> = new Set([
+  '',
+  'all',
+  'today',
+  'week',
+  'mine',
+])
+const activeFilter = computed<StatFilter>(() => {
+  const raw = String(route.query.filter ?? '')
+  return VALID_FILTERS.has(raw as StatFilter) ? (raw as StatFilter) : ''
+})
+function setFilter(key: StatFilter): void {
+  void router.replace({
+    query: { ...route.query, filter: key === '' ? undefined : key },
+  })
+}
+function filterTitle(key: StatFilter): string {
+  switch (key) {
+    case 'today': return '今日活跃'
+    case 'week': return '本周更新'
+    case 'mine': return '我的页面'
+    case 'all': return '全部页面'
+    default: return ''
+  }
+}
+const drillDownPages = computed<PageNode[]>(() => {
+  if (!activeFilter.value) return []
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const todayMs = today.getTime()
+  const weekMs = todayMs - 7 * 86400000
+  const meId = authStore.user?.id
+  const inSpaceSorted = [...inSpace.value].sort((a, b) => b.updatedAt - a.updatedAt)
+  let filtered: PageNode[]
+  switch (activeFilter.value) {
+    case 'today':
+      filtered = inSpaceSorted.filter((p) => p.updatedAt >= todayMs)
+      break
+    case 'week':
+      filtered = inSpaceSorted.filter((p) => p.updatedAt >= weekMs)
+      break
+    case 'mine':
+      filtered = inSpaceSorted.filter((p) => meId !== null && p.authorId === meId)
+      break
+    case 'all':
+      filtered = rootPages.value
+      break
+    default:
+      filtered = []
+  }
+  return filtered.slice(0, 20)
+})
+
 function goPage(id: string): void {
   void router.push(`/p/${id}`)
 }
@@ -145,6 +210,21 @@ function relativeTime(timestamp: number): string {
 
 function excerpt(html: string): string {
   return makeExcerpt(html)
+}
+
+/* P2-3 · 三步上手 —— 空状态卡 2(导入 Markdown)走 ImportMarkdownModal。
+ * Modal 是 uiStore 持有的全局开关,从 active space 根(sidebar icon button
+ * 入口)走的也是这条;不传 sourceRow(可选字段省略)即默认落到 active space 根。*/
+function openImportModal(): void {
+  const sid = activeSpaceId.value
+  if (!sid) return
+  uiStore.openImport({ defaultSpaceId: sid })
+}
+
+/* P2-3 · 三步上手 —— 空状态卡 3(邀请成员)。差距分析 P1/13.3 的「一次
+ * 性邀请链接」还没建,这里先用 toast 兜底,等邀请流程落地后接进来。*/
+function onInviteMembers(): void {
+  uiStore.notify('请联系空间管理员邀请成员加入', 'info', 4000)
 }
 </script>
 
@@ -196,33 +276,15 @@ function excerpt(html: string): string {
         </div>
       </div>
 
-      <div v-if="rootPages.length === 0" class="empty">
-        <div class="empty-illustration">
-          <svg viewBox="0 0 240 160" width="240" height="160" aria-hidden="true">
-            <rect x="40" y="36" width="120" height="14" rx="3" fill="var(--accent-soft)" />
-            <rect x="50" y="58" width="90" height="10" rx="3" fill="var(--bg-subtle)" />
-            <rect x="50" y="74" width="100" height="10" rx="3" fill="var(--bg-subtle)" />
-            <rect x="50" y="90" width="80" height="10" rx="3" fill="var(--bg-subtle)" />
-            <rect x="120" y="20" width="80" height="100" rx="6" fill="var(--bg)" stroke="var(--border)" stroke-width="1.5" />
-            <rect x="132" y="34" width="40" height="6" rx="2" fill="var(--accent)" />
-            <rect x="132" y="50" width="56" height="4" rx="2" fill="var(--border)" />
-            <rect x="132" y="60" width="48" height="4" rx="2" fill="var(--border)" />
-            <rect x="132" y="70" width="52" height="4" rx="2" fill="var(--border)" />
-            <circle cx="184" cy="118" r="14" fill="var(--accent)" />
-            <path d="M 178 118 L 182 122 L 190 114" stroke="var(--bg)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </div>
-        <h2>{{ activeSpace ? `${activeSpace.name} 还是空的` : `${fallbackSpaceName}还是空的` }}</h2>
-        <p v-if="canCreateInSpace">
-          <template v-if="isPersonal">创建第一个页面,记录只属于自己的笔记、想法和草稿。</template>
-          <template v-else>创建第一个页面,开始记录团队的思考、决策和成果。</template>
-        </p>
-        <p v-else>该空间目前还没有任何内容,你只有只读权限。</p>
-        <button v-if="canCreateInSpace" class="btn primary create-first" @click="createRoot">
-          <span class="material-symbols-outlined icon-lg">add</span>
-          创建第一个页面
-        </button>
-      </div>
+      <EmptySpaceOnboarding
+        v-if="rootPages.length === 0"
+        :space-name="activeSpace?.name ?? fallbackSpaceName"
+        :kind="isPersonal ? 'personal' : 'shared'"
+        :can-create="canCreateInSpace"
+        @create-page="createRoot"
+        @import-markdown="openImportModal"
+        @invite-members="onInviteMembers"
+      />
 
       <template v-else>
         <div class="home-hero">
@@ -250,39 +312,48 @@ function excerpt(html: string): string {
         </section>
 
         <div class="stat-grid">
-          <div class="stat-card">
-            <div class="stat-label">
-              <span class="material-symbols-outlined">description</span>
-              全部页面
-            </div>
-            <div class="stat-value">{{ stats.total }}</div>
-            <div class="stat-trend">{{ stats.roots }} 根 · {{ stats.children }} 子</div>
-          </div>
-          <div class="stat-card success">
-            <div class="stat-label">
-              <span class="material-symbols-outlined">today</span>
-              今日活跃
-            </div>
-            <div class="stat-value">{{ stats.editedToday }}</div>
-            <div class="stat-trend">最近 24h 更新过</div>
-          </div>
-          <div class="stat-card purple">
-            <div class="stat-label">
-              <span class="material-symbols-outlined">schedule</span>
-              本周更新
-            </div>
-            <div class="stat-value">{{ stats.thisWeek }}</div>
-            <div class="stat-trend">过去 7 天</div>
-          </div>
-          <div class="stat-card warning">
-            <div class="stat-label">
-              <span class="material-symbols-outlined">person</span>
-              我的页面
-            </div>
-            <div class="stat-value">{{ stats.myPages }}</div>
-            <div class="stat-trend">我创建的 · 本空间内</div>
-          </div>
+          <StatCard
+            label="全部页面"
+            :value="stats.total"
+            :trend="`${stats.roots} 根 · ${stats.children} 子`"
+            icon="description"
+            variant="default"
+            filter-key="all"
+          />
+          <StatCard
+            label="今日活跃"
+            :value="stats.editedToday"
+            trend="最近 24h 更新过"
+            icon="today"
+            variant="success"
+            filter-key="today"
+          />
+          <StatCard
+            label="本周更新"
+            :value="stats.thisWeek"
+            trend="过去 7 天"
+            icon="schedule"
+            variant="purple"
+            filter-key="week"
+          />
+          <StatCard
+            label="我的页面"
+            :value="stats.myPages"
+            trend="我创建的 · 本空间内"
+            icon="person"
+            variant="warning"
+            filter-key="mine"
+          />
         </div>
+
+        <DrillDownPanel
+          v-if="activeFilter"
+          :title="filterTitle(activeFilter)"
+          :count="drillDownPages.length"
+          :pages="drillDownPages"
+          @clear="setFilter('')"
+          @open="goPage"
+        />
 
         <div class="quick-actions">
           <button v-if="canCreateInSpace" class="quick-action" @click="createRoot">
@@ -308,34 +379,39 @@ function excerpt(html: string): string {
           </button>
         </div>
 
-        <div class="section-title">
-          <span>{{ myRecentPages.length > 0 ? '我最近访问' : '推荐浏览' }}</span>
-        </div>
-        <ul v-if="myRecentPages.length > 0" class="recent-list recent-list--mine">
-          <li v-for="entry in myRecentPages" :key="entry.id" @click="goPage(entry.id)">
-            <span class="material-symbols-outlined doc-icon">history</span>
-            <span class="rl-title">{{ entry.title }}</span>
-            <span class="rl-meta">{{ relativeTime(entry.visitedAt) }}</span>
-          </li>
-        </ul>
-        <ul v-else class="recent-list">
-          <li v-for="page in recentPages.slice(0, 3)" :key="page.id" @click="goPage(page.id)">
-            <span class="material-symbols-outlined doc-icon">description</span>
-            <span class="rl-title">{{ page.title }}</span>
-            <span class="rl-meta">{{ relativeTime(page.updatedAt) }}</span>
-          </li>
-        </ul>
+        <!-- drill-down 激活时隐藏这两个 section(drill-down 本身就是针对性列表,
+         视觉冗余)。「所有主题」主题卡网格保留,因为它展示根页面 excerpt
+         + 子页数,是 drill-down 没有的维度。-->
+        <template v-if="!activeFilter">
+          <div class="section-title">
+            <span>{{ myRecentPages.length > 0 ? '我最近访问' : '推荐浏览' }}</span>
+          </div>
+          <ul v-if="myRecentPages.length > 0" class="recent-list recent-list--mine">
+            <li v-for="entry in myRecentPages" :key="entry.id" @click="goPage(entry.id)">
+              <span class="material-symbols-outlined doc-icon">history</span>
+              <span class="rl-title">{{ entry.title }}</span>
+              <span class="rl-meta">{{ relativeTime(entry.visitedAt) }}</span>
+            </li>
+          </ul>
+          <ul v-else class="recent-list">
+            <li v-for="page in recentPages.slice(0, 3)" :key="page.id" @click="goPage(page.id)">
+              <span class="material-symbols-outlined doc-icon">description</span>
+              <span class="rl-title">{{ page.title }}</span>
+              <span class="rl-meta">{{ relativeTime(page.updatedAt) }}</span>
+            </li>
+          </ul>
 
-        <div class="section-title">
-          <span>最近编辑</span>
-        </div>
-        <ul class="recent-list">
-          <li v-for="page in recentPages" :key="page.id" @click="goPage(page.id)">
-            <span class="material-symbols-outlined doc-icon">description</span>
-            <span class="rl-title">{{ page.title }}</span>
-            <span class="rl-meta">{{ relativeTime(page.updatedAt) }}</span>
-          </li>
-        </ul>
+          <div class="section-title">
+            <span>最近编辑</span>
+          </div>
+          <ul class="recent-list">
+            <li v-for="page in recentPages" :key="page.id" @click="goPage(page.id)">
+              <span class="material-symbols-outlined doc-icon">description</span>
+              <span class="rl-title">{{ page.title }}</span>
+              <span class="rl-meta">{{ relativeTime(page.updatedAt) }}</span>
+            </li>
+          </ul>
+        </template>
 
         <div class="section-title">
           <span>所有主题</span>
@@ -428,26 +504,10 @@ function excerpt(html: string): string {
   flex: 1;
   min-width: 0;
 }
-.empty-illustration {
-  margin: 0 auto 20px;
-  display: flex;
-  justify-content: center;
-}
 .crumb-lock {
   font-size: 14px !important;
   color: var(--text-3);
   flex-shrink: 0;
-}
-.empty .create-first {
-  margin-top: 8px;
-  height: 40px;
-  padding: 0 20px;
-  font-size: 15px;
-  box-shadow: var(--shadow-sm);
-}
-.empty .create-first:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 .quick-action > span:last-child {
   display: flex;
