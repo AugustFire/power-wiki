@@ -12,6 +12,7 @@ import EmojiPicker from './EmojiPicker.vue'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
 import { useRecentSlashItems } from '@/composables/useRecentSlashItems'
+import { STATUS_PRESETS, type StatusColor } from '@/editor/statusExtension'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -21,6 +22,14 @@ const props = defineProps<{
 }>()
 
 type SlashGroup = 'basic' | 'media' | 'advanced'
+
+/** description 里那句「状态徽章(蓝色)」的颜色中文名 —— 纯 slash 列表文案 */
+const STATUS_COLOR_LABEL: Record<StatusColor, string> = {
+  blue: '蓝色',
+  green: '绿色',
+  red: '红色',
+  gray: '灰色',
+}
 
 interface SlashItem {
   id: string
@@ -219,45 +228,19 @@ const items: SlashItem[] = [
       // needsPicker 不在 run 里执行 insert;由 onSelectIndex 后续 openAtPicker
     },
   },
-  {
-    // P1/5.2 — 4 个状态徽章 slash 命令。每个直接 insertStatus,不需要 picker。
-    // label 用「状态 · 进行中」完整文案,用户在菜单里一眼分辨颜色 + 用途;
-    // description 保持「状态徽章」简短,作为同组共享的语义标签。
-    id: 'status-progress',
-    label: '状态 · 进行中',
-    description: '状态徽章(蓝色)',
-    icon: 'progress_activity',
+  // P1/5.2 — 4 个状态徽章 slash 命令。每个直接 insertStatus,不需要 picker。
+  // label(「状态 · 进行中」)/ icon / aliases / id 全部来自 STATUS_PRESETS
+  // —— 工具栏「状态」下拉和 NodeView 的配色切换器吃的是同一份,文案改一处
+  // 三处同步。description 保持「状态徽章(颜色)」简短,作为同组共享语义。
+  ...STATUS_PRESETS.map<SlashItem>((p) => ({
+    id: p.slashId,
+    label: p.label,
+    description: `状态徽章(${STATUS_COLOR_LABEL[p.color]})`,
+    icon: p.icon,
     group: 'basic',
-    aliases: ['状态', 'status', '进行中', 'progress', 'in progress'],
-    run: (e) => e.chain().focus().insertStatus({ text: '进行中', color: 'blue' }).run(),
-  },
-  {
-    id: 'status-done',
-    label: '状态 · 已完成',
-    description: '状态徽章(绿色)',
-    icon: 'check_circle',
-    group: 'basic',
-    aliases: ['状态', 'status', '已完成', 'done', 'complete', '完成'],
-    run: (e) => e.chain().focus().insertStatus({ text: '已完成', color: 'green' }).run(),
-  },
-  {
-    id: 'status-blocked',
-    label: '状态 · 已阻塞',
-    description: '状态徽章(红色)',
-    icon: 'block',
-    group: 'basic',
-    aliases: ['状态', 'status', '已阻塞', 'blocked', '阻塞', 'block', '卡住'],
-    run: (e) => e.chain().focus().insertStatus({ text: '已阻塞', color: 'red' }).run(),
-  },
-  {
-    id: 'status-draft',
-    label: '状态 · 草稿',
-    description: '状态徽章(灰色)',
-    icon: 'edit_note',
-    group: 'basic',
-    aliases: ['状态', 'status', '草稿', 'draft', 'wip'],
-    run: (e) => e.chain().focus().insertStatus({ text: '草稿', color: 'gray' }).run(),
-  },
+    aliases: p.aliases,
+    run: (e: AnyEditor) => e.chain().focus().insertStatus({ text: p.text, color: p.color }).run(),
+  })),
 ]
 
 const open = ref(false)

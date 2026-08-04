@@ -5,6 +5,8 @@ import ColorPopover from './ColorPopover.vue'
 import EmojiPicker from './EmojiPicker.vue'
 import DateTimePicker from './DateTimePicker.vue'
 import { CALLOUT_VARIANTS, CALLOUT_ICON_MAP } from '@/editor/calloutExtension'
+import { STATUS_PRESETS } from '@/editor/statusExtension'
+import type { StatusColor } from '@/editor/statusExtension'
 import { BG_COLOR_PALETTE } from '@/lib/colorPalettes'
 import { openAttachmentPicker } from '@/lib/attachmentPicker'
 import { uploadAndInsert } from '@/editor/uploadAndInsert'
@@ -103,6 +105,13 @@ const insertBtns = computed<Btn[]>(() => {
       id: 'callout', icon: 'lightbulb', title: '提示框',
       isActive: () => e.isActive('callout'),
       run: () => e.chain().focus().toggleCallout('info').run(),
+    },
+    {
+      // 图标不沿用 slash 的 expand_more —— 工具栏是纯图标,expand_more 会跟
+      // 各处下拉的 chevron 混淆;expand_circle_down 一眼是「折叠块」。
+      id: 'toggle', icon: 'expand_circle_down', title: '折叠块',
+      isActive: () => e.isActive('toggle'),
+      run: () => e.chain().focus().setToggle().run(),
     },
     {
       id: 'attachment', icon: 'image', title: '插入图片 / 附件',
@@ -419,6 +428,25 @@ function closeAllDate() {
   datePopoverOpen.value = false
 }
 
+// ─── 状态徽章(4 预设下拉) ─────────────────────────────────
+// 跟 slash 的「状态 · xxx」四项同一个入口,预设从 statusExtension 的
+// STATUS_PRESETS 读 —— 文案 / 配色不在这里重写一遍(StatusBadgeView 的配色
+// 切换器也吃同一份)。形态照抄日期按钮(图标按钮 + tb-block-type-menu),
+// 不用「提示框」那种带文字的 tb-block-type —— 1280px 下工具栏已接近换行。
+const statusMenuOpen = ref(false)
+const statusMenuWrap = ref<HTMLElement | null>(null)
+
+function toggleStatusMenu() {
+  statusMenuOpen.value = !statusMenuOpen.value
+}
+
+function insertStatusPreset(p: { text: string; color: StatusColor }) {
+  const e = props.editor
+  if (!e) return
+  e.chain().focus().insertStatus({ text: p.text, color: p.color }).run()
+  statusMenuOpen.value = false
+}
+
 const historyBtns = computed<Btn[]>(() => {
   if (!props.editor) return []
   const e = props.editor
@@ -578,6 +606,9 @@ function onDocMouseDown(e: MouseEvent) {
   if (datePopoverOpen.value && dateWrap.value && !dateWrap.value.contains(target)) {
     datePopoverOpen.value = false
   }
+  if (statusMenuOpen.value && statusMenuWrap.value && !statusMenuWrap.value.contains(target)) {
+    statusMenuOpen.value = false
+  }
 }
 
 function onKeyDown(e: KeyboardEvent) {
@@ -593,6 +624,10 @@ function onKeyDown(e: KeyboardEvent) {
   if (datePickerOpen.value && e.key === 'Escape') {
     e.preventDefault()
     datePickerOpen.value = false
+  }
+  if (statusMenuOpen.value && e.key === 'Escape') {
+    e.preventDefault()
+    statusMenuOpen.value = false
   }
 }
 
@@ -942,6 +977,37 @@ function handleClick(btn: Btn) {
         </Transition>
       </div>
 
+      <div class="tb-sep"></div>
+
+      <!-- 状态徽章(下拉 4 预设:进行中 / 已完成 / 已阻塞 / 草稿) -->
+      <div ref="statusMenuWrap" class="tb-status-wrap" :class="{ open: statusMenuOpen }">
+        <button
+          type="button"
+          class="tb-btn"
+          :class="{ active: statusMenuOpen || editor.isActive('statusBadge') }"
+          title="插入状态"
+          aria-haspopup="menu"
+          :aria-expanded="statusMenuOpen"
+          @click.stop="toggleStatusMenu"
+        >
+          <span class="material-symbols-outlined">label</span>
+        </button>
+        <Transition name="popover-fade">
+        <div v-if="statusMenuOpen" class="tb-status-menu tb-block-type-menu">
+          <!-- 菜单项直接渲染真徽章(.status-badge 是全局类),所见即所得 -->
+          <button
+            v-for="p in STATUS_PRESETS"
+            :key="p.color"
+            type="button"
+            class="tb-block-type-opt tb-status-opt"
+            @mousedown.stop.prevent="insertStatusPreset(p)"
+          >
+            <span class="status-badge" :data-status-color="p.color">{{ p.text }}</span>
+          </button>
+        </div>
+        </Transition>
+      </div>
+
       <div v-if="currentCalloutVariant" class="tb-sep"></div>
 
       <!-- 提示框变体(仅在光标处于 callout 内时显示) -->
@@ -1091,5 +1157,10 @@ function handleClick(btn: Btn) {
   height: 2px;
   border-radius: 1px;
 }
+
+/* 状态徽章下拉 — 菜单项就是一枚真徽章(.status-badge 全局类),不再加图标 */
+.tb-status-wrap { position: relative; }
+.tb-status-menu { min-width: 140px; }
+.tb-status-opt { padding: 0 6px; }
 </style>
 

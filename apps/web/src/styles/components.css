@@ -839,8 +839,16 @@
 .prose ul, .prose ol { margin: 12px 0 12px 24px; list-style: disc; }
 .prose ol { list-style: decimal; }
 .prose li { margin-bottom: 4px; }
-.prose strong { font-weight: 600; color: var(--text-1); }
+/* 只加粗,不锁死颜色 —— 锁死会盖掉外层 <span style="color:…"> 的文字色
+   mark(Tiptap 把 textStyle 序列化在 bold 外层),导致「加粗 + 红字」在 read
+   视图只剩加粗。编辑端 .tiptap 没有同名规则,颜色正常继承 —— 两端要一致。 */
+.prose strong { font-weight: 600; }
 .prose em { font-style: italic; }
+/* 高亮 mark:浏览器 UA 样式是 `mark { background: Mark; color: MarkText }`,
+   那个 color 会盖掉外层 textStyle 的文字色(同「加粗吃掉红字」一个病)。
+   两端都改成继承,背景仍由 Highlight 扩展的 inline background-color 决定。 */
+.prose mark,
+.tiptap mark { color: inherit; }
 .prose code {
     font-family: var(--font-mono);
     font-size: 0.92em;
@@ -2642,10 +2650,11 @@ kbd {
     color: var(--success);
 }
 
-/* 选中态(内容中的文字) */
+/* 选中态(内容中的文字)—— 只改背景,不改前景色。改前景色会让「选中文字 →
+   选文字颜色」看不到任何效果(选中态把颜色盖成 accent-hover,松开选区才显形)。
+   --accent-soft 是浅蓝底,保留原文字色对比度依然够。 */
 ::selection {
     background: var(--accent-soft);
-    color: var(--accent-hover);
 }
 
 /* ============================================================

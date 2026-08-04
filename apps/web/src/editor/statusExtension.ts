@@ -31,12 +31,47 @@ export interface StatusAttrs {
   color: StatusColor
 }
 
-/** 4 个预设。slash 菜单 + NodeView 的配色切换器共用这一份,避免两处漂移。 */
-export const STATUS_PRESETS: { color: StatusColor; text: string; label: string }[] = [
-  { color: 'blue', text: '进行中', label: '状态 · 进行中' },
-  { color: 'green', text: '已完成', label: '状态 · 已完成' },
-  { color: 'red', text: '已阻塞', label: '状态 · 已阻塞' },
-  { color: 'gray', text: '草稿', label: '状态 · 草稿' },
+/**
+ * 4 个预设 —— slash 菜单 / 工具栏「状态」下拉 / NodeView 的配色切换器共用
+ * 这一份,避免三处漂移。
+ *
+ * 字段分工:
+ *   - color / text:实际写进节点 attr 的值
+ *   - label:带「状态 · 」前缀的完整文案,给 slash 列表和 swatch title 用
+ *   - icon / aliases / slashId:只服务 slash 菜单的列表项(icon 是
+ *     material-symbols 名,aliases 参与搜索匹配)
+ *
+ * `slashId` 必须保持稳定 —— 它是「最近使用」(useRecentSlashItems)存进
+ * localStorage 的键,改名会让用户已有的 recents 静默失效。
+ */
+export const STATUS_PRESETS: {
+  color: StatusColor
+  text: string
+  label: string
+  icon: string
+  slashId: string
+  aliases: string[]
+}[] = [
+  {
+    color: 'blue', text: '进行中', label: '状态 · 进行中',
+    icon: 'progress_activity', slashId: 'status-progress',
+    aliases: ['状态', 'status', '进行中', 'progress', 'in progress'],
+  },
+  {
+    color: 'green', text: '已完成', label: '状态 · 已完成',
+    icon: 'check_circle', slashId: 'status-done',
+    aliases: ['状态', 'status', '已完成', 'done', 'complete', '完成'],
+  },
+  {
+    color: 'red', text: '已阻塞', label: '状态 · 已阻塞',
+    icon: 'block', slashId: 'status-blocked',
+    aliases: ['状态', 'status', '已阻塞', 'blocked', '阻塞', 'block', '卡住'],
+  },
+  {
+    color: 'gray', text: '草稿', label: '状态 · 草稿',
+    icon: 'edit_note', slashId: 'status-draft',
+    aliases: ['状态', 'status', '草稿', 'draft', 'wip'],
+  },
 ]
 
 const VALID_COLORS = new Set<string>(STATUS_PRESETS.map((p) => p.color))
