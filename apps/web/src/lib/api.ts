@@ -205,9 +205,13 @@ function isPublicAuthPath(path: string): boolean {
  * responses don't survive a write. Failed requests are auto-evicted so a
  * 5xx doesn't poison the cache for the full TTL.
  *
- * We deliberately do NOT cache pages/ (`api.pages.*`) — pages are mutated
- * constantly through the editor and the optimistic in-memory store already
- * de-duplicates. Caching here would only delay the next refresh.
+ * /pages GETs (and /pages/:id, /pages/:id/watchers, /pages/:id/versions,
+ * etc.) are NOT cached — see `isPagesPath` below. Pages are mutated
+ * constantly through the editor and the optimistic in-memory store
+ * de-duplicates same-tab reads; caching here would outlast a typical
+ * edit→close cycle, and ReadView.loadPageResource would then feed the
+ * stale payload into syncPageFromServer, rolling the store back to
+ * pre-edit content.
  */
 const FETCH_CACHE_TTL_MS = 30_000
 interface CacheEntry {
@@ -308,12 +312,28 @@ async function fetchAndParse<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+function isPagesPath(path: string): boolean {
+  // Strip query string so '/pages?space=…' is treated the same as '/pages'.
+  const noQuery = path.split('?', 1)[0] ?? path
+  return noQuery === '/pages' || noQuery.startsWith('/pages/')
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   // Non-GET (POST/PATCH/PUT/DELETE) bypasses cache entirely. The endpoint
   // groups below call `invalidatePrefix()` after success to drop related
   // GET entries.
   if (method !== 'GET') return fetchAndParse<T>(path, init)
+
+  // /pages GETs are NOT cached — see the comment at the cache definition
+  // above. Concretely: a 30s cache outlasts a typical edit→close cycle, so
+  // ReadView.loadPageResource would hit the cached pre-edit payload, then
+  // syncPageFromServer rolls the optimistic store back, and the user sees
+  // the old content until the TTL expires (or manual refresh). The other
+  // /pages* GETs (sub-resources like /watchers, /versions, /restrictions)
+  // are also bypassed to keep this branch simple — they're called rarely
+  // and the store already de-duplicates page-level reads.
+  if (isPagesPath(path)) return fetchAndParse<T>(path, init)
 
   const key = cacheKey(method, path)
   const cached = fetchCache.get(key)
