@@ -25,13 +25,14 @@ import { and, eq, getTableColumns, isNull, sql } from 'drizzle-orm'
 import { PageNodeSchema, PageVersionSchema, PaginatedListSchema } from '@power-wiki/shared/schemas'
 import type { PageVersion } from '@power-wiki/shared'
 import { db } from '../db/client'
-import { pageVersions, pages, spaces, users } from '../db/schema'
+import { pageVersions, pageYjsState, pages, spaces, users } from '../db/schema'
 import { generatePageId } from '../lib/ids'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { canReadPage, canEditPage, principalFromUser } from '../lib/permissions'
 import { assertCanWriteToPersonalSpace } from '../lib/personalSpaceGuard'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
+import { assertNoActiveLockForWrite, evictCollabDocuments } from './pages'
 
 export const pageVersionsRouter = new Hono<{ Variables: Variables }>()
 
@@ -130,6 +131,20 @@ pageVersionsRouter.get('/:id/versions', async (c) => {
  *
  *  Trashed pages refuse 409 (restore the page first). Admin-on-personal 403.
  *  Missing version → 404.
+ *
+ *  M13+: 跟 DELETE 同样过 assertNoActiveLockForWrite(action='restore') 闸门
+ *  —— 防止 admin 的版本回滚被 in-flight 编辑的 onStoreDocument mirror
+ *  静默覆盖。具体 race:
+ *    1. admin 调 restore,UPDATE pages.contentJson = 版本内容
+ *    2. 1-3s 后 Alice 的 Hocuspocus onStoreDocument debounce 触发
+ *    3. mirror 写 pages.contentJson = Alice 的 Y.Doc 状态 → restore 丢失
+ *    4. Alice 完全不知道自己的编辑被覆盖,继续编辑 → page_yjs_state
+ *       持有跟 pages.contentJson 不一致的字节
+ *  修法:锁闸门挡住 restore,holder 让出锁才能继续。同时:
+ *    - 事务内 DELETE page_yjs_state(让 onLoadDocument 重新从 contentJson hydrate)
+ *    - 事务外 evictCollabDocuments + sendStatelessToPage page_restored
+ *    - client 端 onStateless handler 接住 page_restored → reload/re-fetch
+ *  三件事必须**都**做,缺一就有 race。
  */
 pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
   const me = c.get('user')
@@ -169,14 +184,39 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
   )
   if (blocked) return blocked
 
+  // M13+: 锁闸门 —— 拒绝时推 page_locked_during_restore,跟 soft-delete
+  // 共用 assertNoActiveLockForWrite(action='restore'),holder 端 usePageLock
+  // 收到后挂 PageRestoringBanner。extraMessage 带 versionNumber 让 banner
+  // 显示「正在尝试回滚到 v{N}」。
+  //
+  // 先 SELECT versionNumber(version 整行读在锁闸门过完之后),锁闸门提前拒了
+  // 也能在 banner 上挂准确的版本号。锁拒时多一次 SELECT 完全可以接受 —— 这
+  // 本来就是异常路径。
+  const [versionHead] = await db
+    .select({ versionNumber: pageVersions.versionNumber })
+    .from(pageVersions)
+    .where(and(eq(pageVersions.id, versionId), eq(pageVersions.pageId, id)))
+    .limit(1)
+  if (!versionHead) return c.json({ error: 'not_found' }, 404)
+
+  const lockResp = await assertNoActiveLockForWrite(c, [id], me, 'restore', {
+    versionNumber: versionHead.versionNumber,
+  })
+  if (lockResp) return lockResp
+
   const [version] = await db
     .select()
     .from(pageVersions)
     .where(and(eq(pageVersions.id, versionId), eq(pageVersions.pageId, id)))
     .limit(1)
   if (!version) return c.json({ error: 'not_found' }, 404)
+  // versionHead 已确认存在且 versionNumber 一致,这里走乐观路径 —— 如果并发
+  // 删除让 version 行消失(极罕见,跟锁定不在同一语义),transaction 内 upsert
+  // 仍能 throw,不影响整体。
+  void versionHead
 
   const now = Date.now()
+  let nextVersion = 1
   await db.transaction(async (tx) => {
     // Insert a new version row representing the post-restore state. The
     // snapshot mirrors the restored version's fields; changeNote notes
@@ -186,7 +226,7 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
       FROM page_versions
       WHERE page_id = ${id}
     `)
-    const nextVersion = Number(versionResult.rows[0]?.nextVersion ?? 1)
+    nextVersion = Number(versionResult.rows[0]?.nextVersion ?? 1)
     await tx.insert(pageVersions).values({
       id: generatePageId(),
       pageId: id,
@@ -209,6 +249,11 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
         updatedAt: now,
       })
       .where(eq(pages.id, id))
+    // M13+: 清 page_yjs_state —— restore 让 pages.contentJson 回到版本内容,
+    // 但 bytea 仍然是最新 CRDT。下次 onLoadDocument 会优先选 page_yjs_state
+    // (见 collab/hooks.ts),restore 就被静默 no-op 了。这里 DELETE 让下次
+    // connect 走冷启动 hydration 从 pages.contentJson 重建 Y.Doc。
+    await tx.delete(pageYjsState).where(eq(pageYjsState.pageId, id))
     await tx.execute(sql`
       DELETE FROM page_versions
       WHERE page_id = ${id}
@@ -216,6 +261,27 @@ pageVersionsRouter.post('/:id/versions/:versionId/restore', async (c) => {
           SELECT MAX(version_number) FROM page_versions WHERE page_id = ${id}
         ) - ${RETENTION}
     `)
+  })
+
+  // M13+: 主动 evict 服务端 Y.Doc —— Hocuspocus 是 process-level 单例,
+  // 没有 internal eviction。page_yjs_state 已经被事务清掉,但 server 内存
+  // 还有 in-memory Y.Doc 持有 Yjs 操作历史,client reconnect 时 Hocuspocus
+  // 不会再调我们的 onLoadDocument(因为 document 已经在内存里)。evict 之后
+  // 下一个 client 连进来 → 重新走 onLoadDocument → page_yjs_state 是空 →
+  // 走冷启动 hydration 从 pages.contentJson(版本内容)重建。
+  evictCollabDocuments([id])
+
+  // M13+: 推 page_restored stateless —— 已连着的 client(EditView / ReadView)
+  // 收不到 server 的 DELETE 路径 page_actually_deleted,但 page_yjs_state
+  // 已经被清,他们的 in-memory Y.Doc 还是旧 CRDT。必须通知他们 reload:
+  //   - EditView holder: 离开编辑器(自己的 in-flight 编辑已被覆盖)
+  //   - EditView viewer / ReadView: 重新拉数据(UI 展示版本内容)
+  const { sendStatelessToPage } = await import('../collab/stateless')
+  await sendStatelessToPage(id, {
+    kind: 'page_restored',
+    actorId: me.id,
+    pageId: id,
+    versionNumber: nextVersion,
   })
 
   // Re-fetch via the existing pages.ts LEFT JOIN helper for author + labels.

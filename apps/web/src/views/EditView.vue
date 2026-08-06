@@ -33,6 +33,7 @@ import { canManagePageWrite } from '@/lib/permissions'
 import { usePageLock } from '@/composables/usePageLock'
 import LockBanner from '@/components/page/LockBanner.vue'
 import PageDeletingBanner from '@/components/page/PageDeletingBanner.vue'
+import PageRestoringBanner from '@/components/page/PageRestoringBanner.vue'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -738,6 +739,20 @@ onBeforeUnmount(() => {
             :actor-id="lockCtl.pageDeleting.value.actorId"
             :actor-name="lockCtl.pageDeletingActorName.value"
             :actor-color="lockCtl.pageDeletingActorColor.value"
+            @leave="closeEditor"
+          />
+
+          <!-- M13+ restore 收口横幅 —— 跟 PageDeletingBanner 同源(server 端
+               assertNoActiveLockForWrite 共用 helper,只是 action='restore'),
+               用 warning 黄(中等紧迫,比 delete 红低一档)。versionNumber 由
+               server 推 stateless 时附带,banner 显示「正在尝试回滚到 v{N}」,
+               让 A 明确知道对方要回到哪一版。 -->
+          <PageRestoringBanner
+            v-if="lockCtl.pageRestoring.value"
+            :actor-id="lockCtl.pageRestoring.value.actorId"
+            :actor-name="lockCtl.pageRestoringActorName.value"
+            :actor-color="lockCtl.pageRestoringActorColor.value"
+            :version-number="lockCtl.pageRestoring.value.versionNumber ?? null"
             @leave="closeEditor"
           />
 

@@ -50,17 +50,22 @@ import { useRouter } from 'vue-router'
 export type PageLockCollabMode = 'off' | 'shared' | 'personal'
 
 /**
- * M13+ 协同删除 race 收口的 stateless payload。结构跟 server 端
+ * M13+ 协同删除 / restore race 收口的 stateless payload。结构跟 server 端
  * pages.ts → stateless.ts 推的 JSON 保持一致。
  *
  * - page_locked_during_delete:server 在写 deletedAt 之前拒删,通知所有 holder。
  *   holder 端 usePageLock 收到后挂 pageDeletingRef,caller 渲染 PageDeletingBanner。
+ * - page_locked_during_restore:同上,action 是 restore。holder 端挂
+ *   pageRestoringRef + 渲染 PageRestoringBanner。versionNumber 可选 —— restore
+ *   路径会让 banner 显示「正在尝试回滚到 v{N}」;delete 路径不传。
  * - page_actually_deleted:server 在 commit 后兜底推一条(防 holder 网络异常没收到
  *   page_locked_during_delete 时仍能被强制离开)。
  */
 export interface PageDeleting {
   actorId: string
   at: number
+  /** restore 路径携带;delete 路径始终 undefined。 */
+  versionNumber?: number
 }
 
 export interface UsePageLockOptions {
@@ -126,6 +131,15 @@ export interface UsePageLockReturn {
   pageDeletingActorName: Ref<string | null>
   /** M13+:deleter 的头像色 —— 同 pageDeletingActorName 优先级,fallback null。 */
   pageDeletingActorColor: Ref<string | null>
+  /**
+   * M13+ restore:当前 page 正在被人尝试回滚到旧版本 —— 非 null 时 caller
+   * 渲染 PageRestoringBanner。跟 pageDeleting 同源(server 端锁闸门推
+   * stateless),只是 action 是 restore 不是 delete。两者互斥,只在某一刻
+   * 有一个非 null:server 一次只跑一个动作。
+   */
+  pageRestoring: Ref<PageDeleting | null>
+  pageRestoringActorName: Ref<string | null>
+  pageRestoringActorColor: Ref<string | null>
   /** 强夺回来后 caller 调一次,刷新 lock ref。 */
   setLock: (lock: PageLock | null) => void
   /** 释放后 caller 调一次,清掉本地 ref。 */
@@ -146,9 +160,38 @@ interface PageDeletingPayload {
   actorId: string
   pageId: string
 }
+/**
+ * M13+:跟 page_locked_during_delete 同款闸门信号,但 action 是「restore」。
+ * Server 在 admin 调 POST /:id/versions/:versionId/restore 而 page 被锁时
+ * 推这条(extraMessage 带 versionNumber,见 pages.ts:assertNoActiveLockForWrite)。
+ * client 端挂 PageRestoringBanner,语义是「对方想回滚到旧版本,
+ * 让出锁才能继续」。参 pageVersions.ts:restore handler。
+ */
+interface PageLockedDuringRestorePayload {
+  kind: 'page_locked_during_restore'
+  actorId: string
+  pageId: string
+  /** 对方要回滚到的版本号 —— 可选,服务端可能不带(老 client 兼容)。 */
+  versionNumber?: number
+}
 interface PageActuallyDeletedPayload {
   kind: 'page_actually_deleted'
   pageId: string
+}
+/**
+ * M13+ restore 提交后 server 推 page_restored —— 通知所有已连着的 client:
+ *   - EditView holder: 自己的 in-flight 编辑已被覆盖,必须离开
+ *   - EditView viewer / ReadView: 页面内容已变,UI 需要 re-fetch
+ * 跟 page_actually_deleted 不同:page 本身还存在,只是 contentJson 变成
+ * 版本内容 + page_yjs_state 已被清 + 服务端 Y.Doc 已被 evict。client 端
+ * 接收后:EditView 走「notify + router.replace 同 pageId(重新挂载)」
+ * ReadView 走「removeCachedPage + loadPageResource」。
+ */
+interface PageRestoredPayload {
+  kind: 'page_restored'
+  actorId: string
+  pageId: string
+  versionNumber: number
 }
 /**
  * WS push-based lock 感知(2026-08-06):server 推 lock_changed 时直接带最新
@@ -167,7 +210,9 @@ interface LockClearedPayload {
 }
 type StatelessPayload =
   | PageDeletingPayload
+  | PageLockedDuringRestorePayload
   | PageActuallyDeletedPayload
+  | PageRestoredPayload
   | LockChangedPayload
   | LockClearedPayload
   | { kind: string; [k: string]: unknown }
@@ -179,6 +224,7 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
 
   const lock = ref<PageLock | null>(null)
   const pageDeleting = ref<PageDeleting | null>(null)
+  const pageRestoring = ref<PageDeleting | null>(null)
   let pollHandle: number | null = null
   /**
    * 已 release 的 pageId 集合。release() 一次后该 pageId 永久记入「已让出」,
@@ -347,6 +393,24 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
       // 提示;让 A 主动决定是否让出。
       const actorId = (msg as PageDeletingPayload).actorId
       pageDeleting.value = { actorId, at: Date.now() }
+      // restore 是互斥事件:server 一次只跑一个动作,客户端看到 delete 触发的
+      // 闸门信号就把 restore 的旧 ref 清掉,避免两个 banner 同时挂(语义冲突)。
+      pageRestoring.value = null
+      return
+    }
+    if (msg.kind === 'page_locked_during_restore') {
+      // 跟 page_locked_during_delete 同源(server 端 assertNoActiveLockForWrite
+      // 共用 helper,只是 action='restore'),只是用 PageRestoringBanner 而非
+      // PageDeletingBanner。语义是「对方想回滚到旧版本 · 让出锁才能继续」。
+      // versionNumber 由 server 端 assertNoActiveLockForWrite 的 extraMessage
+      // 带过来,PageRestoringBanner 显示「正在尝试回滚到 v{N}」。
+      const r = msg as PageLockedDuringRestorePayload
+      pageRestoring.value = {
+        actorId: r.actorId,
+        at: Date.now(),
+        versionNumber: r.versionNumber,
+      }
+      pageDeleting.value = null
       return
     }
     if (msg.kind === 'page_actually_deleted') {
@@ -354,8 +418,37 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
       // 经被删了。该离开编辑器了。
       lock.value = null
       pageDeleting.value = null
+      pageRestoring.value = null
       uiStore.notify('此页面已被删除', 'error', 5000)
       router.replace('/')
+      return
+    }
+    if (msg.kind === 'page_restored') {
+      // M13+ restore 提交后:server 清 page_yjs_state + evict 服务端 Y.Doc +
+      // 推这条 page_restored。holder 端要离开编辑器(自己的 in-flight 编辑
+      // 已经被覆盖)。用 router.replace 同 pageId 重新挂载视图,触发 ReadView /
+      // EditView 重新拉数据 + 重新连 HocuspocusProvider → onLoadDocument 走
+      // 冷启动 hydration 从 pages.contentJson(版本内容)重建。
+      // 不主动 release lock —— 重新挂载会触发 usePageLock.onUnmounted 清场。
+      lock.value = null
+      pageDeleting.value = null
+      pageRestoring.value = null
+      const versionNumber = (msg as PageRestoredPayload).versionNumber
+      uiStore.notify(
+        `此页面已回滚到 v${versionNumber},你的编辑已停止`,
+        'info',
+        5000,
+      )
+      // 跳回同一 pageId 触发重新挂载 —— Vue 重新 mount → setup 重新跑
+      // → usePageLock 重新创建 → 数据重新拉。router.replace 同 URL 时 Vue
+      // Router 默认不重 mount,但 pageId 是 computed-from-props,跳一次
+      // 强制 location-level reload。最简单直接:用 location.reload()。
+      // —— 但 location.reload 丢 state。更好的做法是 router.push({ name, params:{id} })
+      // 配合一个 key 强制 remount;这里走 location.reload 是因为当前 page
+      // 编辑的内容已经无效,刷新是合理 UX。
+      if (typeof window !== 'undefined') {
+        window.location.reload()
+      }
       return
     }
     if (msg.kind === 'lock_changed') {
@@ -440,6 +533,8 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
         // 切页时清掉旧 pageDeleting —— 标记的 actor 是基于旧 pageId
         // 的语义,但旧 page 的持有关系也释放了,不该 banner 残留。
         pageDeleting.value = null
+        // M13+ restore 跟 pageDeleting 同源 —— 切页时也要清 pageRestoring。
+        pageRestoring.value = null
       }
       if (!pid || !currentUser.value) {
         lock.value = null
@@ -526,6 +621,23 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
     }
     return null
   })
+  /** M13+ restore:跟 pageDeleting 同源解析,但走 pageRestoring ref。 */
+  const pageRestoringActorName = computed(() => {
+    const r = pageRestoring.value
+    if (!r) return null
+    for (const [, st] of awarenessStates.value) {
+      if (st.user?.id === r.actorId) return st.user.name
+    }
+    return null
+  })
+  const pageRestoringActorColor = computed(() => {
+    const r = pageRestoring.value
+    if (!r) return null
+    for (const [, st] of awarenessStates.value) {
+      if (st.user?.id === r.actorId) return st.user.color
+    }
+    return null
+  })
 
   onBeforeUnmount(async () => {
     stopPoll()
@@ -566,6 +678,9 @@ export function usePageLock(opts: UsePageLockOptions): UsePageLockReturn {
     pageDeleting,
     pageDeletingActorName,
     pageDeletingActorColor,
+    pageRestoring,
+    pageRestoringActorName,
+    pageRestoringActorColor,
     setLock: (l) => {
       lock.value = l
     },

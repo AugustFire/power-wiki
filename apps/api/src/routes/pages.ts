@@ -1881,36 +1881,44 @@ pagesRouter.post('/:id/restore', async (c) => {
  *    - Recursive CTE hard-delete of the subtree (handles the case where
  *      descendants were individually trashed earlier).
  *
- *  M13+: 软删 / purge 在写入 deletedAt 之前**都**先过 `assertNoActiveLockForDelete`
+ *  M13+: 软删 / purge 在写入 deletedAt 之前**都**先过 `assertNoActiveLockForWrite`
  *  —— 编辑中的页面不允许静默删,holder 会被推 stateless
  *  `page_locked_during_delete`,client 端 usePageLock 收到后挂 banner。让出锁后
  *  调用方重试即可。Phase 4 lock 5min TTL 兜底(spoofed lock 自然过期后 B 重试
- *  就过得去)。
+ *  就过得去)。Restore 路径同样过闸门(`page_locked_during_restore`),防止
+ *  admin 的版本回滚被 in-flight 编辑静默覆盖。
  */
-interface PageLockDuringDeleteMessage {
-  kind: 'page_locked_during_delete'
-  actorId: string
-  pageId: string
-}
 
 /**
- * DELETE 在写入 deletedAt 之前的一道闸门 —— 软删 / purge 共用。
+ * DELETE / restore 在写入数据之前的一道闸门 —— 软删 / purge / 版本回滚共用。
  *
- * 返回 `null` 表示当前没有 active lock,可继续走删除;返回 Response 表示
+ * 返回 `null` 表示当前没有 active lock,可继续走动作;返回 Response 表示
  * 拒绝(409 + holders),调用方直接 `return` 即可。
  *
- * 为什么软删也要过这道闸:B 把 A 在编辑的页软删后,A 的 PATCH 会突然 404,
- * UI 误以为「保存失败」,A 继续编辑 → Yjs 状态写进 page_yjs_state(mirror
- * 路径上有 deletedAt 守卫,不会 UPDATE pages 行,但 page_yjs_state 还是会
- * 被持久化)。除非 A 收到明确通知,否则整段编辑期间都不知道页面已被 soft-delete。
+ * 为什么软删 / restore 都要过这道闸:
+ *   - 软删:B 把 A 在编辑的页软删后,A 的 PATCH 会突然 404,UI 误以为「保存
+ *     失败」,A 继续编辑 → Yjs 状态写进 page_yjs_state。除非 A 收到明确
+ *     通知,否则整段编辑期间都不知道页面已被 soft-delete。
+ *   - 版本回滚:同样的 race —— admin restore 把 pages.contentJson 写成版本
+ *     内容,但 page_yjs_state 还是最新 CRDT;几秒后 A 的 onStoreDocument
+ *     debounce 触发,mirror 写 pages.contentJson = A 的 CRDT → restore
+ *     被静默覆盖,且 A 不知道自己的编辑已经被丢弃。
  *
- * 同款问题也存在于 purge(purge 之前已 push-stateless,但 inline 重复
- * 实现这里抽出来共用)。
+ * 通过 `action` 参数选择推哪种 stateless message,client 端各自挂对应的
+ * banner(`page_locked_during_delete` → PageDeletingBanner /
+ *  `page_locked_during_restore` → PageRestoringBanner)。两种 holder 端的
+ * UX 都是「对方想改这页 · 锁闸门已挡 · 让出锁才能继续」。
+ *
+ * `extraMessage`(可选):扩散字段塞进 stateless payload。restore 路径用来带
+ * `versionNumber` 让 holder 端 PageRestoringBanner 显示「要回滚到 v{N}」,
+ * 默认空对象。
  */
-async function assertNoActiveLockForDelete(
+export async function assertNoActiveLockForWrite(
   c: { json: (body: unknown, status: number) => Response },
   pageIds: string[],
   actor: AuthenticatedUser,
+  action: 'delete' | 'restore',
+  extraMessage: Record<string, unknown> = {},
 ): Promise<Response | null> {
   if (pageIds.length === 0) return null
   // join users 取展示名 + 头像色,前端 consumer 拿到 409 后能直接展示
@@ -1935,14 +1943,17 @@ async function assertNoActiveLockForDelete(
     )
   if (rows.length === 0) return null
 
-  // 给 holder 端各推一条 stateless,holder 的 client 收到后挂 PageDeletingBanner。
+  // 给 holder 端各推一条 stateless,holder 的 client 收到后挂对应 banner。
   // 一锁多推:同 page 多 holder 也只推一遍(因为 stateless fanout key 是 page)。
-  // 顶层 pageId 取 pageIds[0] —— purge 时顶层是 `id`,软删传 [id] 时就是 id。
+  // 顶层 pageId 取 pageIds[0] —— purge 时顶层是 `id`,软删/restore 传 [id] 时就是 id。
   const topPageId = pageIds[0]!
-  const message: PageLockDuringDeleteMessage = {
-    kind: 'page_locked_during_delete',
+  const message = {
+    kind: action === 'delete'
+      ? ('page_locked_during_delete' as const)
+      : ('page_locked_during_restore' as const),
     actorId: actor.id,
     pageId: topPageId,
+    ...extraMessage,
   }
   const { sendStatelessToPage } = await import('../collab/stateless')
   // 去重推送的 page 列表(同 page 多个 holder 推一次就够)
@@ -1977,7 +1988,7 @@ async function assertNoActiveLockForDelete(
  * PATCH 404 / soft-delete 的 holder 端 PageDeletingBanner 兜底)。空数组短路,
  * 单例未实例化也短路(test / migration 场景)。
  */
-function evictCollabDocuments(pageIds: string[]): void {
+export function evictCollabDocuments(pageIds: string[]): void {
   if (pageIds.length === 0) return
   const hp = getCollabHocuspocus()
   if (!hp) return
@@ -2039,10 +2050,10 @@ pagesRouter.delete('/:id', async (c) => {
     // belong to this root and get wiped too.
     const subtreeIds = await getPageSubtree(id)
     if (subtreeIds.length === 0) return c.json({ error: 'not_found' }, 404)
-    // M13+: purge 走 assertNoActiveLockForDelete 统一闸门 —— 子树任一页有
+    // M13+: purge 走 assertNoActiveLockForWrite 统一闸门 —— 子树任一页有
     // active lock 都拒(避免删了 page 但 holder 端 Yjs 还在写)。
     // soft-delete 不挡 —— page 还在 trash 期间 holder 可继续编辑,语义无冲突。
-    const lockResp = await assertNoActiveLockForDelete(c, subtreeIds, me)
+    const lockResp = await assertNoActiveLockForWrite(c, subtreeIds, me, 'delete')
     if (lockResp) return lockResp
     // Attachments: collect S3 keys BEFORE the transaction wipes the rows, so
     // we can best-effort delete the objects after COMMIT. DB is source of
@@ -2139,7 +2150,7 @@ pagesRouter.delete('/:id', async (c) => {
   // 且不会自动通知;让 A 先收到 page_locked_during_delete,把决策权交回
   // 编辑者。Phase 4 lock 5min TTL 兜底(bypass 的 spoove lock 自然过期后
   // 重试就过得去)。
-  const lockResp = await assertNoActiveLockForDelete(c, [id], me)
+  const lockResp = await assertNoActiveLockForWrite(c, [id], me, 'delete')
   if (lockResp) return lockResp
 
   // Count non-trashed children with the same parent_id = this page.

@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { onScopeDispose } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
@@ -90,13 +91,52 @@ function dismissReadonlyNotice() {
  *   - 路由切到其他 page:pageId watch 触发 destroy → 新 connect,
  *     不需要本组件手动管。
  *   - 组件卸载 / 路由离开 ReadView:onScopeDispose 调 destroy 关 WS。
+ *
+ *   - onStateless (M13+ restore):B 调 restore 时 server 推 `page_restored`
+ *     给所有连着的 client,ReadView 收到后做 removeCachedPage + 重新拉,
+ *     显示被回滚后的内容。useCollabProvider 自己负责 unsub 时的清理
+ *     (provider 销毁时清 statelessCallbacks)。
  */
-const { awarenessStates, clientId, isConnected } = useCollabProvider({
+const { awarenessStates, clientId, isConnected, onStateless } = useCollabProvider({
   pageId: computed(() => props.id),
   user: computed(() => authStore.user),
   // WS push-based 锁感知(2026-08-06):ReadView 永远 'view',让对端
   // EditView 知道「我只是在看,不是编辑」。Provider 自动 setLocalStateField。
   awarenessMode: () => 'view',
+})
+
+/**
+ * M13+ restore 收口的 ReadView 端处理(2026-08-06):
+ *   server 提交 restore 后推 `page_restored { actorId, pageId, versionNumber }`
+ *   给所有 connected awareness,EditView holder 走 usePageLock 内部 hard
+ *   reload;ReadView 走「remove 缓存 + loadPageResource」—— 更轻量,只
+ *   刷新当前页数据,不丢其他 page / scroll position / 子 tab。
+ *
+ *   为什么是 onScopeDispose 而不是 onBeforeUnmount —— useCollabProvider 自己
+ *   也用 onScopeDispose 挂 callbacks,ReadView 也跟它对齐,scope 退出时
+ *   provider 销毁 + 我们的 stateless unsub 都跑同一钩子,顺序自然。
+ */
+const statelessUnsub = onStateless((payloadStr: string) => {
+  let msg: { kind?: string; versionNumber?: number } | null = null
+  try {
+    msg = JSON.parse(payloadStr) as { kind?: string; versionNumber?: number }
+  } catch {
+    return
+  }
+  if (!msg || msg.kind !== 'page_restored') return
+  if (msg.versionNumber == null) return
+  const v = msg.versionNumber
+  // 通知 + re-fetch。ReadView 没 holder 视角那么紧迫(用户只是在看),
+  // 不需要 hard reload —— 直接 remove 缓存让 pageLoadState 回到 loading
+  // 显示 Skeleton,然后 loadPageResource 拉新数据同步 store。
+  uiStore.notify(`此页面已回滚到 v${v}`, 'info', 4000)
+  pagesStore.removeCachedPage(props.id)
+  // pageLoadState 在 loadPageResource 内部按 cache 缺失回到 loading,
+  // 拉完后翻 'ready';不手动设,避免跟 composable 内部 race。
+  void loadPageResource(props.id)
+})
+onScopeDispose(() => {
+  statelessUnsub()
 })
 
 /**
