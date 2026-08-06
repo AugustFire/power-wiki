@@ -85,6 +85,8 @@ import {
   userRecentPages,
   pageRestrictions,
   pagePublicShares,
+  pageYjsState,
+  pageLocks,
 } from '../db/schema'
 import { rowToPageNode } from '../lib/rowToPageNode'
 import { generatePageId, getPageSubtree, isDescendantOrSelf } from '../lib/ids'
@@ -108,7 +110,9 @@ import { purgeExpiredTrash } from '../lib/retention'
 import { parseMarkdown } from '../lib/mdImport'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
 import { type Variables } from '../auth/middleware'
+import type { AuthenticatedUser } from '../auth/session'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
+import { getCollabHocuspocus } from '../collab/server'
 
 const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/src/lib/id.ts (10 chars)
 
@@ -1876,7 +1880,117 @@ pagesRouter.post('/:id/restore', async (c) => {
  *    - Row must already be trashed, else 409 not_trashed.
  *    - Recursive CTE hard-delete of the subtree (handles the case where
  *      descendants were individually trashed earlier).
+ *
+ *  M13+: 软删 / purge 在写入 deletedAt 之前**都**先过 `assertNoActiveLockForDelete`
+ *  —— 编辑中的页面不允许静默删,holder 会被推 stateless
+ *  `page_locked_during_delete`,client 端 usePageLock 收到后挂 banner。让出锁后
+ *  调用方重试即可。Phase 4 lock 5min TTL 兜底(spoofed lock 自然过期后 B 重试
+ *  就过得去)。
  */
+interface PageLockDuringDeleteMessage {
+  kind: 'page_locked_during_delete'
+  actorId: string
+  pageId: string
+}
+
+/**
+ * DELETE 在写入 deletedAt 之前的一道闸门 —— 软删 / purge 共用。
+ *
+ * 返回 `null` 表示当前没有 active lock,可继续走删除;返回 Response 表示
+ * 拒绝(409 + holders),调用方直接 `return` 即可。
+ *
+ * 为什么软删也要过这道闸:B 把 A 在编辑的页软删后,A 的 PATCH 会突然 404,
+ * UI 误以为「保存失败」,A 继续编辑 → Yjs 状态写进 page_yjs_state(mirror
+ * 路径上有 deletedAt 守卫,不会 UPDATE pages 行,但 page_yjs_state 还是会
+ * 被持久化)。除非 A 收到明确通知,否则整段编辑期间都不知道页面已被 soft-delete。
+ *
+ * 同款问题也存在于 purge(purge 之前已 push-stateless,但 inline 重复
+ * 实现这里抽出来共用)。
+ */
+async function assertNoActiveLockForDelete(
+  c: { json: (body: unknown, status: number) => Response },
+  pageIds: string[],
+  actor: AuthenticatedUser,
+): Promise<Response | null> {
+  if (pageIds.length === 0) return null
+  // join users 取展示名 + 头像色,前端 consumer 拿到 409 后能直接展示
+  // 「Alice 正在编辑」而不必 fallback 到 userId 字面量。avatarKind/avatarRef
+  // 一并带回给 UserAvatar 用 —— 避免前端二次 GET /api/users/:id。
+  const rows = await db
+    .select({
+      pageId: pageLocks.pageId,
+      userId: pageLocks.userId,
+      userName: users.name,
+      userColor: users.color,
+      avatarKind: users.avatarKind,
+      avatarRef: users.avatarRef,
+    })
+    .from(pageLocks)
+    .innerJoin(users, eq(pageLocks.userId, users.id))
+    .where(
+      and(
+        inArray(pageLocks.pageId, pageIds),
+        gte(pageLocks.expiresAt, Date.now()),
+      ),
+    )
+  if (rows.length === 0) return null
+
+  // 给 holder 端各推一条 stateless,holder 的 client 收到后挂 PageDeletingBanner。
+  // 一锁多推:同 page 多 holder 也只推一遍(因为 stateless fanout key 是 page)。
+  // 顶层 pageId 取 pageIds[0] —— purge 时顶层是 `id`,软删传 [id] 时就是 id。
+  const topPageId = pageIds[0]!
+  const message: PageLockDuringDeleteMessage = {
+    kind: 'page_locked_during_delete',
+    actorId: actor.id,
+    pageId: topPageId,
+  }
+  const { sendStatelessToPage } = await import('../collab/stateless')
+  // 去重推送的 page 列表(同 page 多个 holder 推一次就够)
+  const uniqueLockedPages = new Set(rows.map((r) => r.pageId))
+  await Promise.all(
+    Array.from(uniqueLockedPages).map((pid) =>
+      sendStatelessToPage(pid, message),
+    ),
+  )
+  return c.json(
+    {
+      error: 'page_locked',
+      holders: rows.map((r) => ({
+        pageId: r.pageId,
+        userId: r.userId,
+        userName: r.userName,
+        userColor: r.userColor,
+        avatarKind: r.avatarKind,
+        avatarRef: r.avatarRef,
+      })),
+    },
+    409,
+  ) as Response
+}
+
+/**
+ * 主动 evict 一组 pageId 对应的服务端 Y.Doc。DELETE 路径(软删 / purge)
+ * 在事务 commit 之后调一次,避免 Hocuspocus 内部 GC 不及时持有指向已删
+ * page 的 Y.Doc。
+ *
+ * 仅 server 端清理 —— 不广播 stateless(连接可能已经断开 / client 端会通过
+ * PATCH 404 / soft-delete 的 holder 端 PageDeletingBanner 兜底)。空数组短路,
+ * 单例未实例化也短路(test / migration 场景)。
+ */
+function evictCollabDocuments(pageIds: string[]): void {
+  if (pageIds.length === 0) return
+  const hp = getCollabHocuspocus()
+  if (!hp) return
+  for (const id of pageIds) {
+    try {
+      hp.documents.get(id)?.destroy()
+    } catch (err) {
+      // 单页 evict 失败不影响其余页
+      console.warn('[pages.ts] evict Y.Doc failed for', id, err)
+    }
+  }
+}
+
 pagesRouter.delete('/:id', async (c) => {
   const me = c.get('user')
   const id = c.req.param('id')
@@ -1925,6 +2039,11 @@ pagesRouter.delete('/:id', async (c) => {
     // belong to this root and get wiped too.
     const subtreeIds = await getPageSubtree(id)
     if (subtreeIds.length === 0) return c.json({ error: 'not_found' }, 404)
+    // M13+: purge 走 assertNoActiveLockForDelete 统一闸门 —— 子树任一页有
+    // active lock 都拒(避免删了 page 但 holder 端 Yjs 还在写)。
+    // soft-delete 不挡 —— page 还在 trash 期间 holder 可继续编辑,语义无冲突。
+    const lockResp = await assertNoActiveLockForDelete(c, subtreeIds, me)
+    if (lockResp) return lockResp
     // Attachments: collect S3 keys BEFORE the transaction wipes the rows, so
     // we can best-effort delete the objects after COMMIT. DB is source of
     // truth; orphaned S3 objects are tolerated (a future GC can sweep them).
@@ -1960,6 +2079,13 @@ pagesRouter.delete('/:id', async (c) => {
       await tx
         .delete(pagePublicShares)
         .where(inArray(pagePublicShares.pageId, subtreeIds))
+      // 实时协同(Yjs 状态持久化):No FK,page hard-delete 同事务清理,
+      // 避免悬挂 bytea 行。soft-delete (deletedAt) 不清 —— restore 后
+      // 协作文档状态仍在(collaboration awareness + Y.Doc 内容)。
+      await tx.delete(pageYjsState).where(inArray(pageYjsState.pageId, subtreeIds))
+      // Phase 4: 编辑锁 row 随 page purge 一并清 —— 锁是页面级,page 没
+      // 了锁也没意义;不会级联到 holding user(锁行无 FK)。
+      await tx.delete(pageLocks).where(inArray(pageLocks.pageId, subtreeIds))
       // 服务端最近浏览:page hard-delete 时显式清理 user_recent_pages
       // (软删保留,recent 历史在 restore 后仍可见;详见 0021 migration 注释)
       await tx
@@ -1986,6 +2112,12 @@ pagesRouter.delete('/:id', async (c) => {
         console.warn('[purge] failed to delete object', storageKey, err)
       }
     }
+    // M13+: 服务端 Y.Doc 还在内存里 —— 所有 connected client 的 onStoreDocument
+    // / onBeforeUnloadDocument 会再 fire,已经走 persistYDoc 的 deletedAt 守卫
+    // 兜住。这里再主动 destroy documents map,避免 Hocuspocus 内部 GC 不及时
+    // 导致长时间持有 orphan Y.Doc(占内存)。也兜住「client 已断但 Y.Doc
+    // 还在 server 内存」的场景。
+    evictCollabDocuments(subtreeIds)
     // Activity feed — purge event references the now-deleted pageId. The
     // LEFT JOIN in GET /activity will surface title=null and the view
     // renders "(无标题)". Event row stays put (no FK, no cascade).
@@ -2002,6 +2134,13 @@ pagesRouter.delete('/:id', async (c) => {
   if (existing.deletedAt !== null) {
     return c.json({ error: 'not_trashed' }, 409)
   }
+
+  // M13+: 软删也过锁闸门 —— A 在编辑时 B 软删这页,A 的 PATCH 会突然 404
+  // 且不会自动通知;让 A 先收到 page_locked_during_delete,把决策权交回
+  // 编辑者。Phase 4 lock 5min TTL 兜底(bypass 的 spoove lock 自然过期后
+  // 重试就过得去)。
+  const lockResp = await assertNoActiveLockForDelete(c, [id], me)
+  if (lockResp) return lockResp
 
   // Count non-trashed children with the same parent_id = this page.
   // Cheap (already covered by `pages_parent_idx`) and avoids any
@@ -2047,6 +2186,12 @@ pagesRouter.delete('/:id', async (c) => {
       pageAuthorId: existing.authorId,
     })
   })
+
+  // M13+: 主动 evict 服务端 Y.Doc(若存在)。即使 purge 路径也在做,这里
+  // 再加一份兜底:Hocuspocus documents map 在软删时还可能持有这页的 Y.Doc
+  // (client 端连接没断),不 evict 会在 memory 里保留一个指向 trashed row 的
+  // Y.Doc,直到下一个 idle GC 或者 client 主动 disconnect。
+  evictCollabDocuments([id])
 
   return c.body(null, 204)
 })

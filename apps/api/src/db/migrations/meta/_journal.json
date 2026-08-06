@@ -197,6 +197,20 @@
       "when": 1789000000000,
       "tag": "0034_page_inherit_view_restrictions",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1789100000000,
+      "tag": "0035_collab",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1789200000000,
+      "tag": "0036_page_locks",
+      "breakpoints": true
     }
   ]
 }

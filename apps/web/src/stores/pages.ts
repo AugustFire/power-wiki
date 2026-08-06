@@ -12,6 +12,7 @@ import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
 import { useUiStore } from '@/stores/ui'
 import { useSpacesStore } from '@/stores/spaces'
+import { router } from '@/router'
 import type {
   CreatePageInput,
   ImportPageResult,
@@ -573,6 +574,16 @@ export const usePagesStore = defineStore('pages', () => {
     } catch (e) {
       const i = pages.value.findIndex((p) => p.id === id)
       if (i >= 0) pages.value[i] = snapshot
+      // M13+ 协同删除 race 收口:服务端 not_found (page 已被软删/硬删) 不再走
+      // 通用 setError 提示「保存失败」 —— 那是误导(A 还在编辑,但 page 已死)。
+      // 弹一次性 notify + 路由跳走,跟 usePageLock.refresh() 的 not_found 路径
+      // 行为对齐。re-throw 同样的 ApiError 让 caller (usePageAutoSave.persistNow
+      // 也会识别 not_found 短路 saveState='error') 识别。
+      if (e instanceof ApiError && e.code === 'not_found') {
+        ui().notify('此页面已被删除,你的编辑已停止保存', 'error', 5000)
+        void router.replace('/')
+        throw e
+      }
       ui().setError(`保存失败: ${errorMessage(e)}`)
       throw e
     }

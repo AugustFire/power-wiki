@@ -24,11 +24,15 @@ import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
+import { useCollabProvider } from '@/editor/collab/useCollabProvider'
 import type { PageNode } from '@power-wiki/shared'
 import { emptyDoc, EMPTY_HTML, DEFAULT_TITLE, normalizeTitle } from '@/lib/constants'
 import { newId } from '@/lib/id'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { canManagePageWrite } from '@/lib/permissions'
+import { usePageLock } from '@/composables/usePageLock'
+import LockBanner from '@/components/page/LockBanner.vue'
+import PageDeletingBanner from '@/components/page/PageDeletingBanner.vue'
 // Tiptap 的 vue-3 和 core Editor 类型不完全兼容,这里使用 any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyEditor = any
@@ -71,6 +75,113 @@ const localTitle = ref<string>('')
 const localJSON = ref<Record<string, unknown>>(emptyDoc())
 const localHTML = ref<string>(EMPTY_HTML)
 
+/**
+ * `page` / `parentPage` 必须在 `collabMode` 之前定义 —— collabMode 通过
+ * page.value?.spaceId 派生(usePageLock 的 watch 在 setup 同步阶段读
+ * collabMode.value,触发 collabMode 的 getter 求值,如果 page 还没声明
+ * 会撞「Cannot access 'page' before initialization」TDZ 错误)。
+ * EditView 的 localId 早于 onMounted 解析出来的 server page,这里 page.value
+ * 初次为 undefined,collabMode 退化成 'off' —— usePageLock 此时不拿锁,
+ * 是预期的。后续 page.value 解析后 watch 自动触发,mode 翻 'shared' 才
+ * acquire。
+ */
+const page = computed(() => (localId.value ? pagesStore.getPage(localId.value) : undefined))
+const parentPage = computed(() => {
+  const pid = page.value?.parentId
+  if (!pid) return null
+  return pagesStore.getPage(pid) ?? null
+})
+const isExisting = computed(() => !!localId.value)
+
+/**
+ * 协同模式(2026-08-05 Phase 2 + Phase 3 落地)。
+ *
+ * 派生规则:
+ *   - 团队空间(kind='shared' 或缺省)→ collabMode='shared',挂 Hocuspocus
+ *     provider 走 server relay,跟 backend hooks.onStoreDocument mirror
+ *     闭环(切空间时 collabMode 自动跟着 page.value.spaceId 走)。
+ *   - 个人空间(kind='personal')→ Phase 3 起 collabMode='personal',挂
+ *     BroadcastChannelProvider,只在本浏览器同 origin 多 Tab 间同步,
+ *     不上 server。Phase 2 时期走 'off'(单写者),已替换为 'personal'。
+ *   - pageId 还没解析出来(新建页过渡态)→ collabMode='off',挂单写者
+ *     provider。等 page.value 解析后,spaceKind watcher 会把 mode 翻成
+ *     shared / personal 并 bump editorKey 重挂。
+ *
+ * 注意:不能在「page.value 还没解析出来」时硬塞 collabMode='shared' 让
+ * provider 提前连 —— 那会让 collab hook 在 onLoadDocument 拿到空 ydoc,
+ * 而 server mirror 的内容会丢失。`localId` 有值后再激活 provider 是
+ * useCollabProvider 的 watch pageId 实现的,这里只决定 mode 字符串。
+ */
+const collabMode = computed<'off' | 'shared' | 'personal'>(() => {
+  const sid = page.value?.spaceId
+  if (!sid) return 'off'
+  const space = spacesStore.spaces.value.find((s: { id: string; kind?: 'personal' | 'shared' }) => s.id === sid)
+  return space?.kind === 'personal' ? 'personal' : 'shared'
+})
+
+/**
+ * collabProvider —— 根据 collabMode 路由到 Hocuspocus(shared) 或
+ * BroadcastChannel(personal)。Phase 3 之前 useCollabProvider 只支持
+ * shared,现在内部 connect() 按 mode 分发,caller 仍然只看到一个统一
+ * interface。
+ *
+ * authStore.user 是 Pinia reactive proxy,跟 Vue ref 等价。Vue template
+ * 里可以直接 `authStore.user` 拿到 `.value`,但传给 TypeScript 严格
+ * 类型时偶尔需要 cast,这里走 computed 包一层保持响应性 + 类型对得上。
+ */
+const collabUserRef = computed(() => authStore.user)
+const collab = useCollabProvider({
+  pageId: localId,
+  user: collabUserRef,
+  // collabMode 是 computed,每次 pageId watch 触发 connect 时取一次最新值。
+  // shared → personal 同 user 跨空间切页时 mode 翻转正确生效。
+  mode: () => collabMode.value === 'personal' ? 'personal' : 'shared',
+  // WS push-based 锁感知(2026-08-06):进 EditView 后 awareness.user.mode
+  // 翻成 'edit',让其他 ReadView 观众的 PresenceAvatars 区分「正在看」
+  // vs「正在编辑」。provider 在 onAuthenticated / mode 变化时自动写本地 state。
+  awarenessMode: () => 'edit',
+})
+
+/**
+ * Phase 4 编辑锁 UI —— 共享空间 acquire / 释放 + 倒计时 banner。
+ * personal / off 模式 usePageLock 内部直接 return,不拿锁。
+ *
+ * Phase 5:lock acquire/release 是 snapshot 的「session 边界」。把
+ * snapshotPage 接到 onAcquire / onRelease 上,语义是:
+ *   - 进入 EditView 拿锁 = 编辑会话开始 → 打一个 checkpoint
+ *     (空内容的 page 也打,作为「user X 进来看过」标记)
+ *   - 释放锁(切页 / unmount / route leave)= 会话结束 → 再打一个
+ *     checkpoint,捕获最终状态
+ *   - 中间所有 PATCH 走 auto-save 静默路径,不进 page_versions
+ *
+ * onAcquire / onRelease 失败由 usePageLock 内部静默 —— snapshot 是
+ * advisory,失败不应该阻断 lock 操作。
+ */
+const lockCtl = usePageLock({
+  pageId: localId,
+  currentUser: collabUserRef,
+  isAdmin: computed(() => authStore.isAdmin),
+  collabMode,
+  awarenessStates: collab.awarenessStates,
+  clientId: collab.clientId,
+  // WS push-based lock 感知(2026-08-06):有连接时 polling 5s 兜底,
+  // 断开时 1s。unref 后只读 boolean,不参与 reactivity 反应链。
+  isCollabConnected: computed(() => collab.isConnected.value),
+  onAcquire: (pageId: string) =>
+    pagesStore.snapshotPage(pageId, 'lock-acquire').catch((err) => {
+      console.warn('[EditView] lock-acquire snapshot failed', err)
+    }),
+  onRelease: (pageId: string) =>
+    pagesStore.snapshotPage(pageId, 'lock-release').catch((err) => {
+      console.warn('[EditView] lock-release snapshot failed', err)
+    }),
+  // M13+: 把 useCollabProvider 暴露的 stateless 订阅口透传给 usePageLock,
+  // 让 usePageLock 内部识别 page_locked_during_delete / page_actually_deleted
+  // 并驱动 pageDeleting ref + 兜底 redirect。B 调 DELETE 被锁闸门挡回后
+  // server 推一条,A 这边 banner 立刻升起。
+  onStateless: collab.onStateless,
+})
+
 /** 浏览器 tab 标题:编辑现有页 → "编辑: <title>";新建页(无 localId)
  * 时,如果用户已经输入了标题,显示 "编辑: <输入中标题>",否则退回 BASE。 */
 useDocumentTitle(() => {
@@ -104,13 +215,24 @@ const idleSnapshotSeconds = computed(() => IDLE_SNAPSHOT_MS / 1000)
  * `getPatch` 直接从 editor 实例读 getJSON()/getHTML(),而不是读 local
  * refs —— RichEditor 的 emit 走 Vue 微任务,「编辑后立即 flush」时
  * local refs 可能还差最后一次 emit。editor 实例永远是最新的。
+ *
+ * Phase 2(2026-08-05):协同模式(shared)下 **body 不进 PATCH**。
+ * `contentJSON` / `contentHTML` 由 server 端 Hocuspocus onStoreDocument
+ * 镜像写到 pages 表,Yjs 是事实来源;客户端 PATCH 这两字段会跟 server
+ * mirror 形成竞态 —— 客户端落旧内容、server 又用新内容覆盖,浪费 IO
+ * 且容易触发「我保存好了」之后又被回滚的诡异 bug。composable 不知道
+ * 协同状态,本视图在 getPatch 里直接 drop 掉。
  */
 const autoSave = usePageAutoSave({
   pageId: localId,
   getPatch: () => {
+    const title = normalizeTitle(localTitle.value)
+    if (collabMode.value === 'shared') {
+      return { title }
+    }
     const ed = editorRef.value
     return {
-      title: normalizeTitle(localTitle.value),
+      title,
       contentJSON: (ed ? ed.getJSON() : localJSON.value) as Record<string, unknown>,
       contentHTML: ed ? ed.getHTML() : localHTML.value,
     }
@@ -158,14 +280,6 @@ onMounted(() =>
 onBeforeUnmount(() =>
   document.removeEventListener('click', onAttachmentImgClickInEditor, true),
 )
-
-const isExisting = computed(() => !!localId.value)
-const page = computed(() => (localId.value ? pagesStore.getPage(localId.value) : undefined))
-const parentPage = computed(() => {
-  const pid = page.value?.parentId
-  if (!pid) return null
-  return pagesStore.getPage(pid) ?? null
-})
 
 /**
  * 模块 4 P1 修复:跨空间深链进入编辑视图时主动 setActiveSpace,跟
@@ -245,8 +359,26 @@ function focusTitle(): void {
 /** Tiptap 编辑器 :key —— 切换编辑对象 / 强制刷新时 +1 让 RichEditor
  *  重挂载,确保 ProseMirror 内部状态跟 model-value 一致。Tiptap 的
  *  internal content 不会主动重读 model-value(只 watch 初次),必须
- *  unmount + mount 才能换骨架。 */
+ *  unmount + mount 才能换骨架。
+ *
+ * 协同边界(2026-08-05 Phase 2):`collabMode` 或 `ydoc` 引用变化都强制
+ * 重挂 —— @tiptap/vue-3 的 useEditor 在 setup 一次性创建 Editor,
+ * extensions / ydoc 引用变化不会响应;不重挂会让旧 ydoc 持续 transact、
+ * 新 ydoc 收不到内容。
+ *
+ * Phase 4 修(2026-08-06):`awareness` 也加入依赖 —— collabMode 翻 'shared'
+ * 后,HocuspocusProvider 异步 connect,中间窗口 buildExtensions 会以
+ * 「provider 还没就绪」fallback 到单写者模式。等 onSynced 触发 awareness
+ * 引用变化时 bump key 重挂,切到完整 collab 配置 + Collaboration +
+ * CursorExtension,避免在 RichEditor setup 阶段抛错连带 LockBanner
+ * 等上层组件被 Vue 中断 render。 */
 const editorKey = ref(0)
+watch(
+  () => [collabMode.value, collab.ydoc.value, collab.awareness.value] as const,
+  () => {
+    editorKey.value++
+  },
+)
 
 const wordCount = ref<{ words: number }>({ words: 0 })
 const titleInputRef = ref<HTMLInputElement | null>(null)
@@ -595,6 +727,32 @@ onBeforeUnmount(() => {
             :placeholder="DEFAULT_TITLE"
           />
 
+          <!-- M13+ 协同删除 race 收口横幅 —— 比 LockBanner 更紧迫(删除是不可逆
+               动作),放在 LockBanner 之上确保它最早被看到。actorId 是 deleter
+               (B) 的 userId,name 优先从 awarenessStates 解析,B 不在 awareness
+               时 fallback 到 actorId 直接展示。
+               「我知道了,让出」调 closeEditor → 路由跳走 → usePageLock 释锁
+               → B 重试 DELETE 时锁闸门放行 → 落地。 -->
+          <PageDeletingBanner
+            v-if="lockCtl.pageDeleting.value"
+            :actor-id="lockCtl.pageDeleting.value.actorId"
+            :actor-name="lockCtl.pageDeletingActorName.value"
+            :actor-color="lockCtl.pageDeletingActorColor.value"
+            @leave="closeEditor"
+          />
+
+          <!-- Phase 4 编辑锁横幅 —— 仅 shared mode 有人锁他人才渲染。
+               个人空间 / 新页过渡态 / 自己持锁 都不渲染。 -->
+          <LockBanner
+            :lock="lockCtl.lock.value"
+            :is-admin="authStore.isAdmin"
+            :current-user-id="authStore.user?.id ?? ''"
+            :holder-name="lockCtl.holderName.value"
+            :holder-color="lockCtl.holderColor.value"
+            @takeover="lockCtl.setLock"
+            @released="lockCtl.clear"
+          />
+
           <div v-if="page" class="edit-byline">
             <UserAvatar :size="24" :color="editorAvatarColor" :label="editorDisplay" :avatar-kind="page.updatedByAvatarKind ?? page.authorAvatarKind ?? null" :avatar-ref="page.updatedByAvatarRef ?? page.authorAvatarRef ?? null" :user-id="page.updatedBy ?? page.authorId ?? null" />
             <span><strong>{{ editorDisplay }}</strong> · 最后编辑于 {{ bylineUpdatedAt }}</span>
@@ -608,6 +766,10 @@ onBeforeUnmount(() => {
           <RichEditor
             :key="editorKey"
             :model-value="localJSON"
+            :collab-mode="collabMode"
+            :ydoc="collab.ydoc.value"
+            :collab-provider="collab.awareness.value ? { awareness: collab.awareness.value } : null"
+            :collab-user="authStore.user"
             @update:model-value="onEditorJSON"
             @update:html="onEditorHTML"
             @word-count="onEditorWordCount"

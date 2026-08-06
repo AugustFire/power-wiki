@@ -1,4 +1,5 @@
 import StarterKit from '@tiptap/starter-kit'
+import type { Mark, Node } from '@tiptap/core'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Table from '@tiptap/extension-table'
@@ -112,7 +113,7 @@ const cellAttrs = {
 }
 
 /**
- * Tiptap 扩展集合
+ * Tiptap 扩展集合 —— 基础集合(不含 Yjs 协同扩展)。
  *
  * 当前约束:
  * - BlockBrowserSave 拦截 Cmd/Ctrl+S 防浏览器保存对话框
@@ -121,8 +122,16 @@ const cellAttrs = {
  * - Markdown 输入规则开启(`## ` → h2、`**bold**` → bold、`- ` → ul 等)
  * - IME 中文拼音期间,Tiptap 通过 `view.composing` 字段自动跳过 inputRules
  *   (见 @tiptap/core/src/InputRule.ts:97-104),无需自己写 composition 插件
+ *
+ * 关于协同扩展(2026-08-05 落地):
+ *   Phase 2 起,`buildExtensions.ts` 工厂根据 collabMode 决定是否在本
+ *   集合基础上追加 `Collaboration` + `CollaborationCursor`,以及是否
+ *   关闭 StarterKit.history(防止 Y.UndoManager 与 StarterKit history
+ *   双套 undo stack 冲突)。本文件只导出纯静态 baseExtensions,调用方
+ *   用法不变(import 默认导出 / baseExtensions 命名导出都行),协同
+ *   走工厂入口。
  */
-const extensions = [
+const baseExtensions = [
   BlockBrowserSave,
   HeadingAnchor,
   StarterKit.configure({
@@ -234,4 +243,11 @@ const extensions = [
   StatusBadge,
 ]
 
-export default extensions
+/** Tiptap 扩展数组类型 —— @tiptap/core 的 `Extensions` 别名,
+ * 供 buildExtensions 工厂签名 + RichEditor props 共享。 */
+export type Extensions = Array<Extension | Mark | Node>
+
+/** 命名导出:buildExtensions 工厂消费的 base 集合。 */
+export { baseExtensions }
+
+export default baseExtensions

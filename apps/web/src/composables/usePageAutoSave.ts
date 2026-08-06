@@ -1,6 +1,6 @@
 /**
- * usePageAutoSave — 抽离 EditView / RichEditor 各自散落的防抖 + 状态机 +
- * 30s idle snapshot,统一一份 composable。
+ * usePageAutoSave — 抽离 EditView / RichEditor 各自散落的防抖 + 状态机,
+ * 统一一份 composable。
  *
  * 解决的差距(P0/5.1):
  *   - EditView 500ms + RichEditor 800ms 两次防抖串联 → 最坏 1.3s 才落盘
@@ -17,9 +17,16 @@
  *     编辑才正常 arm 定时器
  *   - error 态 sticky:失败时保留旧 fingerprint,下次 scheduleSave 内容
  *     真的变化了才重试 —— 不让用户看到「保存中」瞬间闪一下又失败
- *   - 30s idle snapshot 仅在「PATCH 之后还有未打 checkpoint 的改动」时
- *     触发,跟 Notion / Docs 一致:不提供手动「保存版本」按钮,version
- *     只在 idle / route leave 边界自动打
+ *   - **不再内置 idle snapshot timer**(Phase 5 砍掉)。snapshot 现在只在
+ *     「编辑会话边界」打:进入 EditView 拿锁时(acquire)、释放锁时(release /
+ *     route leave / unmount),由 EditView 在 usePageLock 的 onAcquire /
+ *     onRelease 回调里调 snapshotPage —— 跟 lock 生命周期对齐,语义清晰。
+ *     30s idle timer 砍掉理由:打字中途短暂停顿就打个 checkpoint,
+ *     page_versions 噪声太大,且 snapshot 是给 restore 用的、
+ *     用户极少主动点 restore,值不回成本。Phase 4 之前 idle snapshot
+ *     还有用是因为 Phase 1-3 没有协同锁,「session 边界」不明显;
+ *     协同锁引入后,session = lock 生命周期,直接绑 lock boundary
+ *     是更准的边界。
  *   - onScopeDispose 自动 dispose,不需要 caller 记得清
  *   - pageId Ref 变化时重置全部内部状态(切页场景);reset 是同步的,
  *     在同一 tick 内后续 scheduleSave 看到的 justHydrated=true 是新页
@@ -32,6 +39,7 @@
  *     类似配置沿用同样模式:`import.meta.env.VITE_* ?? 默认值`
  */
 import { onScopeDispose, ref, watch, type Ref } from 'vue'
+import { ApiError } from '@/lib/api'
 import type { PageNode } from '@power-wiki/shared'
 
 export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
@@ -58,7 +66,14 @@ export interface UsePageAutoSaveOptions {
   snapshot: (changeNote?: string) => Promise<void>
   /** 防抖窗口 ms。默认 env.VITE_AUTO_SAVE_MS ?? 500。设 0 立即保存。 */
   debounceMs?: number
-  /** 空闲 snapshot 窗口 ms。默认 30_000。传 0 关闭 idle snapshot。 */
+  /**
+   * 空闲 snapshot 窗口 ms。默认 0(关闭)。
+   *
+   * Phase 5 起 snapshots 改在 lock acquire/release 边界打,不再走
+   * 30s idle timer。此参数保留以备后续要恢复 idle 行为时不用改
+   * 签名;默认 0 即关。传 30_000 可手动恢复旧的 30s 行为,但不建议
+   * —— 见 doc 顶部「不再内置 idle snapshot timer」注释。
+   */
   idleSnapshotMs?: number
 }
 
@@ -75,18 +90,23 @@ export interface UsePageAutoSaveReturn {
    */
   scheduleSave: () => void
   /**
-   * 立即取消定时器 + 同步 PATCH + 补 boundary snapshot(若仍有未打
-   * checkpoint 的改动)。route-leave / unmount 时调用。
+   * 立即取消定时器 + 同步 PATCH。route-leave / unmount 时调用。
    * 内部有 isFlushingOnLeave 守卫,并发调用安全。
+   *
+   * Phase 5 起 flushSave 不再补 boundary snapshot —— snapshot 100%
+   * 走 lock boundary(EditView 的 onAcquire / onRelease 回调),flushSave
+   * 唯一职责是保证 PATCH 落盘,避免离开页面时丢最后一次改动。hasUnsnapshottedEdits
+   * 标志保留供 flushSnapshot 单独使用,但 flushSave 不再调它。
    */
   flushSave: () => Promise<void>
   /**
-   * 成功 PATCH 后由 composable 内部调用 → arm 30s setTimeout。
-   * 外部一般不需要直接调,除非自定义 PATCH 路径(目前没有)。
+   * 成功 PATCH 后由 composable 内部调用 → arm idle setTimeout(若 idleSnapshotMs > 0)。
+   * Phase 5 起 idleSnapshotMs 默认 0,这条退化成 no-op。保留接口以备
+   * 后续要恢复 idle snapshot 时不用改 caller 签名。
    */
   scheduleSnapshot: () => void
   /**
-   * 立即取消 30s 定时器 + 同步 snapshot(若仍有未 snapshot 的 edit)。
+   * 立即取消 idle snapshot 定时器 + 同步 snapshot(若仍有未 snapshot 的 edit)。
    * flushSave 已经包含这步,单独调用适用于「只想要 snapshot 不要 PATCH」的场景。
    */
   flushSnapshot: () => Promise<void>
@@ -113,7 +133,7 @@ function readDebounceMsFromEnv(fallback: number): number {
 }
 
 const DEFAULT_DEBOUNCE_MS = 500
-const DEFAULT_IDLE_SNAPSHOT_MS = 30_000
+const DEFAULT_IDLE_SNAPSHOT_MS = 0
 const SAVED_HIDE_MS = 1_600
 
 export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveReturn {
@@ -196,10 +216,25 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
       await save(patch)
       lastSavedFingerprint = fp
       isDirty.value = false
+      // Phase 5:不再调 scheduleIdleSnapshot() —— snapshot 在 lock acquire/
+      // release 边界打(EditView 的 onAcquire/onRelease)。这里仍记
+      // hasUnsnapshottedEdits=true,留给 route-leave 时 flushSnapshot 兜底
+      // (用户写完字没等边界就 tab close / 刷新)。
       hasUnsnapshottedEdits = true
-      scheduleIdleSnapshot()
       return true
-    } catch {
+    } catch (e) {
+      // M13+ 协同删除 race 收口:not_found(后端返 404,page 已被软删/硬删)
+      // 走 pagesStore.updatePage 兜底处理(弹 notify + router.replace('/')),
+      // 这里不要再 sticky 一个 'error' saveState —— 用户已经离开编辑器,
+      // 显示「保存失败」banner 是误导。短路返回 false,后续 scheduleSave
+      // 不会再来(组件卸载路径),即便来也会在 pageId 变化/不上时自然消停。
+      // 把 saveState 拉回 'idle' 而非 'saving' —— 此时 saveState 已在
+      // persistNow 前被 caller 设为 'saving'(flushSave / setTimeout 防抖),
+      // 不主动清会导致 EditView 销毁前的最后一帧渲染出「正在保存」假指示。
+      if (e instanceof ApiError && e.code === 'not_found') {
+        saveState.value = 'idle'
+        return false
+      }
       // 保留旧 fingerprint(避免 error 状态下 fingerprint 被清空),
       // 下次 scheduleSave 仍走原 fingerprint 对比,内容真的变化才重试。
       // 'error' 态 sticky,不自动清 —— 下次成功的 PATCH 会把它
@@ -260,21 +295,17 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
     clearIdleSnapshotTimer()
     isFlushingOnLeave = true
     try {
-      // 不只用 isDirty 一刀切:auto-save 防抖 fire 时已经把 isDirty
-      // 翻回 false,但 hasUnsnapshottedEdits 还是 true(刚刚那次 PATCH
-      // 没打 boundary snapshot)。这时进 flushSave 仍应补一个 checkpoint。
+      // Phase 5:flushSave 只保证 PATCH 落盘 —— 不再补 boundary snapshot。
+      // snapshot 走 lock acquire/release 边界(EditView onAcquire /
+      // onRelease 回调),flushSave 调 snapshot 会跟 release 路径撞车,
+      // 同一次 leave 触发两次 page_versions 写入。isDirty 仍用,因为
+      // auto-save 防抖触发期间 isDirty 已被翻回 false,但用户可能在
+      // 防抖窗口内(比如连续打字中)点了导航 —— 此时 isDirty=true
+      // 表示有挂起的 PATCH,需要 persistNow 立即落盘。
       if (isDirty.value) {
         saveState.value = 'saving'
         const ok = await persistNow()
         if (ok) flashSaved()
-      }
-      if (hasUnsnapshottedEdits) {
-        try {
-          await snapshot()
-          hasUnsnapshottedEdits = false
-        } catch {
-          /* silent */
-        }
       }
     } finally {
       isFlushingOnLeave = false

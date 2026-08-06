@@ -25,6 +25,7 @@ import { cors } from 'hono/cors'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { db, pool } from './db/client'
 import { mapPgError } from './lib/dbErrors'
+import { startCollabServer } from './collab/server'
 import { pagesRouter } from './routes/pages'
 import { pageVersionsRouter } from './routes/pageVersions'
 import { pageLabelsRouter } from './routes/pageLabels'
@@ -35,6 +36,8 @@ import { spacesRouter } from './routes/spaces'
 import { spacePermissionsRouter } from './routes/spacePermissions'
 import { pageRestrictionsRouter } from './routes/pageRestrictions'
 import { pageSharesRouter } from './routes/pageShares'
+import { pageLocksRouter } from './routes/pageLocks'
+import { startLockSweeper } from './lib/lockSweeper'
 import { publicSharesRouter } from './routes/publicShares'
 import { commentsRouter } from './routes/comments'
 import { notificationsRouter } from './routes/notifications'
@@ -98,6 +101,9 @@ app.route('/api/pages', pageRestrictionsRouter)
 // Phase D: 公开链接管理(POST/GET/DELETE /api/pages/:id/share[/...]).
 // 挂在 /api/pages 同前缀,跟 pageRestrictions 对称;需 auth + edit-access。
 app.route('/api/pages', pageSharesRouter)
+// Phase 4: 页面编辑锁(挂在 /api/pages 同前缀,跟其它 page-scoped 子路由一致)。
+// GET/POST/DELETE /:id/lock + POST /:id/lock/takeover。
+app.route('/api/pages', pageLocksRouter)
 // /api/labels is mounted from the same router instance — Hono supports
 // mounting the same router at multiple prefixes.
 app.route('/api/labels', pageLabelsRouter)
@@ -144,6 +150,17 @@ async function main() {
   serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`[api] listening on http://127.0.0.1:${info.port}`)
   })
+
+  // Phase A 实时协同:Hocuspocus 独立端口(默认 8788),WS 协议走 vite proxy
+  // /api/collab 转发。失败不阻塞 HTTP 启动 —— 协同是 progressive enhancement,
+  // 离线 page 编辑不受影响。
+  startCollabServer().catch((err) => {
+    console.error('[collab] failed to start', err)
+  })
+
+  // WS-push-based lock 感知(2026-08-06):server 端定时扫过期锁,清理并推
+  // lock_cleared stateless。让 client 端 usePageLock 不必依赖 1s REST poll。
+  startLockSweeper()
 }
 
 main().catch((err) => {

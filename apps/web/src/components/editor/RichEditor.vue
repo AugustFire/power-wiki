@@ -1,8 +1,12 @@
 ﻿<script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
-import extensions from '@/editor/extensions'
+import defaultExtensions from '@/editor/extensions'
+import type { Extensions } from '@/editor/extensions'
+import { buildExtensions, type CollabMode, type CollabProviderShape } from '@/editor/buildExtensions'
+import type * as Y from 'yjs'
+import type { User } from '@power-wiki/shared'
 import { normalizeLegacyMarks } from '@/editor/htmlToJson'
 import { uploadAndInsert, isAllowedFile, UploadError } from '@/editor/uploadAndInsert'
 import type { UploadErrorKind } from '@/editor/uploadAndInsert'
@@ -48,6 +52,18 @@ function humanizeUploadError(err: unknown): string {
 
 const props = defineProps<{
   modelValue: Record<string, unknown>
+  /**
+   * 协同模式开关。默认 'off'(单写者模式),EditView 在 shared space 切
+   * 'shared' 走 server relay,Phase 3 personal space 切 'personal' 走
+   * BroadcastChannel。传非 'off' 时 ydoc / provider / user 必须有值。
+   */
+  collabMode?: CollabMode
+  /** 协同模式绑定的 Y.Doc —— buildExtensions 喂给 Collaboration 扩展。 */
+  ydoc?: Y.Doc | null
+  /** provider.awareness 拿来做 cursor 装饰。HocuspocusProvider 或 BroadcastChannel 都行。 */
+  collabProvider?: CollabProviderShape | null
+  /** 当前用户 —— 写入 awareness,作为其他人看到的光标标签 / 颜色。 */
+  collabUser?: Pick<User, 'name' | 'color'> | null
 }>()
 
 const emit = defineEmits<{
@@ -199,8 +215,30 @@ function triggerFilePicker(): void {
   fileInputEl.click()
 }
 
+const editorExtensions = computed<Extensions>(() => {
+  const mode = props.collabMode ?? 'off'
+  if (mode === 'off') return defaultExtensions
+  return buildExtensions({
+    collabMode: mode,
+    ydoc: props.ydoc ?? null,
+    provider: props.collabProvider ?? null,
+    user: props.collabUser ?? null,
+  })
+})
+
+/**
+ * @tiptap/vue-3 的 `useEditor` 在 setup 阶段一次性 new Editor(),不响应
+ * extensions 引用变化。协同模式下「切 pageId → ydoc 引用变」或
+ * 「切协同模式 → extensions 数组变」必须重建 Editor,否则旧 ydoc 上的
+ * transact 写到陈旧 document。
+ *
+ * 解法:EditView 在 ydoc / collabMode 变化时 bump `<RichEditor :key>`,
+ * 整个组件重挂,setup 再跑一次,useEditor 用最新 extensions 重生。
+ * 本组件不维护内部 key —— 改 collab 状态由父级掌控,RichEditor 是纯
+ * 「拿到 deps 就渲染」的下游组件。
+ */
 const editor = useEditor({
-  extensions,
+  extensions: editorExtensions.value,
   content: normalizeLegacyMarks(props.modelValue),
   editorProps: {
     attributes: {

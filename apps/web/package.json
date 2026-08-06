@@ -10,6 +10,7 @@
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^4.5.0",
     "@power-wiki/shared": "workspace:*",
     "@tiptap/core": "^2.10.3",
     "@tiptap/extension-blockquote": "^2.27.2",

@@ -32,6 +32,7 @@ import type { TiptapJSON } from '@power-wiki/shared'
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -1130,3 +1131,94 @@ export const pagePublicShares = pgTable(
 )
 export type PagePublicShareRow = typeof pagePublicShares.$inferSelect
 export type NewPagePublicShareRow = typeof pagePublicShares.$inferInsert
+
+/* ─────────────────────────────────────────────────────────────────────
+ *  page_yjs_state — Yjs 协同编辑状态持久化(Phase A 实时协同 / Phase 1 落地)
+ *
+ *  一行 = 一个 page 的 Y.Doc 状态。Hocuspocus server 在 `onStoreDocument`
+ *  钩子把 Y.encodeStateAsUpdate(doc) 落库,`onLoadDocument` 启动时拉回。
+ *
+ *  设计要点:
+ *   - **状态是 Y.Doc 的完整快照**,不是增量。Hocuspocus 自带 2s debounce
+ *     合并 burst,服务端只关心最新一次完整状态。
+ *   - **bytea 列存原始字节** —— node-postgres 默认把 bytea 解析为 Buffer,
+ *     这里用 Drizzle customType 暴露成 Uint8Array 让 yjs 直接 encode/decode
+ *     (Yjs 接受 Uint8Array,不必手动 Buffer.from)。
+ *   - **byte_size 冗余** —— 运维告警位(>1MB 提示拆分 / 归档);不上 SQL 端
+ *     CHECK(允许 0 = 刚 INSERT 但还没 flush 过 state 的中间态)。
+ *   - **No FK(项目硬约束)**:page hard-delete 时由 pages.ts DELETE 同事务
+ *     sweep 本表;page soft-delete (deletedAt) 不动本表 —— restore 后
+ *     协作文档状态仍在。
+ *   - **M13+ zombie 守卫(2026-08-06)**:Hocuspocus hooks.ts 的 persistYDoc
+ *     在写入前 SELECT pages.deletedAt,若 page 已被软删/硬删(client 端的
+ *     onAuthenticate 早于 DELETE 提交,Yjs 仍在 sync),跳过写入 + 主动
+ *     destroy server 端持有的 Y.Doc,让 Hocuspocus 自然 GC。否则 B 拿到锁
+ *     后立即删页会让 A 端继续写 page_yjs_state 留 orphan 行。
+ *   - **冷启动 hydration(Phase 2)**:首次 client 连接且本表无 state 时,
+ *     server 从 pages.contentJson 用 prosemirrorJSONToYDoc 重建,本表暂
+ *     不立刻回写,等第一次 client edit 触发 onStoreDocument 再持久化。
+ *     Phase 1 只跑 awareness,不做 hydration,Y.Doc 留空即可。
+ *   - **不做 snapshot 表**:30s idle snapshot(Phase 5 收口)+ onLockBoundary
+ *     仍只写 page_versions + page_yjs_state,不在本表加 version 列。
+ *   - **唯一 PK = pageId**:一个 page 对应一个 Y.Doc;不像 page_versions
+ *     需要保留多版本历史。
+ * ───────────────────────────────────────────────────────────────────── */
+const bytea = customType<{ data: Uint8Array; default: false }>({
+  dataType() {
+    return 'bytea'
+  },
+  toDriver(value: Uint8Array): Buffer {
+    return Buffer.from(value)
+  },
+  fromDriver(value: unknown): Uint8Array {
+    return new Uint8Array(value as Buffer)
+  },
+})
+
+export const pageYjsState = pgTable('page_yjs_state', {
+  /** pages.id,nanoid(10)。No FK。 */
+  pageId: text('page_id').primaryKey(),
+  /** Y.encodeStateAsUpdate(doc) 产物,node-postgres 解析为 Buffer,
+   *  Drizzle 层用 Uint8Array 暴露给 yjs。 */
+  state: bytea('state').notNull(),
+  /** 冗余字节数,运维告警位(>1MB 触发拆分 / 归档)。 */
+  byteSize: integer('byte_size').notNull(),
+  /** Date.now() 毫秒 —— onStoreDocument 写入时间。 */
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+})
+export type PageYjsStateRow = typeof pageYjsState.$inferSelect
+export type NewPageYjsStateRow = typeof pageYjsState.$inferInsert
+
+/**
+ * Phase 4 页面编辑锁 ——「Bob 大改时 Alice 不要乱入」的 UI 提示用。
+ *
+ * 关键约束(沿用硬约束:无 FK):
+ *   - **锁 ≠ 写权限闸**。锁只是 UI 信号;Yjs CRDT 始终接受合法
+ *     canEditPage 用户的 update。即使 Bob 没拿锁,他照常敲字能落盘,
+ *     锁的作用只是 EditView 顶部 banner + ReadView Edit tooltip 提示。
+ *   - **5 分钟自动过期**:expiresAt = acquiredAt + 5*60*1000,前端轮询
+ *     /api/pages/:id/lock 看到 expiresAt 过期就视作无人持锁;server 端
+ *     acquire 时先 SELECT 一次,如果现有锁已过期则覆盖(以防网抖)。
+ *   - **admin 强制接管**:admin 可 POST /api/pages/:id/lock/takeover,
+ *     server 会通过 Hocuspocus stateless 给原 holder 发 `lock_takeover`
+ *     消息 + close connection(4410),client 端 uiStore 弹 lock_taken toast。
+ *   - **DELETE 锁保护(M13+)**:DELETE /api/pages/:id(软删)和
+ *     ?purge=true(硬删)在写入 deletedAt 之前都先 SELECT 当前 active lock
+ *     (expiresAt > now);若有 → 返 409 `page_locked` + holders,同时推
+ *     stateless `page_locked_during_delete` 给所有 holder。client 端
+ *     usePageLock 收到后挂 PageDeletingBanner 让出锁,B 才能继续删。
+ *   - **page hard-delete**:?purge=true 在同事务中显式删除 page_locks 行
+ *     (无 FK);page 没了锁没意义,不会级联到 holding user。
+ */
+export const pageLocks = pgTable('page_locks', {
+  /** pages.id,nanoid(10)。No FK。 */
+  pageId: text('page_id').primaryKey(),
+  /** 当前锁持有人 users.id。holder 释放 / 接管时覆盖。 */
+  userId: text('user_id').notNull(),
+  /** Date.now() 毫秒,锁被 acquire / takeover 时写入。 */
+  acquiredAt: bigint('acquired_at', { mode: 'number' }).notNull(),
+  /** Date.now() 毫秒 = acquiredAt + 5*60*1000。前端倒计时显示。 */
+  expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+})
+export type PageLockRow = typeof pageLocks.$inferSelect
+export type NewPageLockRow = typeof pageLocks.$inferInsert

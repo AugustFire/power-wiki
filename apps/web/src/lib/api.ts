@@ -133,6 +133,18 @@ import type {
   Watcher,
 } from '@power-wiki/shared'
 
+/**
+ * Phase 4 页面编辑锁 DTO(本地定义 —— 锁是个 stateless UI 信号,server
+ * 端 PageLockDto shape 简单,不进 shared/types.ts)。acquiredAt / expiresAt
+ * 是 Date.now() 毫秒(>2^32 但 <2^53),number 安全。
+ */
+export interface PageLock {
+  pageId: string
+  userId: string
+  acquiredAt: number
+  expiresAt: number
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -1558,6 +1570,39 @@ export const api = {
         { method: 'POST', body },
       )
     },
+  },
+
+  /**
+   * Phase 4 页面编辑锁 — UI 信号「Alice 正在改」用。锁不是写权限闸,Yjs
+   * CRDT 始终接受合法 canEditPage 用户的 update;锁只是给其他 user / 自己
+   * 提示「这个页面现在有人在改」。
+   *
+   * Endpoint(apps/api/src/routes/pageLocks.ts):
+   *   GET    /api/pages/:id/lock            → 200 + { lock: PageLock | null }
+   *   POST   /api/pages/:id/lock            → 拿锁 / 409 page_locked
+   *   DELETE /api/pages/:id/lock            → 释放(holder / admin)
+   *   POST   /api/pages/:id/lock/takeover   → admin 强制接管 → stateless 给原 holder
+   */
+  pageLock: {
+    get: (pageId: string): Promise<{ lock: PageLock | null }> =>
+      request<{ lock: PageLock | null }>(
+        `/pages/${encodeURIComponent(pageId)}/lock`,
+      ),
+    acquire: (pageId: string): Promise<{ lock: PageLock }> =>
+      request<{ lock: PageLock }>(
+        `/pages/${encodeURIComponent(pageId)}/lock`,
+        { method: 'POST' },
+      ),
+    release: (pageId: string): Promise<{ released: boolean; wasHeld: boolean }> =>
+      request<{ released: boolean; wasHeld: boolean }>(
+        `/pages/${encodeURIComponent(pageId)}/lock`,
+        { method: 'DELETE' },
+      ),
+    takeover: (pageId: string): Promise<{ lock: PageLock; previousHolder: string | null }> =>
+      request<{ lock: PageLock; previousHolder: string | null }>(
+        `/pages/${encodeURIComponent(pageId)}/lock/takeover`,
+        { method: 'POST' },
+      ),
   },
 
   /**

@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
 import { useAuthStore } from '@/stores/auth'
@@ -24,6 +24,8 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
+import PresenceAvatars from '@/components/page/PresenceAvatars.vue'
+import { useCollabProvider } from '@/editor/collab/useCollabProvider'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
 import { api, ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
@@ -77,6 +79,50 @@ const readonlyNoticeOpen = ref(false)
 function dismissReadonlyNotice() {
   readonlyNoticeOpen.value = false
 }
+
+/**
+ * Phase A 实时协同 Phase 1(awareness-only):
+ *   ReadView 挂载时通过 Hocuspocus 连到 /api/collab,广播当前用户
+ *   元数据(avatar / name / color),让同页其他 viewer 看到自己。
+ *
+ *   - 只读模式 / 公开分享 / 未登录态:composable 内部直接 no-op,
+ *     awarenessStates 保持空 map,PresenceAvatars 不渲染。
+ *   - 路由切到其他 page:pageId watch 触发 destroy → 新 connect,
+ *     不需要本组件手动管。
+ *   - 组件卸载 / 路由离开 ReadView:onScopeDispose 调 destroy 关 WS。
+ */
+const { awarenessStates, clientId, isConnected } = useCollabProvider({
+  pageId: computed(() => props.id),
+  user: computed(() => authStore.user),
+  // WS push-based 锁感知(2026-08-06):ReadView 永远 'view',让对端
+  // EditView 知道「我只是在看,不是编辑」。Provider 自动 setLocalStateField。
+  awarenessMode: () => 'view',
+})
+
+/**
+ * ReadView 侧不再轮询 /api/pages/:id/lock(2026-08-06,S7):
+ * 之前 ReadView 拉 server 锁状态是为了给 Edit 按钮 tooltip + 顶部常驻条
+ * 显示「X 正在编辑此页」。PresenceAvatars 已经把「正在编辑」分组渲染在
+ * byline 上,常驻条的存在意义不大;Edit 按钮 tooltip 也从 awareness 直接
+ * 派生(谁 awareness.mode='edit' 且不是自己 → tooltip 显示该 holder 名)。
+ *
+ *   - WS push + awareness.on('change') 同步状态,延迟 ~实时
+ *   - 不调 lock API → 不产生 /api/pages/:id/lock 轮询
+ *   - WS 断开(罕见):awareness 也是空的,tooltip 自然消失,降级合理
+ */
+const editingHolderName = computed<string | null>(() => {
+  const me = authStore.user?.id
+  for (const [cid, st] of awarenessStates.value) {
+    if (cid === clientId.value) continue
+    if (st.user.id === me) continue
+    if (st.user.mode === 'edit') return st.user.name
+  }
+  return null
+})
+
+const editLockTooltip = computed(() =>
+  editingHolderName.value ? `${editingHolderName.value} 正在编辑此页` : undefined,
+)
 
 watch(
   () => route.query['readonly'] === '1',
@@ -706,7 +752,7 @@ watch(
         @share="shareOpen = true"
         @delete="onDelete"
       />
-      <button v-if="canEdit" class="btn primary" @click="goEdit">
+      <button v-if="canEdit" class="btn primary" :title="editLockTooltip ?? '编辑此页面'" @click="goEdit">
         <span class="material-symbols-outlined icon-lg">edit</span>
         编辑
       </button>
@@ -920,6 +966,27 @@ watch(
                 </button>
                 <WhoLikedList :page="page" />
               </div>
+
+              <!-- Phase A 实时协同 Phase 1:awareness 头像组。连接中/失败时
+                   不渲染(awarenessStates 为空 → v-if 不命中),不显示破图。
+                   0 垂直新增 —— 跟 reactions 一样随 metadata 左流。
+
+                   Phase 6 (2026-08-06):跟 reactions 之间的视觉混淆收口。
+                   WhoLikedList(已赞的人,跟 👍 按钮一起)和 PresenceAvatars(在看的
+                   人)都是 20px 重叠圆头像,user 区分不出哪组是「赞过」哪组是「在
+                   看」。PresenceAvatars 内部已经加了 👁 在看 前缀,这里再加一个
+                   `.byline-divider` 竖线把两组彻底隔开。v-if 控制:只有 awareness
+                   真正渲染时才出分隔,reactions 一侧不挤进孤零零的竖线。 -->
+              <span
+                v-if="isConnected && awarenessStates.size > 1"
+                class="byline-divider"
+                aria-hidden="true"
+              ></span>
+              <PresenceAvatars
+                v-if="isConnected && awarenessStates.size > 1"
+                :states="awarenessStates"
+                :client-id="clientId"
+              />
             </div>
 
             <div ref="contentEl" class="prose read-content" v-html="safeHtml"></div>
