@@ -773,17 +773,6 @@
     gap: 6px;
 }
 .page-byline .dot { color: var(--border-strong); }
-/* Phase 6 (2026-08-06):ReadView byline 上 reactions(已赞的人)和
-   PresenceAvatars(在看的人)都是 20px 重叠圆头像,user 分不清两组。
-   加一道细竖线把两组彻底切开。ReadView 控制:只有 awareness 渲染
-   时才出这条线,不会在 reactions 一侧挤进孤零零的竖线。 */
-.page-byline .byline-divider {
-    width: 1px;
-    height: 14px;
-    background: var(--border);
-    /* byline 自带 12px gap,竖线再加 6px 一边,让两组之间有节奏感而不挤压 */
-    margin: 0 6px;
-}
 
 /* status strip */
 .status-strip {
@@ -994,9 +983,12 @@
       字数之后),跟左侧 metadata 一起左流。最初考虑过 margin-left:auto
       把 reactions 推到右端作"两端对齐",但实测标题靠左,byline 反而铺
       满整行会显得割裂;统一靠左后,头部整体节奏一致。
-   2. 点赞按钮带短 label(`赞` / `已赞`),解决 2.11 doc 描述的"裸 thumb-up
-      friction"。inactive 单字 `赞`,active 切 `已赞`(icon 翻 filled + label
-      跟切 + 数字作 note),三层反馈让状态切换清晰。
+   2. 2026-08-06 byline 风格统一 ②:点赞按钮不再挂 inline label(原
+      `赞` / `已赞`),只留 icon + 数字。三组 clusters(👍 / ✏ / 👁)统一
+      「纯 icon + 数字/头像」视觉语言,byline 不被冗余 label 撑高。
+      active 反馈靠 icon 翻 filled + accent 翻色 + count 浮出,文字 label
+      切换是冗余。hover tooltip(`title=`)仍在,想看语义的人 hover 一下
+      就拿到。
 
    按钮**没有**水平 padding —— 👍 图标直接贴 .page-reactions 左边缘,
    跟 byline 内其他元素的视觉起点对齐。byline 自带 margin-bottom:24px
@@ -1023,22 +1015,15 @@
        font-family: inherit,font-size / font-weight 仍是浏览器 UA 默认
        (Chrome 13.333px),比 byline 的 13px 大出可见的一档。color 靠
        --text-3 级联自然继承。byline 是统一的轻量 metadata 文字,点赞
-       按钮挂在末尾不换色 / 字号 / 字重;active / hover 只用颜色提示交互。 */
+       按钮挂在末尾不换色 / 字号 / 字重;active / hover 只用颜色提示交互。
+
+       2026-08-06 byline 风格统一 ②:inline "赞 / 已赞" label span 已删除
+       —— button 内部只剩 icon + 数字。gap 留 4px 让数字跟 icon 有一档
+       视觉呼吸;hover / active 翻色靠 background + color + icon FILL 三
+       件套做反馈,不再有文字切换。 */
     font-family: inherit;
     font-size: inherit;
     font-weight: inherit;
-}
-/* 2.11 inline label —— 收敛到一字:active 用 `已赞`,inactive 用 `赞`。
-   颜色跟字号全靠 button / byline 级联,这里是清空层(只声明 color:
-   inherit 是为了让 active 翻色能透传到 label 文本)。font-weight 不再
-   单独设 600 —— 跟 byline 整体 400 保持一致。 */
-.page-reactions .like-label {
-    color: inherit;
-}
-.page-reactions .like-sep {
-    color: var(--border-strong);
-    margin: 0 2px;
-    user-select: none;
 }
 .page-reactions .like-button:hover {
     /* 仅 bg 切换,文字色不再变 —— 跟 hover 状态前的 byline 视觉一致,
@@ -1146,6 +1131,39 @@
     text-align: left;
     display: inline-block;
     animation: like-count-pop var(--duration-base) var(--ease-out);
+}
+
+/* —— byline 三组 clusters(👍 likes / ✏ editing / 👁 viewing)共享的
+   头像重叠样式 —— 2026-08-06 byline 风格统一 ③。WhoLikedList 和
+   PresenceAvatars 都通过 `.byline-stack-avatar` className 引用,
+   视觉规则统一在一个地方,不再各自维护。
+     - 负 margin 制造重叠:每个后续头像向左推 6px,跟前面的头像有 14px 重叠区
+     - 描边:1.5px var(--bg) —— 用页面背景色描边,把每个头像圈出来,跟
+       Confluence / Notion 一致
+     - overflow 圆圈:跟头像等大(20px)、圆形、var(--bg-subtle) 灰底,
+       跟 UserAvatar 的色调一致,不出戏
+   WhoLikedList 的旧 `.stack-avatar` / `.stack-overflow` 已迁移到这里;
+   新代码应该直接用 `.byline-stack-avatar` / `.byline-stack-overflow`。 */
+.byline-stack-avatar {
+    margin-left: -6px;
+    border: 1.5px solid var(--bg);
+    border-radius: 50%;
+}
+.byline-stack-avatar:first-child {
+    margin-left: 0;
+}
+.byline-stack-overflow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-2);
+    background: var(--bg-subtle);
+    min-width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-variant-numeric: tabular-nums;
 }
 
 /* =========================

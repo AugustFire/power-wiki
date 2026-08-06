@@ -49,11 +49,11 @@ const tooltipText = computed(() => {
         :avatar-kind="u.avatarKind ?? null"
         :avatar-ref="u.avatarRef ?? null"
         :user-id="u.id ?? null"
-        class="stack-avatar"
+        class="byline-stack-avatar"
       />
       <span
         v-if="total > visibleAvatars.length"
-        class="stack-avatar stack-overflow"
+        class="byline-stack-avatar byline-stack-overflow"
         :title="tooltipText"
       >+{{ total - visibleAvatars.length }}</span>
     </span>
@@ -61,8 +61,8 @@ const tooltipText = computed(() => {
 </template>
 
 <style scoped>
-/* 头像组:横向堆叠 + 负 margin 制造重叠效果。
-   放在 .page-reactions 行内,跟 like-button 用 flex gap 隔开,这里不再写 margin。 */
+/* 头像组容器 —— 头像 / overflow 圆圈的视觉规则在 components.css 的全局
+   `.byline-stack-avatar` / `.byline-stack-overflow`,这里只留布局。 */
 .who-liked {
   display: inline-flex;
   align-items: center;
@@ -71,27 +71,5 @@ const tooltipText = computed(() => {
 .avatar-stack {
   display: inline-flex;
   align-items: center;
-}
-.stack-avatar {
-  margin-left: -6px;
-  border: 1.5px solid var(--bg);
-  border-radius: 50%;
-  /* UserAvatar 内部是圆形 div,这里再 inset 一圈描边 */
-}
-.stack-avatar:first-child {
-  margin-left: 0;
-}
-.stack-overflow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-2);
-  background: var(--bg-subtle);
-  min-width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-variant-numeric: tabular-nums;
 }
 </style>

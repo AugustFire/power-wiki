@@ -933,13 +933,13 @@ watch(
                    body 紧贴 byline(原来 reactions 独占底部 section)。
                    字号 / 颜色 / 字重全部继承 .page-byline,不做局部覆盖。
 
-                   短文案(label 收敛到一个字):
-                     - inactive:`👍 赞`
-                     - active:`👍 已赞 · N`(N>0);`👍 已赞`(N=0 兜底)
-                   中文互联网习惯用法(微信 / 微博 / 知乎 / 掘金),比"觉得有用"
-                   更短更直接,但依旧用 inline 文字解决 2.11 的裸 thumb-up 痛点
-                   (新用户一眼看出这是赞)。 active 切"已赞"是双重反馈:icon 翻
-                   filled + label 跟切 + count 浮出。 -->
+                   2026-08-06 byline 风格统一 ②:icon 旁的 inline label 全砍掉
+                   (inactive 时的 "赞" / active 时的 "已赞"),只留 icon + 数字。
+                   hover 到 icon 上有原生 tooltip(`title=`),hover 到 button 上
+                   也有;label 是冗余装饰。byline 三组 clusters(👍 / ✏ / 👁)
+                   统一成「纯 icon + 数字/头像」,视觉权重一致。active 反馈靠
+                   icon 翻 filled + accent 翻色 + count 浮出,label 切换反而是
+                   噪音。 -->
               <div v-if="page" class="page-reactions">
                 <button
                   type="button"
@@ -955,14 +955,14 @@ watch(
                     <span class="material-symbols-outlined like-icon like-icon--outlined">thumb_up</span>
                     <span class="material-symbols-outlined like-icon like-icon--filled">thumb_up</span>
                   </span>
-                  <span v-if="page.likedByMe" class="like-label">已赞</span>
-                  <span v-else class="like-label">赞</span>
-                  <!-- 数字始终放 label 后面(N>0 才显示,避免 "已赞 · 0");label
-                       切换是 active/inactive 的强反馈,数字作 note。 -->
-                  <template v-if="page.likedByMe && (page.likesCount ?? 0) > 0">
-                    <span class="like-sep">·</span>
-                    <span :key="page.likesCount ?? 0" class="like-count">{{ page.likesCount ?? 0 }}</span>
-                  </template>
+                  <!-- 数字直接接 icon(N>0 才显示,避免 "0" 噪声);不写 inline
+                       label —— active 反馈靠 icon FILL 翻转 + accent 翻色 +
+                       count 浮出三件套,文字 label 是冗余。 -->
+                  <span
+                    v-if="page.likedByMe && (page.likesCount ?? 0) > 0"
+                    :key="page.likesCount ?? 0"
+                    class="like-count"
+                  >{{ page.likesCount ?? 0 }}</span>
                 </button>
                 <WhoLikedList :page="page" />
               </div>
@@ -971,17 +971,16 @@ watch(
                    不渲染(awarenessStates 为空 → v-if 不命中),不显示破图。
                    0 垂直新增 —— 跟 reactions 一样随 metadata 左流。
 
-                   Phase 6 (2026-08-06):跟 reactions 之间的视觉混淆收口。
-                   WhoLikedList(已赞的人,跟 👍 按钮一起)和 PresenceAvatars(在看的
-                   人)都是 20px 重叠圆头像,user 区分不出哪组是「赞过」哪组是「在
-                   看」。PresenceAvatars 内部已经加了 👁 在看 前缀,这里再加一个
-                   `.byline-divider` 竖线把两组彻底隔开。v-if 控制:只有 awareness
-                   真正渲染时才出分隔,reactions 一侧不挤进孤零零的竖线。 -->
+                   2026-08-06 byline 风格统一:从「14px 灰竖线」改成跟其他
+                   metadata 项一样的 `·` 中点分隔符,跟"作者 · 时间 · 字数"
+                   节奏一致。PresenceAvatars 内部「✏/👁 + 标签」前缀 + 不同
+                   形状的 icon 已经把"已赞的人"和"在看的人"区分开了,不再
+                   需要额外的视觉墙。 -->
               <span
                 v-if="isConnected && awarenessStates.size > 1"
-                class="byline-divider"
+                class="dot"
                 aria-hidden="true"
-              ></span>
+              >·</span>
               <PresenceAvatars
                 v-if="isConnected && awarenessStates.size > 1"
                 :states="awarenessStates"

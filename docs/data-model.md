@@ -4,7 +4,7 @@ Drizzle schema、recursive CTE 模式、auth 设计、空间隔离、级联删�
 
 ## Schema 概览
 
-`apps/api/src/db/schema.ts` **21 张表**,**无外键约束**(所有表不写 `.references()`,所有 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` 类的 DDL 都不写)。级联删除必须显式在路由里用 recursive CTE + 多步事务完成。migration 历史见 `apps/api/src/db/migrations/0000..0029`(最近 6 条 `0024..0029` 是 Phase A/B/C/D + 审计 kind 扩展)。
+`apps/api/src/db/schema.ts` **23 张表**(M13 新增 `page_locks` / `page_yjs_state`),**无外键约束**(所有表不写 `.references()`,所有 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` 类的 DDL 都不写)。级联删除必须显式在路由里用 recursive CTE + 多步事务完成。migration 历史见 `apps/api/src/db/migrations/0000..0037`(最近 9 条 `0029..0037` 是 Phase A/B/C/D + 审计 kind 扩展 + M13 协同锁)。
 
 | 表 | 用途 | 引入 |
 |---|---|---|
@@ -30,6 +30,8 @@ Drizzle schema、recursive CTE 模式、auth 设计、空间隔离、级联删�
 | `page_events` | 页面事件轨迹(`created` / `edited` / `moved` / `restored` / `duplicated` / `published` / `trashed` / `purged`,8 种),ActivityView 数据源 | 0.10 |
 | `user_watched_pages` | per-user 关注页(顶栏 watch toggle),复合 PK `(user_id, page_id)` | 0.10 |
 | `user_recent_pages` | per-user 最近浏览(`(user_id, page_id)` 复合 PK,跨设备同步,替代 localStorage) | M2 |
+| `page_locks` | 页面级编辑锁(5min TTL,详见 [docs/collab.md](./collab.md)) | M13 |
+| `page_yjs_state` | Y.Doc 持久化(`bytea` Y.encodeStateAsUpdate),同事务 cascade 清理 | M13 |
 
 ## 关键表字段
 

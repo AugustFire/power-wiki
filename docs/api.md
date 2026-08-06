@@ -4,7 +4,7 @@
 
 完整契约以 `@power-wiki/shared/src/schemas.ts` 的 zod schema 为准,所有路由用 `*.parse()` 在响应边界二次校验(防 schema 漂移)。
 
-`apps/api/src/index.ts` 挂载的 21 个 route mount(`app.route` 23 次调用 —— `pageLabelsRouter` 同时挂到 `/api/pages` 和 `/api/labels`,`avatarPresetsRouter` + `publicSharesRouter` 挂到 `/api`):
+`apps/api/src/index.ts` 挂载的 22 个 route mount(`app.route` 24 次调用 —— `pageLabelsRouter` 同时挂到 `/api/pages` 和 `/api/labels`,`avatarPresetsRouter` + `publicSharesRouter` 挂到 `/api`);`/api/collab` 是 Hocuspocus WebSocket upgrade,不走 `app.route()`:
 
 | 路径前缀 | 路由文件 | 备注 |
 |---|---|---|
@@ -17,6 +17,8 @@
 | `/api/pages` + `/api/labels` | `routes/pageLabels.ts` | 子路由,挂两前缀;labels CRUD + 搜索 |
 | `/api/pages` | `routes/pageRestrictions.ts` | Phase B 页面级 view/edit 限制(单行 UPSERT + 整组 PUT) |
 | `/api/pages` | `routes/pageShares.ts` | Phase D 公开分享管理(auth + edit-access 三端点) |
+| `/api/pages` | `routes/pageLocks.ts` | M13+ 页面级编辑锁(acquire / release / GET / takeover);详见 [docs/collab.md](./collab.md) |
+| `/api/collab` | `collab/server.ts` (WebSocket) | Hocuspocus CRDT WS + Y.Doc 同步 + awareness `view`/`edit` + stateless 通道(`lock_changed` / `lock_cleared` / `page_locked_during_delete` / `page_actually_deleted`) |
 | `/api/attachments` | `routes/attachments.ts` | MinIO 附件 upload-url / finalize / list / raw / delete |
 | `/api/spaces` | `routes/spaces.ts` | 用户可见 space 列表 + 单个详情 |
 | `/api/spaces` | `routes/spacePermissions.ts` | Phase A 空间角色管理(per-user / per-group grant,viewer/editor/admin) |

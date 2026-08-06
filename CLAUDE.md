@@ -15,7 +15,7 @@ power-wiki — Confluence 风格团队知识库 wiki。pnpm workspaces monorepo:
 - **不要图片功能。** 不接 Tiptap Image 扩展、不做 URL 粘贴、不做文件上传。工具栏和 slash 菜单里都不能出现图片项。**已废止(2026-07-06):** v1 起允许页面级附件,走 `MinIO` 对象存储(dev + prod 共用,`docker-compose.yml` 一行起)。**允许的 MIME**:`ALLOWED_MIME_TYPES` 见 `packages/shared/src/constants.ts` —— 涵盖 `image/*`、`application/pdf`、Office(doc/docx/xls/xlsx/ppt/pptx)、Markdown / 纯文本 / CSV、zip。**入口**:toolbar `插入图片 / 附件` 按钮、slash 菜单 `图片 / 附件`、粘贴图片 / 拖文件入编辑器。**外部 URL 粘贴图片仍然不做**——`sanitize.ts` 的 `img src` 协议白名单只放行 `/api/attachments/*`,挡掉 `https://`、`data:`、`blob:`、`javascript:`。全局媒体库留待 v2。**不做文件内嵌预览**——文件卡就是 `icon + 文件名 + 大小 + 下载按钮`,PDF / Word / Excel 没有缩略图、没有 iframe 预览(后端成本大、收益边际)。
 **用户头像上传允许(2026-07-16 加):** 走同一个 MinIO 桶,与 attachments 同 `S3_BUCKET`,**MIME 子集 `AVATAR_ALLOWED_MIME`**(`png/jpeg/webp/gif`,无 svg/avif;附件全集的子集,缩小是为了减小攻击面 + 保证 canvas 压图后所有浏览器都能渲染)。数据走**独立的 `user_avatars` 表**(不挂在 `pageId` 下 —— 不复用 `attachments` 表是为了不污染 page cascade 语义)。**raw 端点** `GET /api/user-avatars/{id}/raw` 是公开的,跟 username 一样对外可见(头像 ≠ 空间级资源):不走 requireAuth,公开 stream from S3;`Cache-Control: private, max-age=300`。编辑器内仍不接头像 —— 只在 SettingsDrawer / UserAvatar 渲染层用。预制头像(google-style 字母)是静态 `/avatars/{slug}.svg`,跟代码同走,git 入仓。
 - **键盘快捷键放开。** Tiptap StarterKit 默认 keymap 全开(格式 / 撤销重做 / 列表 / 引用 / 代码块等)。仅 Cmd/Ctrl+S 拦截以防浏览器「保存网页」对话框。
-- **暂时不要文档协同。** Yjs / y-prosemirror / y-tiptap 依赖已装,留待未来启用。
+- **协同已启用(M13+,2026-08-06)。** Yjs / Hocuspocus / awareness 都已实装,ReadView / EditView / 个人空间全覆盖。`page_locks` 5min TTL + WS push(`lock_changed` / `lock_cleared` / `page_locked_during_delete` / `page_actually_deleted`)+ 协同删除 race 收口 + 自适应轮询 + 个人空间 BroadcastChannel 协议 —— 见 [docs/collab.md](./docs/collab.md)。改 usePageLock / useCollabProvider / PresenceAvatars / LockBanner 或加新协同功能前必读。
 - **Drizzle schema 不许外键约束。** 所有表不写 `.references()`,所有 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY` 类的 DDL 都不写。级联删除必须显式在路由里完成(recursive CTE 或事务清理)。写新表 / 新列也要遵守。
 - **不做页面模板功能。** 不建 `page_templates` 表、不挂 `/api/templates` 路由、不做模板选择器 / 模板按钮 / 内置模板 seed。复制需求一律走页面复制(`POST /api/pages/:id/duplicate`,标题前缀 `复制自`,新页落在源页正下方同 sibling 组)。
 - **Labels 双视图同步** — ReadView / EditView 内容底部都有可编辑 `<LabelPills>`,不用 `compact` prop;右 TOC 另有只读 chip 镜像。两边共享 `page.labels` reactive,主体编辑 → 右 TOC 同步更新。
@@ -63,4 +63,5 @@ docker compose down       # 停 Postgres + MinIO(数据保留)
 | 完整 API 端点契约 | [docs/api.md](./docs/api.md) |
 | Schema / recursive CTE / auth / 个人空间 / admin 写保护 | [docs/data-model.md](./docs/data-model.md) |
 | 数据获取 9 条 + Loading UX 6 条硬约束 | [docs/loading-ux.md](./docs/loading-ux.md) |
+| 协同锁 page_locks / Yjs CRDT / awareness / WS push / 协同删除 race 收口 / 个人空间 BroadcastChannel | [docs/collab.md](./docs/collab.md) |
 | verify_*.py 验收脚本使用 | [docs/verification.md](./docs/verification.md) |
