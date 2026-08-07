@@ -9,7 +9,6 @@ import { newId } from '@/lib/id'
 import { ApiError } from '@/lib/api'
 import { humanizeApiError } from '@/lib/humanizeApiError'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import PageTree from './PageTree.vue'
 import WatchedSidebar from './WatchedSidebar.vue'
 import SidebarTopSection from './SidebarTopSection.vue'
@@ -68,27 +67,19 @@ function togglePagesSection(): void {
   uiStore.toggleSection(PAGES_SECTION_KEY, false)
 }
 
-// Active-space quick-nav. Mirrors the topbar's SpaceSwitcher trigger but
-// stays inside the sidebar so users get a "where am I" anchor that scrolls
-// with the page. Replaces the old always-personal-space entry that was
-// confusing when the active space was a shared space — the sidebar now
-// always reflects the active space, full stop.
+// Active space 引用 —— 用在 openImportRoot / 「新建页面」按钮 disabled 判定
+// 等多处。早期版本(P1-9)曾同时承载 sidebar 顶部 quick-nav chip 的展示
+// 数据,2026-08-07 P2 chip 删除后这里只保留逻辑引用。
 const active = computed(() => spacesStore.activeSpace.value)
 const isActivePersonal = computed(() => active.value?.kind === 'personal')
 const activePageCount = computed(() => {
   const id = active.value?.id
   if (!id) return 0
   // P1-9: 过滤 trashed 页(soft-deleted,deletedAt !== null)。
-  // 之前含 trashed → 软删后 chip 计数不减少,用户困惑(列表少了 1 条,
-  // 但 chip 仍显示原数)。现在跟 PageTree / getTreeForSpace 行为一致,
-  // 用户软删 → chip 立即减 1,跟视觉一致。
+  // 跟 PageTree / getTreeForSpace 行为一致:用户软删 → page tree 立即减 1,
+  // activePageCount(挂在「此空间的页面」section header 上)同步减 1。
   return pagesStore.pages.filter((p) => p.spaceId === id && p.deletedAt == null).length
 })
-
-// P1-9: 归档空间 UI 标识 —— 用 spacesStore.isArchived 派生,模板里挂
-// 「已归档」badge。事实来源在 store,避免 component 里散落
-// `active.archivedAt` 重复判定。
-const isActiveArchived = computed(() => spacesStore.isArchived(active.value?.id))
 
 // Personal-space shortcut 已被 SidebarTopSection 取代(P1-7):sticky 顶部
 // 「我的工作台」单行始终可见,不再需要底部虚线分隔的快捷链接。
@@ -157,12 +148,6 @@ function openImportRoot(): void {
   if (!active.value) return
   uiStore.closeMenu()
   uiStore.openImport({ defaultSpaceId: active.value.id })
-}
-
-function goHome() {
-  // Active space's home — the `/` route renders HomeView for whatever
-  // activeSpaceId is set. Clicking the chip while already on '/' is a no-op.
-  void router.push('/')
 }
 
 /**
@@ -295,45 +280,12 @@ watch(
 
 <template>
   <aside ref="sidebarRef" class="sidebar" @scroll="onSidebarScroll">
-    <!-- Active-space chip 移到最顶部 ——「you are here」锚点永远先看到。
-         视觉重量比之前大幅降低:去掉 accent-soft 背景,改用 3px 左侧 accent
-         竖线 + muted 文字,跟下面的 sidebar row 视觉同款,不再是一块独立的色
-         块。28px row,SpaceAvatar 20px,跟 sidebar 其它 row 视觉统一。 -->
-    <div class="quick-nav">
-      <button
-        v-if="active"
-        type="button"
-        class="quick-nav-item quick-nav-active"
-        :class="{ 'quick-nav-archived': isActiveArchived }"
-        :title="`回到 ${active.name} 首页`"
-        @click="goHome"
-      >
-        <SpaceAvatar
-          :space="active"
-          :size="20"
-        />
-        <span class="active-name">{{ active.name }}</span>
-        <span
-          v-if="isActiveArchived"
-          class="active-archived-badge"
-          title="此空间已归档"
-        >已归档</span>
-        <span
-          v-if="!canCreateInSpace"
-          class="material-symbols-outlined active-lock"
-          title="你在此空间只有只读权限"
-        >lock</span>
-        <span class="active-count">{{ activePageCount }}</span>
-        <!-- 1.14 hover 反馈:右侧 chevron 默认 opacity 0,hover/focus 时淡入 +
-             accent 色 —— 「这能点跳走」的 affordance 信号。比单纯换 bg
-             颜色强,但不抢「我的工作台」+ page tree active 的视觉重量。 -->
-        <span class="material-symbols-outlined quick-nav-arrow">chevron_right</span>
-      </button>
-    </div>
-
     <!-- P1-7:sticky 顶部「我的工作台」单行入口,2026-07-29 收尾 P1-9 删
          掉「已固定 / 最近访问」两块(已在 /me 工作台完整呈现),避免
-         sidebar + 页面两份重复。下方才是当前空间的 page tree,继续滚动。 -->
+         sidebar + 页面两份重复。下方才是当前空间的 page tree,继续滚动。
+         2026-08-07 P2:之前在 sticky 顶部「我的工作台」之上的「激活空间」
+         chip 已删除 —— SidebarHomeItem「我的工作台」是 sidebar 顶部唯一
+         sticky 入口,active space 信息由 TopBar SpaceSwitcher 触发器承担。 -->
     <SidebarTopSection />
 
     <!-- M13 此空间的关注 (2026-07-29 由「我的关注」改名)—— 个人空间无 watch 语义,不渲染此 section。 -->
@@ -382,8 +334,10 @@ watch(
 
     <div class="sidebar-bottom">
       <!-- v0.7+: 去掉 v-else 分支的 36px readonly pill —— Confluence 风格
-           「hide-not-disable」:无 Create 按钮就是 read-only 的信号,
-           hint 由 quick-nav chip 里空间名旁的 14px 小锁承担 -->
+           「hide-not-disable」:无 Create 按钮就是 read-only 的信号。
+           2026-08-07 P2:之前 viewer 状态另由 quick-nav chip 里空间名旁的
+           14px 小锁承担,quick-nav 删除后这里变成唯一 read-only 提示
+           (按钮直接不渲染)。 -->
       <button v-if="canCreateInSpace" class="create-page-btn" @click="createRoot">
         <span class="material-symbols-outlined icon-lg">add</span>
         创建页面
@@ -403,166 +357,13 @@ watch(
 </template>
 
 <style scoped>
-/* Active-space chip 视觉重量降低:
- *   - 28px row(跟 sidebar 其它 row 同款)
- *   - 左侧 3px accent 竖线代替大色块背景 —— 仍然能一眼认出「这是 active」,
- *     但不抢 sticky 顶部「我的工作台」的视觉重心
- *   - 文字 muted (text-2) + hover 才升到 text-1,跟 watched-row / tree-row 同款
- *   - 底部 1px border 跟 sticky 顶部「我的工作台」视觉分隔
- */
-.quick-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  /* 2026-07-29 sidebar polish:删 border-bottom + padding-bottom —— 旧版在
-     chip 「激活的空间」跟下面 sticky「我的工作台」之间有一条 1px 分隔线,
-     加上 SidebarTopSection 自带的 border-bottom,siderbar 顶部出现 2 条
-     横线,把 4 个 section 切分成 (1)|(2)|(3+4) 三块,用户反馈"很割裂"。
-     现在 chip 跟 sticky 「我的工作台」之间只用 4px 微间距衔接(原 12+1
-     border 也分不开两个同字色/同字号的 row),sticky 「我的工作台」跟
-     滚动内容(此空间的关注 + 此空间的页面)之间保留 SidebarTopSection 唯
-     一一条 1px 分隔线——既维持 sticky 顶部边界,又消除视觉割裂。 */
-  margin-bottom: 4px;
-}
-.quick-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  /* 2026-07-29:删 ::before 3px bar 后,padding-left 从 11 回到 8,跟 sh-item
-     / watched-row / tree-row 统一,padding 不再为那条竖线特别让位。 */
-  padding: 0 8px;
-  border-radius: var(--radius);
-  color: var(--text-2);
-  font-size: 14px;
-  text-decoration: none;
-  transition: all var(--duration-fast);
-  position: relative;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  width: 100%;
-}
-.quick-nav-item:hover {
-  background: var(--bg-subtle);
-  color: var(--text-1);
-  text-decoration: none;
-}
-.quick-nav-item .material-symbols-outlined {
-  font-size: 18px;
-  color: var(--text-3);
-}
-.quick-nav-item:hover .material-symbols-outlined { color: var(--text-1); }
-
-/* Active-space chip:左侧 3px accent 竖线 + muted 文字 + 透明背景 —— 比之前
- * 整行 accent-soft 大色块轻得多,跟 sticky 顶部「我的工作台」+ 团队
- * 空间 watched 列表在视觉重量上对齐。
- * 文字仍是 var(--text-2) muted,hover 才升 text-1,跟下面的 row 同款。
- *
- * 设计决策(P1-9 文档化):quick-nav-active 故意**不**走 accent-soft 背景
- * + accent 字色 + 600 加粗这套「active」视觉 —— 跟 sticky 顶部「我的
- * 工作台」(sh-item-active)+ 团队空间 watched-row.active 故意不同。
- * quick-nav 是「我在这里」的持久锚点,顶部固定不滚走,视觉太重会跟
- * sticky 顶部 + page tree active 行争色。3px 竖线 + muted 文字是这条
- * 规则的最优解。
- *
- * 2026-07-29:删掉 SidebarPinnedSection / SidebarRecentsSection 后,sticky
- * 顶部只剩「我的工作台」一块;此处规则同步收紧,不再需要为「Pinned/
- * Recents active」让位。 */
-.quick-nav-active {
-  /* 2026-07-29:删 ::before 3px accent 竖线(下方注释展开)。padding-left
-     跟着从 11px 回到 8px,跟 sh-item / watched-row row 节奏统一。 */
-  padding: 0 8px;
-  background: transparent;
-  color: var(--text-2);
-  font-weight: 500;
-}
-/* 2026-07-29 删除 .quick-nav-active::before —— 早期 P1-9 阶段为了让
-   chip「激活的空间」语义可视化,加了永久显示的 3px accent 竖线代表
-   "you are here" 锚点。但用户反馈它视觉上像"激活样式"(永远亮),
-   跟 chip 不是导航项、只是状态指示的语义冲突。
-   现在 chip 纯靠 muted 文字 + 名字 + count 跟 lock 表达"当前空间"
-   语义 —— 这种极简风是 Notion / Linear 左 rail 的标准做法。
-   「你点击它会跳到该空间 home」这件事交由 hover:bg-subtle 反馈
-   (跟其它 sidebar row 一致);不需要常驻竖线作为"可点击性"提示。 */
-.quick-nav-active .material-symbols-outlined { color: var(--text-3); }
-/* 1.14 hover affordance — chevron 默认 opacity 0,hover/focus 时淡入。
-   用 chevron 而不是单纯加 bg 色,因为 affordance 要传达的是「跳到别处」,
-   不是「选中态」。accent 色 hover 时填上,跟 sticky 顶「我的工作台」
-   accent 主色视觉一致。 */
-.quick-nav-arrow {
-  font-size: 16px !important;
-  color: var(--text-3);
-  flex-shrink: 0;
-  margin-left: 2px;
-  opacity: 0;
-  transform: translateX(-2px);
-  transition: opacity var(--duration-fast) var(--ease-out),
-              transform var(--duration-fast) var(--ease-out),
-              color var(--duration-fast) var(--ease-out);
-}
-.quick-nav-item:hover .quick-nav-arrow,
-.quick-nav-item:focus-visible .quick-nav-arrow {
-  opacity: 1;
-  transform: translateX(0);
-  color: var(--accent);
-}
-.active-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.active-count {
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg-subtle);
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 500;
-}
-/* viewer-role 只读锁:名字与页数之间的 14px muted 小锁。放在这里而不是叠在
-   20px 头像上 —— 头像太小,角标 glyph 会糊。lock 轮廓在小尺寸下比 visibility
-   眼睛清晰,一眼能认出「只读」。 */
-.active-lock {
-  font-size: 14px !important;
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-/* P1-9: 归档空间 badge —— 跟 .active-count 同款半透白底 + text-3 字体尺寸,
-   「已归档」三个字作为 chip 标识。位置在名字后 / lock 前,跟 lock 共存
-   (archived 是空间级,readonly 是用户级,两者正交)。 */
-.active-archived-badge {
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg-subtle);
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-/* 归档空间的 quick-nav 整体视觉降级 —— 名字颜色降低到 text-3,跟
-   archivedBadge 视觉重量对齐。不影响 3px accent 竖线 (它是固定
-   active 标识,跟 archived 正交)。 */
-.quick-nav-archived .active-name {
-  color: var(--text-3);
-}
-.quick-nav-archived .active-count {
-  /* 归档空间的页数跟生产环境脱钩,弱化显示 */
-  opacity: 0.6;
-}
-
-/* 2026-07-29:section title 的 `.count` chip 样式不再在此 scoped 声明 ——
-   标题栏搬进 SidebarSectionHeader.vue 后,scoped 选择器打不到子组件内部;
-   chip 视觉由 styles/components.css 的全局 `.sidebar-section-title .count`
-   提供(两块 section 共用同一份)。 */
-
 /* Sidebar 三个 section 之间用 sticky top 自身的 border-bottom 做分隔 —
    见 SidebarTopSection.vue。WatchedSidebar / page-tree section 跟 sticky 顶
    部之间的 visual divider 由 sticky 底边提供,这里只补上 12px margin-top 给
-   一点呼吸空间,不要再叠 border-top(避免双线夹一缝的难看效果)。 */
+   一点呼吸空间,不要再叠 border-top(避免双线夹一缝的难看效果)。
+   2026-08-07 P2:删 quick-nav chip 后,sidebar 顶部第一个视觉锚点是
+   SidebarTopSection 的「我的工作台」单行入口,跟之前两段相比视觉更
+   紧凑 —— 上沿直接到 sidebarRef 滚动区顶部,无 chip 占位。 */
 .sidebar-section {
   margin-top: 12px;
 }
@@ -664,10 +465,10 @@ watch(
 /* v0.7+ 删除:
  *   .readonly-badge (viewer-role 时占据 sidebar-bottom 36px slot)
  *   .readonly-hint  (EmptyState 内 viewer 提示)
- * 二者的语义移到 quick-nav chip 里空间名旁的 .active-lock(14px lock)。
- * (曾短暂试过叠在 SpaceAvatar 头像右下角,但 20px 头像 + 9px glyph 糊成一团,
- *  改成名字旁行内小锁。)
- * 跟 Confluence 「hide-not-disable」对齐:无创建按钮就是 read-only 的信号,
- * 不必再挂显式 「只读」 pill。
- */
+ * 二者的语义迁移:跟 Confluence 「hide-not-disable」对齐,无创建按钮就是
+ * read-only 的信号,不必再挂显式 「只读」 pill。
+ * 2026-08-07 P2:原本这条注释里说「语义移到 quick-nav chip 里空间名旁的
+ * .active-lock」,quick-nav chip 删除后这条引用失效 —— 现在 viewer 状态
+ * 只通过 sidebar-bottom 的「新建页面」按钮是否隐藏来表达,不再有 lock icon
+ * 或 pill 标识。空 table 里若未来需要 lock icon,挂在 page tree 头部更合适。 */
 </style>

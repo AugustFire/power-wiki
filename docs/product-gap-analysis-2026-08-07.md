@@ -215,6 +215,41 @@
 
 ---
 
+### ✅ [P2·已修 2026-08-07] TopBar brand 不跳 + sidebar 激活空间 chip + UserMenu「我的空间」三处冗余入口
+
+**背景**:P0 (commit `3929f74`) 把 SpaceHomeView 收口成 team-only、`/` 在 active=personal 时重定向到 `/me`、SpaceSwitcher 提升到 TopBar 顶部成为「切换 activeSpace」的唯一入口 —— 这一系列重构之后,以下三处旧 UI 已成纯重复(都在 chrome 层,产品交互上互相竞争视觉重心):
+
+1. **BrandLogo 纯装饰、不响应点击** —— 唯一品牌资产、5 处使用(`App.vue` boot、TopBar、Login/Reset/PublicPage 三个未登录页),但 TopBar 里它紧贴 SpaceSwitcher 但本身不能跳走,体感不一致。Confluence / Notion / 飞书默认 brand → home。
+2. **Sidebar 顶部 `quick-nav` chip** —— 渲染 activeSpace 名字 + 归档 badge + 锁 icon + page count + chevron,click 跳 `/`。**功能跟 SidebarHomeItem「我的工作台」(→ /me)100% 重合**,区别只在 chip 显示「activeSpace 名字」 —— 但 TopBar SpaceSwitcher 触发器已经显示 active space name + 可点开切换,sidebar chip 上 name 信息不再独有价值。归档 badge / page count / lock icon 是次要装饰,本轮信息丢失(用户接受)。
+3. **UserMenu「我的空间」entry** —— `setActiveSpace(personal) + router.push('/')`,**功能跟 SpaceSwitcher personal option 完全相同**,且 SpaceSwitcher 紧贴 BrandLogo 在同 TopBar 行内可达性 1 击 vs avatar popover 的 2 击。
+
+**怎么改的**:
+
+- `apps/web/src/components/layout/TopBar.vue`:BrandLogo 套 `<RouterLink to="/" class="topbar-logo-link" title="回到首页">`,点击回主场景 —— `/` 在 active=team 时渲染 SpaceHomeView(team home 或配置的 homepagePageId),active=personal 时由 SpaceHomeView watch 重定向到 `/me`。CSS `.topbar-logo-link.router-link-active` 显式 override 高亮,brand 是「回 home」入口不是「我在 home」指示,避免 `router-link-active` 的 accent-soft bg 跟下面 activity-btn 的「我在 activity」撞色。
+- `apps/web/src/components/layout/Sidebar.vue`:删 quick-nav chip 模板(原 296-332)+ CSS(原 405-555)+ `goHome()` handler(原 162-166)+ `isActiveArchived` computed + `SpaceAvatar` import + 三处 stale 注释(active-lock / activePageCount trashed filter / viewer-role 提示)。`active` computed / `activePageCount` / `canCreateInSpace` / `isActivePersonal` 保留 —— 它们还在 `openImportRoot` / SidebarSectionHeader `:count` / 「新建页面」按钮 / WatchedSidebar 条件里用。SidebarHomeItem 「我的工作台」仍 sticky 顶部单行入口。
+- `apps/web/src/components/ui/UserMenu.vue`:删「我的空间」 entry(原 162-171)+ `goMySpace()` handler(原 68-87)+ `personalSpace` computed + `useSpacesStore` + `SpaceAvatar` import + 三处 docblock 解释 setActiveSpace 副作用的注释。UserMenu 现在只有「设置 / 登出」账号级操作。
+- `apps/web/src/components/layout/SidebarHomeItem.vue`:docblock 同步,删「team home 由 sidebar 顶部「激活的空间」chip 承担 you are here」描述(已失效),明确 active 态保持 personal home 专属。
+
+**行为**:
+- 点 brand:任意路由 → 跳回主场景(team home 或 `/me`)。`router-link-active` 不挂,brand 视觉恒定。
+- sidebar 顶部:只剩 SidebarHomeItem「我的工作台」单行;archive badge / page count / lock icon 不再显示(viewer 状态改由 sidebar-bottom「新建页面」按钮 v-if 表达 —— hide-not-disable)。
+- avatar 菜单:只剩「设置 / 登出」。切到 personal space 一律走 SpaceSwitcher。
+
+**反转之前决定**:`feedback_distinct_home_concepts.md` 描述的 team home vs personal home 是两个产品概念,这条原则不变 —— 删的是冗余入口,不是产品架构。之前 P0 plan 显式保留 UserMenu「我的空间」 entry 的论据是「跨空间 dashboard vs 切到 personal」语义区分,但 SpaceSwitcher 已是切换 activeSpace 的标准入口,UserMenu 内重复入口失去价值,跟 Confluence / Notion chrome 一致 —— 进入 personal 通过 SpaceSwitcher,头像 popover 只保留账号级操作。
+
+**怎么验证**:
+- `scripts/verify_brand_logo_click.py` 新增,11/11 PASS(active=team/personal 跳回正确 + 非 home 路由跳转 + brand 不带 router-link-active 高亮)。
+- `scripts/verify_p1_7_home.py` 已更新 UserMenu「我的空间」 → SpaceSwitcher personal option。
+- `scripts/verify_sidebar_polish.py` chip-archived 断言改 0(已删)+ activePageCount 改读 SidebarSectionHeader `.count`。
+- `scripts/verify_polish_v1.py` `.quick-nav-item.disabled` 断言改 chip 完全不存在。
+- `scripts/verify_personal_space.py` chip 断言改「count == 0」(已删)。
+- `scripts/verify_m2_phase4.py` / `smoke_p0_personal_home.py` / `snap_personal_space_3_entries.py` UserMenu 路径改 SpaceSwitcher。
+- `scripts/verify_sidebar_active.py` / `scripts/verify_myspace_click.py` / `scripts/verify_personal_space_3_entries.py` / `scripts/snap_sidebar_split.py` 整文件删(stale:引用不存在的选择器 / 测试 pre-P0 产品形态 / 整段测 UserMenu「我的空间」)。
+
+**代码位置**:`apps/web/src/components/layout/TopBar.vue:62-66`(brand link)、`apps/web/src/components/layout/Sidebar.vue`(chip 删除)、`apps/web/src/components/ui/UserMenu.vue:162-171` 原位置(menu item 删除)、`apps/web/src/components/layout/SidebarHomeItem.vue:1-23`(docblock 同步)。
+
+---
+
 ### 🟢 [P2] 仪表盘无「热门 / 置顶 / 收藏」排序
 
 **现状是什么**:`SpaceHomeView` 的「我最近访问」「推荐浏览」「最近编辑」都是按时间倒序;`ActivityView` 也只有时间排序。PageNode 数据模型没有 `pinnedAt` / `popularityScore` 字段。

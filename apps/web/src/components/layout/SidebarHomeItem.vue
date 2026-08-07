@@ -12,14 +12,16 @@
  * accent-soft 高亮 —— 两个 active 视觉锚点同时出现在 sidebar 顶部,看起来
  * 像 chip 单点击了 workspace,语义上割裂。修法:严格限定为 personal home。
  *
- * `team home`(/,route.name === 'home') 由 sidebar 顶部「激活的空间」chip
- * 的 3px accent bar 承担「you are here」表达 —— 已经是不同视觉 token
- * (3px 竖线 + muted 字),跟「我的工作台」的 accent-soft bg 不再撞色。
+ * 2026-08-07 P2:sidebar 顶部 quick-nav chip 删除后,`team home`(/) 不再
+ * 有 sidebar 锚点 —— 「我在 team home」的视觉表达改由 TopBar SpaceSwitcher
+ * 触发器里 active space name 高亮 + SpaceHomeView hero 标题承担。SidebarHomeItem
+ * active 态保持 personal home 专属(route.name === 'me-dashboard'),跟 team
+ * home 正交。
  *
  * 不覆盖 `/p/:id`、`/me/watched` 等子路由 —— 那些不是"home 界面"。
  *
  * 点击:router push /me。**不**调 setActiveSpace — PersonalHomeView 不依赖
- * active space,跟 UserMenu「我的空间」行为一致。
+ * active space。
  */
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'

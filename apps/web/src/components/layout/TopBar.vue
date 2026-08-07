@@ -60,7 +60,16 @@ const showManagement = computed(
 <template>
   <header class="topbar">
     <div class="brand">
-      <BrandLogo :size="24" with-wordmark class="topbar-logo" />
+      <!-- 2026-08-07: BrandLogo 套 RouterLink 跳 / —— 让 brand 回归 Confluence /
+           Notion 默认的「点 logo 回 home」直觉。`/` 在 active=team 时渲染
+           SpaceHomeView(team home 或配置的 homepagePageId),active=personal 时
+           由 SpaceHomeView 的 setup watch 重定向到 /me(P0 3929f74)。brand
+           是「回主场景」入口不是「我在 home」指示,所以显式 override router-link-
+           active / -exact-active 高亮,跟下面 activity-btn 的「我在 activity」
+           语义区分。 -->
+      <RouterLink to="/" class="topbar-logo-link" title="回到首页">
+        <BrandLogo :size="24" with-wordmark class="topbar-logo" />
+      </RouterLink>
       <span class="brand-divider" aria-hidden="true"></span>
       <SpaceSwitcher />
     </div>
@@ -99,6 +108,25 @@ const showManagement = computed(
 </template>
 
 <style scoped>
+.topbar-logo-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 4px;
+  /* brand 是「回主场景」入口不是「我在 home」指示 —— 任何路由都不该高亮,
+     避免 router-link-active 的 accent-soft 跟下面 activity-btn 的「我在
+     activity」语义撞色。 */
+}
+.topbar-logo-link.router-link-active,
+.topbar-logo-link.router-link-exact-active {
+  background: transparent;
+  color: inherit;
+}
+.topbar-logo-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .topbar-logo { flex-shrink: 0; }
 .activity-btn {
   display: inline-flex;

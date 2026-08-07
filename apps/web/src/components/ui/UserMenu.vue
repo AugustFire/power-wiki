@@ -8,28 +8,27 @@
  *
  * Items (top → bottom):
  *   - Header: avatar + name + email
- *   - 我的空间 → /me 全局个人工作台
  *   - 设置     → SettingsDrawer
  *   - 登出     (clears session, authStore.logout() + redirect to /login)
  *
  * P1-8: 「管理后台」从这里挪到 TopBar 的 `ManagementMenu` dropdown —
  * 跟「当前空间管理」同段对照,避免单个 UserMenu 里塞两条作用域不同的
  * admin 入口(global vs. space)。
+ *
+ * 2026-08-07 P2:「我的空间」 entry 删除 —— SpaceSwitcher personal option
+ * 100% 覆盖(setActiveSpace + push /),SpaceSwitcher 紧贴 BrandLogo 在
+ * 同 TopBar 行内,可达性 1 击 vs 2 击。UserMenu 只保留账号级操作
+ * (设置 / 登出),不再承担空间切换入口。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
-import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { useSpacesStore } from '@/stores/spaces'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const uiStore = useUiStore()
-const spacesStore = useSpacesStore()
-
-const personalSpace = computed(() => spacesStore.personalSpace.value)
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -64,27 +63,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocClick)
   document.removeEventListener('keydown', onKey)
 })
-
-async function goMySpace() {
-  close()
-  // P1-7: 「我的空间」 = 进入个人空间。跟 SidebarHomeItem 「我的工作台」
-  // (→ /me) 是两条不同入口:
-  //   - 我的工作台 (SidebarHomeItem):跨空间个人 dashboard,不动 activeSpace
-  //   - 我的空间 (UserMenu):把 activeSpace 切到 personal,落 /me
-  //
-  // 2026-08-07 P0:`/` 现在是 team-only —— SpaceHomeView 的 setup watch
-  // 在 active=personal 时会把 `/` 重定向到 `/me`。所以这里 push('/') 实
-  // 际终点是 /me(setActiveSpace 把 activeSpace 翻成 personal,watch 把
-  // `/` 改成 `/me`)。不直接 push('/me') 是为了保留 setActiveSpace 的
-  // 副作用语义 —— 别的组件(Sidebar / TopBar / PageTree)依赖
-  // activeSpace 是 personal,不能跳过 setActiveSpace。
-  if (personalSpace.value) {
-    spacesStore.setActiveSpace(personalSpace.value.id)
-    if (router.currentRoute.value.path !== '/') {
-      void router.push('/')
-    }
-  }
-}
 
 /**
  * Open the SettingsDrawer (P1-6). Triggered by the 「设置」 menu item below.
@@ -158,17 +136,6 @@ async function onLogout() {
         </div>
 
         <div class="um-divider"></div>
-
-        <button
-          v-if="authStore.personalSpaceId && personalSpace"
-          type="button"
-          class="um-item"
-          role="menuitem"
-          @click="goMySpace"
-        >
-          <SpaceAvatar :space="personalSpace" :size="20" />
-          <span>我的空间</span>
-        </button>
 
         <button
           type="button"
