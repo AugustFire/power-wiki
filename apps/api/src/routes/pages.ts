@@ -113,6 +113,7 @@ import { type Variables } from '../auth/middleware'
 import type { AuthenticatedUser } from '../auth/session'
 import { selectPagesWithAuthor } from '../lib/selectPagesWithAuthor'
 import { getCollabHocuspocus } from '../collab/server'
+import { persistPageYjsState } from '../collab/persistPageYjsState'
 
 const PAGE_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz' // matches apps/web/src/lib/id.ts (10 chars)
 
@@ -1661,6 +1662,49 @@ pagesRouter.post('/:id/duplicate', async (c) => {
     payload: { sourcePageId: id },
   })
 
+  // 预填 page_yjs_state —— 跟 import 端点同根原因:duplicate 写入 pages
+  // 行但跳过 Hocuspocus,ReadView 首次 mount 找不到 state 行会走 hydration,
+  // 失败时 Y.Doc 留空,onBeforeUnloadDocument 触发的 mirror 反向覆盖
+  // 刚写入的 content。源页 contentJson 已经在 tx 里 INSERT,这里把
+  // 新源页 + 递归子页(若有)都灌进 page_yjs_state。
+  // 失败不阻塞 duplicate 主流程,跟 import 端点策略一致。
+  try {
+    await persistPageYjsState(newId, source.contentJson)
+  } catch (err) {
+    console.warn(`[duplicate] prefill page_yjs_state failed for ${newId}:`, err)
+  }
+  if (includeChildren) {
+    // BFS 新子树 —— 跟 tx 内递归复制同一个 BFS 模式(纯 ts 端控制)。
+    // 不依赖 CTE / 递归 SQL,直接用 parentId 链往下走,直到 frontier
+    // 为空。每页取 contentJson 灌进 page_yjs_state,失败 warn 不阻塞
+    // (subtree 单页 prefill 失败的可观察后果与 pre-fix 等价,见上方
+    // import 端点注释)。
+    let frontier: string[] = [newId]
+    while (frontier.length > 0) {
+      const children = await db
+        .select({ id: pages.id, contentJson: pages.contentJson })
+        .from(pages)
+        .where(
+          and(
+            inArray(pages.parentId, frontier),
+            isNull(pages.deletedAt),
+          ),
+        )
+      if (children.length === 0) break
+      for (const child of children) {
+        try {
+          await persistPageYjsState(child.id, child.contentJson)
+        } catch (err) {
+          console.warn(
+            `[duplicate] prefill page_yjs_state failed for ${child.id}:`,
+            err,
+          )
+        }
+      }
+      frontier = children.map((c) => c.id)
+    }
+  }
+
   const [row] = await selectPagesWithAuthor(eq(pages.id, newId), { viewerUserId: me.id }).limit(1)
   if (!row) return c.json({ error: 'not_found' }, 404)
   return c.json(PageNodeSchema.parse(rowToPageNode(row)), 201)
@@ -1780,6 +1824,21 @@ pagesRouter.post('import', async (c) => {
       derivedFromH1: h1Title != null,
     },
   })
+
+  // 8.5 预填 page_yjs_state —— 详见 ../collab/persistPageYjsState.ts
+  //   的说明。import 路径不走 Hocuspocus,ReadView 首次 mount 时
+  //   onLoadDocument 找不到 state 行会走冷启动 hydration,失败时
+  //   Y.Doc 留空,onBeforeUnloadDocument 触发的 mirror 会反向把
+  //   pages.contentJson / contentHtml 覆盖成空。预填让 onLoadDocument
+  //   直接命中「state 有 row」分支(hooks.ts:140),跳过 hydration,
+  //   不再被空 Y.Doc 反向覆盖。
+  //   失败不阻塞 import 主流程 —— contentJson 已经持久化,ReadView
+  //   走 hydration 兜底,行为与 pre-fix 等价,不会更糟。
+  try {
+    await persistPageYjsState(newId, tiptapJSON)
+  } catch (err) {
+    console.warn(`[import] prefill page_yjs_state failed for ${newId}:`, err)
+  }
 
   // 9. 回读 + DTO 序列化
   const [createdRow] = await selectPagesWithAuthor(eq(pages.id, newId), {

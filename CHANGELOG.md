@@ -21,6 +21,9 @@
 - **共享常量** `packages/shared/src/constants.ts`:`DEFAULT_TITLE = '无标题页面'`,前后端 createPage 默认 title 同源,避免历史上后端 `''` 默认值漂移导致的 schema `min(1)` 拒收
 
 ### Fixed
+- **导入 / 复制 Markdown 后子页内容消失**:两层修复
+  1. **根因 — `parseMarkdown` 表格单元格的 inline mark 序列化错**:`apps/api/src/lib/mdImport.ts` `inlineTokensToParagraph` 里 push 进 `activeMarks` 的是 `{ type: string, attrs: ... }` 普通对象(字符串 type),但 text token 展开 mark name 时写的是 `m.type.name`(把字符串当 ProseMirror `Mark` 实例读 → `undefined`),产出 `{ type: undefined, attrs: {} }` 这种 broken mark。Tiptap 的 `collabSchema.markFromJSON` 收到 `type: undefined` 直接抛 `There is no mark type undefined in this schema`。Bug 只在**带 inline mark 的单元格 / 段落**触发(如 `**加粗**`),简单 MD 测不出来;真实文档里出现概率极高。修了 `m.type.name` → `m.type`(字符串路径),去掉对应 `as unknown as Mark` 强转和 `Mark` import
+  2. **race 收口 — `import` / `duplicate` 预填 `page_yjs_state`**:M13+ 之后 `pages.contentJson` / `contentHtml` 是 mirror 列,事实来源是 `page_yjs_state` 里的 Y.Doc 字节。即便修了根因,ReadView 首次 mount 还是会走 `onLoadDocument` 冷启动 hydration 路径(hydration 失败时 Y.Doc 留空 → `onBeforeUnloadDocument` 触发 `mirrorYDocToPageContent` 把空 Y.Doc 投影**反向覆盖**刚写入的 `contentJson` / `contentHtml` → 下次 GET 拿空 HTML → 渲染空白)。新增 `apps/api/src/collab/persistPageYjsState.ts` 共享函数(用 `hydrateYDocFromContentJson` 灌 Y.Doc + UPSERT `page_yjs_state`),import / duplicate 端点写完 `pages` 行后调一次,失败 warn 不阻塞主流程(contentJson 已在 pages 行里,hydration 兜底)
 - **空标题脏数据 backfill**:4 行 commit b2e0605 种出来的 live page(`title IS NULL OR title = ''`)批量 UPDATE 为 `未命名`,清空 GET /api/pages 的 ZodError 噪声
 - **历史记录噪声根因**:移除 `PATCH /api/pages/:id` 里每个 content-mutating PATCH 自动写 `page_versions` 的逻辑;auto-save 永远静默,version 只在 idle / route leave 边界打(跟 Notion / Google Docs / Figma 一致)
 - **创建页面失败 `标题不能为空`**:Backend `apps/api/src/routes/pages.ts:269` 用 `input.title ?? DEFAULT_TITLE` 替换 `input.title ?? ''`;Frontend `apps/web/src/stores/pages.ts` `createPage` 永远在 API payload 里带 `title`,不再 `...(opts.title !== undefined ? { title } : {})` 省略

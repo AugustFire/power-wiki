@@ -226,6 +226,11 @@ server 先 SELECT active lock,有 holder → `sendStatelessToPage` 推 `page_loc
 **Q6 — 个人 space 的 personal space id 怎么来?**
 `ensurePersonalSpace.ts` 在 signup 时为每个 user 自动创建 personal space,`users.id` 唯一对应一个 personal space id(server 端 bootstrap 路径)。`/api/auth/session` 返回 `personalSpaceId`,client 拿来当默认 `spaceId` 调 `/api/pages`。
 
+**Q7 — import / duplicate 创建的 page 为什么没有「刷新后内容消失」的问题?**
+两层防御:
+1. **`parseMarkdown` 表格 / inline mark 序列化正确性**:`apps/api/src/lib/mdImport.ts` 的 `inlineTokensToParagraph` 在 push 进 `activeMarks` 时用的是 `{ type: string, attrs: ... }` 普通对象,但 text token 展开 mark name 时走的是 `m.type.name`(把字符串当 `Mark` 实例读 → undefined),会产出 `{ type: undefined, attrs: {} }` 这种 broken mark,Tiptap `collabSchema.markFromJSON` 收到直接抛错。修了之后 import 出来的 `pages.contentJson` 本身就是干净的,可被 hydration 正确灌进 Y.Doc
+2. **prefill `page_yjs_state`**:M13+ 之后协同主流程事实来源是 `page_yjs_state` 里的 Y.Doc 字节,`pages.contentJson` / `contentHtml` 是 mirror 列。import 端点(`POST /api/pages/import`)和 duplicate 端点(`POST /api/pages/:id/duplicate`)在写 `pages` 行之后,会立即调 `persistPageYjsState`(`apps/api/src/collab/persistPageYjsState.ts`)把 `contentJson` 灌进新 Y.Doc + UPSERT 进 `page_yjs_state`。这样 ReadView 首次 mount 时 `onLoadDocument` 命中「state 有 row」分支,跳过冷启动 hydration,`onBeforeUnloadDocument` 触发的 `mirrorYDocToPageContent` 不会再用空 Y.Doc 反向覆盖 `pages.contentJson` / `contentHtml`。冷启动 hydration 仍保留为兜底,只服务于 M13 之前落库的老 page。
+
 ---
 
 ## 6. 调试清单

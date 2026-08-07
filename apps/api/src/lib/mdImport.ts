@@ -201,7 +201,14 @@ function extractTables(text: string): { masked: string; tables: ExtractedTable[]
  */
 function inlineTokensToParagraph(tokens: Token[]): TiptapJSON {
   const content: TiptapJSON[] = []
-  let activeMarks: Mark[] = []
+  // activeMarks 装的是 { type: string, attrs: Record<string, unknown> } 形状的
+  // 普通对象 —— 强转自 schema 路径(strong_open / em_open ...)。这里 push 的
+  // 是字符串 type 而不是 ProseMirror `Mark` 实例,所以下面读 mark name 是
+  // `m.type as string`,不是 `m.type.name`(后者会把字符串当 Mark 对象读,
+  // 拿到 undefined,产出 `{ type: undefined, attrs: {} }` 这种 broken mark,
+  // collabSchema.markFromJSON 收到就抛 "There is no mark type undefined",
+  // Y.Doc hydration 失败 → mirror 反向覆盖 import 写入的 contentHTML)。
+  let activeMarks: { type: string; attrs: Record<string, unknown> }[] = []
   for (const tok of tokens) {
     switch (tok.type) {
       case 'text': {
@@ -216,7 +223,7 @@ function inlineTokensToParagraph(tokens: Token[]): TiptapJSON {
           type: 'text',
           text: tok.content,
           marks: activeMarks.map((m) => ({
-            type: MARK_NAME_MAP[m.type.name] ?? m.type.name,
+            type: MARK_NAME_MAP[m.type] ?? m.type,
             attrs: m.attrs,
           })),
         })
@@ -248,7 +255,7 @@ function inlineTokensToParagraph(tokens: Token[]): TiptapJSON {
           attrs: tok.type === 'link_open'
             ? { href: tok.attrGet('href') ?? '' }
             : {},
-        } as unknown as Mark)
+        })
         break
       case 'strong_close':
       case 'em_close':

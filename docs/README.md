@@ -11,7 +11,7 @@
 | [data-model.md](./data-model.md) | Drizzle schema(23 张表)、recursive CTE 模式、auth 自研设计、ensurePersonalSpace / personalSpaceGuard、Phase A/B/C/D 表字段、DB 注释硬约束 | 改 schema / 加新表 / 加新列时 |
 | [permissions.md](./permissions.md) | 「能力速查」矩阵(6 种身份 × 25 项能力)、角色定义、3 个易踩不对称(viewer hide vs disable、space-admin ≠ global admin、admin 不可授组)、页面限制继承规则(view BFS / edit 不继承)、公开分享校验链、UI 入口 gate 表;下半段给开发者的算法 + ER 图 + 文件位置索引 + 8 个边界场景 FAQ | 改 lib/permissions / 加 page 限制 / 加 share / 改 UI gate 时 |
 | [loading-ux.md](./loading-ux.md) | 数据获取 + Loading UX 硬约束(16 条,含 admin mount 请求数预算) | 加新 view / 新组件 / 新路由时必读 |
-| [collab.md](./collab.md) | 协同锁 page_locks(5min TTL)+ awareness mode + WS push(`lock_changed` / `lock_cleared` / `page_locked_during_delete`)+ 自适应轮询 + M13+ 删除 race 4 缺口收口 + 个人空间 BroadcastChannel 协议 + 6 个实际 case | 改 usePageLock / useCollabProvider / PresenceAvatars / LockBanner / 加协同功能时 |
+| [collab.md](./collab.md) | 协同锁 page_locks(5min TTL)+ awareness mode + WS push(`lock_changed` / `lock_cleared` / `page_locked_during_delete`)+ 自适应轮询 + M13+ 删除 race 4 缺口收口 + 个人空间 BroadcastChannel 协议 + import/duplicate 预填 `page_yjs_state` + 6 个实际 case | 改 usePageLock / useCollabProvider / PresenceAvatars / LockBanner / 加协同功能时 |
 | [verification.md](./verification.md) | Playwright 验收脚本使用 + 安装 + 脚本目录(60+ verify / 10+ snap) | 改完代码后跑验证 / 加新 verify 脚本时 |
 
 仓库根还有 [CHANGELOG.md](../CHANGELOG.md) —— 用户可见的版本变更都登记在这里。
