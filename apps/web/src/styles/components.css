@@ -2374,6 +2374,29 @@ body:not(.editor-hover) .drag-handle {
     color: var(--success);
     transition: all var(--duration-base);
 }
+/* 紧凑模式(P0/5.3):仅显示 dot,无文字,hover 触发 browser-native
+   tooltip 看完整文案。给 saving / saved / pending / error 这 4 个
+   瞬时态用 —— 它们生命周期短(< 1.6s 或瞬态错误),文字会一闪而过
+   反而干扰视线。idle 状态是用户停留最久的「安静态」,保留「已同步
+   · X 分钟前」可见文字,实时 30s tick 刷新,直接告诉用户「刚才的
+   改动真的落盘了」。 */
+.save-indicator.compact {
+    padding: 4px 8px;
+    gap: 0;
+    background: transparent;
+}
+.save-indicator.compact.saving {
+    background: var(--warning-soft);
+}
+.save-indicator.compact.saved {
+    background: var(--success-soft);
+}
+.save-indicator.compact.pending {
+    background: var(--warning-soft);
+}
+.save-indicator.compact.danger {
+    background: var(--danger-soft);
+}
 .save-indicator.saving {
     background: var(--warning-soft);
     color: var(--warning-text);
@@ -2384,10 +2407,19 @@ body:not(.editor-hover) .drag-handle {
     background: currentColor;
     animation: pulse 1.2s infinite;
 }
+.save-indicator.compact .dot { animation: none; }
+.save-indicator.saving .dot { animation: pulse 1.2s infinite; }
 .save-indicator.saved .dot { animation: none; }
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
+}
+
+/* icon-only 按钮(P0/5.3 EditView 顶栏「关闭」):去掉左右文字 padding,
+   居中 icon,保持与兄弟按钮(其他 .btn)同 32px 高度。hover / focus
+   态复用 .btn 全局样式,不重复定义。 */
+.btn.icon-only {
+    padding: 0 8px;
 }
 
 /* ============================================================

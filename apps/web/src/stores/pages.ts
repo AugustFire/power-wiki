@@ -1377,6 +1377,39 @@ export const usePagesStore = defineStore('pages', () => {
       .sort((a, b) => a.order - b.order)
   }
 
+  /**
+   * ReadView 顶栏 ⋯ → 删除 —— 镜像 PageTree 的 hasLiveChildren gate,但
+   * PageTree 读的是预计算字段 `TreeNode.liveDescendantCount`(getTree() 后
+   * 序遍历时一次性填好)。ReadView 拿到的是 PageNode(不带这个字段),所以
+   * 这里按需 BFS 一下 pages.value。读顶栏菜单时跑一次,O(N) 全表扫描,
+   * 单页菜单打开的代价可接受;PageTree 已经做了预计算不重复跑。
+   *
+   * 同样过滤 `deletedAt == null` —— 跟 getTree() / getChildren() 保持同
+   * 源,确保乐观删除期间的中间态一致(被删除的子页不计入父页的
+   * descendant count)。
+   */
+  function getLiveDescendantCount(pageId: string): number {
+    let total = 0
+    const queue: string[] = [pageId]
+    const childMap = new Map<string, string[]>()
+    for (const p of pages.value) {
+      if (p.deletedAt != null || p.parentId === null) continue
+      const arr = childMap.get(p.parentId)
+      if (arr) arr.push(p.id)
+      else childMap.set(p.parentId, [p.id])
+    }
+    while (queue.length > 0) {
+      const cur = queue.shift()!
+      const kids = childMap.get(cur)
+      if (!kids) continue
+      for (const k of kids) {
+        total += 1
+        queue.push(k)
+      }
+    }
+    return total
+  }
+
   const tree = computed(() => getTree())
 
   /**
@@ -1443,6 +1476,7 @@ export const usePagesStore = defineStore('pages', () => {
     createPage,
     getPage,
     getChildren,
+    getLiveDescendantCount,
     patchPage,
     updatePage,
     softDeletePage,

@@ -80,6 +80,15 @@ export interface UsePageAutoSaveOptions {
 export interface UsePageAutoSaveReturn {
   /** 当前保存状态。template 直接消费,UI 渲染对应的指示器。 */
   saveState: Ref<SaveState>
+  /**
+   * 最近一次成功 PATCH 的 unix-ms 时间戳。EditView 顶栏指示器用这个 + 一个
+   * 30s tick 的 `now` 实时显示「已自动保存 · X 秒前」/「已同步 · X 分钟前」,
+   * 让用户能直观判断「我刚才的修改是不是真的落盘了」(P0/5.3)。失败 PATCH
+   * 不更新此值 —— error 态时 lastSavedAt 仍是「真的成功过」的时间,跟 isDirty
+   * 互相印证(PATCH 失败 + lastSavedAt 是 5 分钟前 → 「最近 5 分钟的修改没
+   * 落盘」的语义)。
+   */
+  lastSavedAt: Ref<number | null>
   /** 是否存在未保存修改。route-leave confirm 提示用这个 flag。 */
   isDirty: Ref<boolean>
   /**
@@ -147,6 +156,7 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
   } = opts
 
   const saveState = ref<SaveState>('idle')
+  const lastSavedAt = ref<number | null>(null)
   const isDirty = ref(false)
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -215,6 +225,7 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
     try {
       await save(patch)
       lastSavedFingerprint = fp
+      lastSavedAt.value = Date.now()
       isDirty.value = false
       // Phase 5:不再调 scheduleIdleSnapshot() —— snapshot 在 lock acquire/
       // release 边界打(EditView 的 onAcquire/onRelease)。这里仍记
@@ -330,6 +341,7 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
       clearSavedHideTimer()
       clearIdleSnapshotTimer()
       saveState.value = 'idle'
+      lastSavedAt.value = null
       isDirty.value = false
       lastSavedFingerprint = null
       hasUnsnapshottedEdits = false
@@ -341,6 +353,7 @@ export function usePageAutoSave(opts: UsePageAutoSaveOptions): UsePageAutoSaveRe
 
   return {
     saveState,
+    lastSavedAt,
     isDirty,
     scheduleSave,
     flushSave,

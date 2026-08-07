@@ -543,16 +543,52 @@ async function onToggleLike() {
 }
 
 /**
- * Copy this page in place — POST /api/pages/:id/duplicate. On success
- * the store renumbers the source's sibling group so the copy lands
- * immediately after the source, and we navigate to the new copy's read
- * view (mirrors `publishPageToSpace`'s navigation pattern from PageTree).
- * Store shows the error banner on failure; no inner try/catch needed.
+ * 顶栏「复制链接」快捷按钮(P0/5.3) —— D-1 智能 copyLink 从
+ * PageMoreActionsMenu 提到顶栏后单独一份实现:
+ *   - page 存在 active public share token → 复制公开 URL
+ *     (`${origin}/#/public/pages/<token>`)
+ *   - 否则复制内部 URL (`${origin}${pathname}#/p/<id>`)
+ *   - clipboard API 不可用 → textarea fallback
+ * 失败 / cache miss 容错:list 拉失败(token 缓存空 / 网络错)→ 走内部 URL,
+ * 跟 v0 行为一致。
+ *
+ * 提到顶栏的代价:多一份实现(不再走 PageMoreActionsMenu.copyLink)。
+ * Menu 通用组件落地后可以收敛回一份(把 onCopyLink 通过 emit 暴露),
+ * 当前 P0/5.3 只动 UI 不动抽象,等 Menu 组件一起收口。
  */
-async function onDuplicate() {
+async function onCopyLinkTopBar(): Promise<void> {
   if (!page.value) return
-  const created = await pagesStore.duplicatePage(page.value.id)
-  await router.push(`/p/${created.id}`)
+  const pid = page.value.id
+  const active = await pagesStore.firstActiveShareToken(pid)
+  const publicUrl = active
+    ? `${window.location.origin}/#/public/pages/${active.token}`
+    : null
+  const internalUrl = `${window.location.origin}${window.location.pathname}#/p/${pid}`
+  const url = publicUrl ?? internalUrl
+  const onOk = () => {
+    uiStore.notify(publicUrl ? '已复制公开链接' : '已复制链接')
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(onOk, fallback)
+  } else {
+    fallback()
+  }
+  function fallback() {
+    const ta = document.createElement('textarea')
+    ta.value = url
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+      onOk()
+    } catch {
+      uiStore.notify('复制失败,请手动复制', 'error')
+    } finally {
+      document.body.removeChild(ta)
+    }
+  }
 }
 
 watch(page, async () => {
@@ -700,24 +736,32 @@ function onRestrictionsSaved(flags: {
 }
 
 /**
- * 顶栏 ⋮ → 删除链路 —— 镜像 PageTree.deletePage 但**不**预检
- * liveDescendantCount:顶栏用户对页面树结构无直观感知,删父页导致
- * 子页一并进回收站的代价不可见,不如依赖 server 409 + banner 兜底
- * (PageTree 行级点击保留 precheck 是因为树视图能直接看到父子关系)。
+ * 顶栏 ⋮ → 删除链路 —— 跟 PageTree.deletePage 完全同源,确保「左侧
+ * page 树删 X」和「顶栏 ⋯ 菜单删 X」看到同一个确认 dialog、同一个
+ * gate、同一个结果。差异点(2026-08-07 一致性整改):
+ *   - gate:用 pagesStore.getLiveDescendantCount(pageId) 算 hasLiveChildren,
+ *     有未删除子页时直接拒(走 uiStore.setError banner);菜单项本身
+ *     也 :disabled + 改 title,跟 PageTree 行为对齐。
+ *   - dialog 文案:统一成 PageTree 的版本(单一 message + 单一
+ *     confirmText),不再按 childCount 分支 —— 同一个操作不能有两
+ *     套 dialog。
+ *   - 无 success notify:PageTree 不弹,ReadView 也不弹 —— 让
+ *     server banner / 路由跳转自己负责反馈,避免「左删弹、右删不弹」
+ *     的割裂感。
  */
 async function onDelete() {
   if (!page.value) return
-  const childCount = subPages.value.length
+  // 防御性二次 gate(菜单项已经 :disabled,这里是给 keyboard / 自动
+  // 化路径兜底,跟 PageTree.deletePage 的预检对齐)
+  if (pagesStore.getLiveDescendantCount(page.value.id) > 0) {
+    uiStore.setError('请先删除子页面')
+    return
+  }
   const ok = await confirm({
     title: `删除「${page.value.title}」?`,
-    message: childCount > 0
-      ? '该页面仍有子页面,请先处理子页面后再删除。'
-      : '页面将进入回收站,管理员可以从回收站恢复。',
-    details: childCount > 0
-      ? [`当前已加载的直接子页面: ${childCount} 个`, '删除父页面前请先移动或删除这些子页面。']
-      : ['页面内容不会立即物理删除。'],
+    message: '页面将进入回收站,可联系管理员恢复。',
     danger: true,
-    confirmText: childCount > 0 ? '仍然尝试删除' : '删除',
+    confirmText: '删除',
     cancelText: '取消',
   })
   if (!ok) return
@@ -725,11 +769,22 @@ async function onDelete() {
   try {
     await pagesStore.softDeletePage(page.value.id)
   } catch {
-    return
+    return // banner shown by store; stay on current page
   }
-  uiStore.notify('页面已移入回收站', 'success')
   if (wasCurrent) router.push('/')
 }
+
+/**
+ * 顶栏 ⋯ 删除 gate —— 跟 PageTree 的 hasLiveChildren 同源语义。
+ * PageTree 读 TreeNode.liveDescendantCount(预计算字段),ReadView 拿到
+ * 的是 PageNode(无该字段),所以这里 on-demand BFS 一下 pages.value。
+ * ReadView 顶栏 ⋯ 菜单 :has-live-children 透传 = 菜单项 :disabled
+ * + tooltip 改为「请先删除子页面」,跟左侧 PageTree 行为对齐。
+ */
+const hasLiveChildren = computed(() => {
+  if (!page.value) return false
+  return pagesStore.getLiveDescendantCount(page.value.id) > 0
+})
 
 function onAttachmentImgClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
@@ -764,27 +819,32 @@ watch(
     <PageActions>
       <!-- 关注按钮 —— 个人空间无 watch 语义,直接不渲染。 -->
       <PageWatchButton v-if="page && !isPersonalSpace" :page="page" />
-      <!-- 复制按钮:PageTree 上下文里的同名入口叫「复制页面」(2026-08-03 语义
-           对齐),这里是单页复制快捷入口 —— 顶栏只能塞一个按钮,把它跟
-           PageTree 的「复制页面」标签对齐,避免顶栏「复制」/ 侧栏「复制页面」
-           两种叫法歧义。子树复制走 ⋯ 菜单的「复制整棵子树」。 -->
+      <!-- P0/5.3 重组:「复制链接」占比 80% 是最高频动作,提到顶栏 icon
+           快捷按钮(跟 PageWatchButton 并列)。原先顶栏的「复制页面」按
+           钮(icon + 文字)改成 ⋯ 菜单里的「复制页面 / 复制整棵子树」项,
+           顶栏从 4 元素 (关注 + 复制页面 + ⋯ + 编辑) 收到 4 元素 (关注 +
+           + 复制链接 + ⋯ + 编辑),但视觉密度从「2 大按钮 + 1 ⋯」变成
+           「2 icon + 1 ⋯」,1280 视口不再挤爆。
+           D-1 智能 copyLink(2026-08-03):有 active public share token → 复制
+           公开 URL;否则复制内部 URL。点击有 toast「已复制链接 / 已复制
+           公开链接」。 -->
       <button
         v-if="page"
-        class="btn"
+        class="btn icon-only"
         type="button"
-        title="复制页面"
-        @click="onDuplicate"
+        title="复制链接到剪贴板"
+        @click="onCopyLinkTopBar"
       >
-        <span class="material-symbols-outlined icon-md">content_copy</span>
-        复制页面
+        <span class="material-symbols-outlined icon-md">link</span>
       </button>
-      <!-- ⋮ 更多操作 —— 把现有 导出 / 历史 / 限制 / 分享 + 新增 移动 / 复制链接
-           / 删除 全部装进 popover。1280 视口下顶栏只剩 4 个元素,不再挤爆
-           subheader。
-           C-2 (2026-08-03):hasChildren 透传当前页的子页数(subPages.length > 0),
-           有子页时菜单的「复制」项展开 submenu(仅本页 / 连同子树),跟 PageTree
-           的复制双入口对齐。无子页时退化成单动作,跟顶栏「复制」快捷按钮
-           语义一致(用户用 menu vs 顶栏 button 选入口,结果相同)。 -->
+      <!-- ⋮ 更多操作 —— P0/5.3 重组 4 段:
+           - 高频区:关注 / 页面历史
+           - 导出:HTML / MD / PDF
+           - 组织管理:限制 / 分享 / 移动 / 复制页面 / 复制整棵子树
+           - 危险:删除
+           「复制链接」原来在菜单里,提到顶栏了(hasChildren 透传不变,
+           复制页面/子树仍在菜单里)。菜单 props 同步加 watchedByMe 让
+           关注 toggle 能从 menu 走。 -->
       <PageMoreActionsMenu
         v-if="page"
         :page="page"
@@ -793,6 +853,9 @@ watch(
         :can-move="canMove"
         :can-delete="canDelete"
         :has-children="subPages.length > 0"
+        :has-live-children="hasLiveChildren"
+        :watched-by-me="page.watchedByMe === true"
+        :can-watch="!isPersonalSpace"
         @restrictions="restrictionsOpen = true"
         @share="shareOpen = true"
         @delete="onDelete"

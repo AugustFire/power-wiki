@@ -15,6 +15,7 @@ import AttachmentsSection from '@/components/page/AttachmentsSection.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import PageRestrictionsDialog from '@/components/page/PageRestrictionsDialog.vue'
 import ShareDialog from '@/components/page/ShareDialog.vue'
+import EditViewMoreMenu from '@/components/page/EditViewMoreMenu.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConfirm } from '@/composables/useConfirm'
 import { useActivePageId } from '@/composables/useActivePageId'
@@ -243,7 +244,42 @@ const autoSave = usePageAutoSave({
   snapshot: (changeNote) => pagesStore.snapshotPage(localId.value!, changeNote),
   idleSnapshotMs: IDLE_SNAPSHOT_MS,
 })
-const { saveState, isDirty } = autoSave
+const { saveState, lastSavedAt, isDirty } = autoSave
+
+/**
+ * 30s tick 的「当前时间」—— 让 saved / idle 状态显示的「X 秒/分钟前」
+ * 实时刷新(P0/5.3)。EditView 唯一会读 formatRelativeTime 的地方,
+ * 集中在这里维护一个 now ref 比让 composable 内部 setInterval 更轻
+ * (composable 不该感知 UI 展示节奏)。切页 / 卸载 onScopeDispose 顺手
+ * 清掉定时器,跟 lock / autosave 一起走组件生命周期。
+ */
+const now = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  nowTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 30_000)
+})
+onBeforeUnmount(() => {
+  if (nowTimer) {
+    clearInterval(nowTimer)
+    nowTimer = null
+  }
+})
+
+/**
+ * 用于「已同步 · X 分钟前」显示的时间戳 —— 优先用 composable 暴露的
+ * lastSavedAt(本次会话的最近成功 PATCH 时间),fallback 到 page.updatedAt
+ * (页面从 server hydrate 进来时,还没产生过 PATCH,lastSavedAt 是 null,
+ * 但用户能看到的「上次保存时间」客观存在,就是 server 记录的 updatedAt)。
+ * 两者都拿不到(新建页未存盘)→ null,indicator 不显示。
+ */
+const effectiveLastSavedAt = computed(() => {
+  return lastSavedAt.value ?? page.value?.updatedAt ?? null
+})
+function relativeSince(ts: number): string {
+  return formatRelativeTime(ts, now.value)
+}
 // Stage 7: 右侧 TOC 锚定的 ProseMirror DOM 节点。TocPanel 用
 // IntersectionObserver 做 scroll-spy,只要传一个含 h1/h2/h3 的容器即可。
 // 编辑态下 heading-wrapper 是 <div class="heading-content">,TOC 会用
@@ -657,54 +693,63 @@ onBeforeUnmount(() => {
           <span class="material-symbols-outlined icon-sm">edit</span>
           编辑中
         </span>
-        <!-- 保存状态指示器 -->
-        <div v-if="saveState === 'saving'" class="save-indicator saving">
+        <!-- 保存状态指示器 — 紧凑 dot + tooltip,只在 idle 状态显示文字
+             「已同步 · X 分钟前」(实时 30s tick 刷新,见上方 `now` ref +
+             `effectiveLastSavedAt`)。其他瞬时态(saving / saved / pending /
+             error)只挂 dot + tooltip,把顶栏占位从 5 元素收到 1 dot 元素,
+             给低频操作让位 —— P0/5.3。 -->
+        <div
+          v-if="saveState === 'saving'"
+          class="save-indicator saving compact"
+          title="正在保存…"
+        >
           <span class="dot"></span>
-          正在保存…
         </div>
-        <div v-else-if="saveState === 'saved'" class="save-indicator saved">
-          <span class="material-symbols-outlined icon-sm">check_circle</span>
-          已自动保存
+        <div
+          v-else-if="saveState === 'saved' && lastSavedAt"
+          class="save-indicator saved compact"
+          :title="`已自动保存 · ${relativeSince(lastSavedAt)}`"
+        >
+          <span class="dot"></span>
         </div>
-        <div v-else-if="saveState === 'error'" class="save-indicator danger" title="保存失败,顶部有错误提示">
-          <span class="material-symbols-outlined icon-sm">error</span>
-          保存失败
+        <div
+          v-else-if="saveState === 'error'"
+          class="save-indicator danger compact"
+          title="保存失败,顶部有错误提示"
+        >
+          <span class="dot"></span>
         </div>
-        <div v-else-if="saveState === 'pending'" class="save-indicator pending">
-          <span class="material-symbols-outlined icon-sm">edit_note</span>
-          有未保存的修改
+        <div
+          v-else-if="saveState === 'pending'"
+          class="save-indicator pending compact"
+          title="有未保存的修改"
+        >
+          <span class="dot"></span>
         </div>
-        <div v-else-if="isExisting" class="save-indicator idle">
+        <div
+          v-else-if="isExisting && effectiveLastSavedAt"
+          class="save-indicator idle"
+          :title="`已同步 · ${relativeSince(effectiveLastSavedAt)}`"
+        >
           <span class="material-symbols-outlined icon-sm">cloud_done</span>
-          已同步
+          已同步 · {{ relativeSince(effectiveLastSavedAt) }}
         </div>
-        <!-- Phase B 限制 dialog 入口 —— EditView 总有 edit 权限,按钮无条
-             件显示(isExisting = 有 server id 才有意义,新建未存盘阶段不显示
-             避免点了拿到空限制)。跟 ReadView 用同一个 PageRestrictionsDialog
-             实例,Modal 自身 Teleport body 不冲突。 -->
-        <button
+        <!-- 限制 / 分享 是低频操作,装到 ⋯ 菜单里(EditViewMoreMenu),
+             跟 ReadView 的 ⋯ 菜单对齐,顶栏从 6 元素收口到 4。isExisting
+             gate 跟原 button 一致 —— 新建未存盘阶段不能进限制/share dialog
+             (dialog 自身会 404)。 -->
+        <EditViewMoreMenu
           v-if="isExisting"
-          class="btn"
-          type="button"
-          title="配置查看 / 编辑限制"
-          @click="restrictionsOpen = true"
-        >
-          <span class="material-symbols-outlined icon-md">lock</span>
-          限制
-        </button>
+          @restrictions="restrictionsOpen = true"
+          @share="shareOpen = true"
+        />
         <button
-          v-if="isExisting"
-          class="btn"
+          class="btn ghost icon-only"
           type="button"
-          title="创建公开分享链接"
-          @click="shareOpen = true"
+          :title="`关闭编辑器 · 自动保存已兜底最近 ${idleSnapshotSeconds} 秒内的修改`"
+          @click="closeEditor"
         >
-          <span class="material-symbols-outlined icon-md">share</span>
-          分享
-        </button>
-        <button class="btn ghost" type="button" :title="`关闭编辑器 · 自动保存已兜底最近 ${idleSnapshotSeconds} 秒内的修改`" @click="closeEditor">
-          <span class="material-symbols-outlined icon-md">cloud_done</span>
-          关闭
+          <span class="material-symbols-outlined icon-md">close</span>
         </button>
     </PageActions>
 

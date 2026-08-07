@@ -1,19 +1,18 @@
 <script setup lang="ts">
 /**
- * ReadView 顶栏 ⋮ 下拉 —— 把低频操作(导出 / 历史 / 限制 / 分享 / 移动 /
- * 复制 / 删除)集中到一个 popover。简单动作内部消化,复杂动作 emit
- * 给父组件(dialog / confirm 链路)。Popover 模式镜像 ExportMenu。
+ * ReadView 顶栏 ⋮ 下拉 —— P0/5.3 重组 4 段(按使用频率降序):
+ *   - 高频区:关注 toggle、页面历史
+ *   - 导出:HTML / MD / PDF
+ *   - 组织管理:限制 / 分享 / 移动 / 复制页面 / 复制整棵子树
+ *   - 危险:删除
  *
- * 「复制」项语义(2026-08-03 UX 一致性整改):对齐 PageTree 的三档复制
- * 标签 —— 「复制页面」/「复制整棵子树」/「复制链接」。
- *   - 「复制页面」:仅本页复制,等价 PageTree.vue:722 的 primary 条目
- *   - 「复制整棵子树」:仅当 `hasChildren=true` 时渲染,等价
- *     PageTree.vue:746-757 的 more 条目
- *   - 「复制链接」:D-1 智能路由(有缓存公开 token → 公开 URL,否则内部 URL)
- * 顶栏(ReadView 顶栏 actions)单挂一个「复制页面」快捷按钮 —— 1280 视口
- * 顶栏只能塞 4 个元素,完整三档走 ⋯ 菜单。原先 C-2 设计的「行级 submenu
- * + parent/sub 两行复制动作」被用户反馈为「标签跟侧栏 PageTree 不一致」,
- * 改成扁平的 3 行 popover item,跟 PageTree 的三档复制入口一一对应。
+ * 历史包袱(2026-08-03 UX 一致性整改):复制三档跟 PageTree 对齐 ——
+ * 「复制页面」/「复制整棵子树」仍在菜单,「复制链接」(占比 80%)P0/5.3
+ * 提到顶栏 icon 快捷按钮(跟 PageWatchButton 并列),菜单不再重复入口。
+ *
+ * 「关注」toggle 也搬到菜单里,跟 PageWatchButton 同步状态
+ * (`watchedByMe` prop 透传) —— 顶栏的 PageWatchButton 仍是主入口,
+ * 菜单里的菜单项是为了用户进 ⋯ 也能 toggle,无需先关菜单再点外面。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -37,8 +36,20 @@ const props = withDefaults(
      *  子树」项;false 时整条不挂载)。ReadView 走 subPages.length > 0 计算
      *  后传入,跟 PageTree 菜单的「复制整棵子树」条件渲染同源。 */
     hasChildren?: boolean
+    /** 顶栏 ⋯ 删除 gate —— 跟 PageTree 的 hasLiveChildren 同源语义:
+     * true 时禁用「删除」菜单项 + tooltip 改为「请先删除子页面」,
+     * 跟 PageTree 菜单 :disabled / :title 行为完全一致(用户在两个
+     * 入口看到的删除可达性不能有分歧)。ReadView 透传
+     * pagesStore.getLiveDescendantCount(pageId) > 0 的结果。 */
+    hasLiveChildren?: boolean
+    /** P0/5.3 关注 toggle 进菜单 —— 顶栏 PageWatchButton 仍是主入口,
+     * 这里透传 page.watchedByMe 给菜单项,跟 PageWatchButton 同步状态。
+     * 个人空间无 watch 语义:ReadView 传 canWatch=false,关注行不渲染,
+     * 跟 PageWatchButton 的 v-if="!isPersonalSpace" 同源。 */
+    watchedByMe?: boolean
+    canWatch?: boolean
   }>(),
-  { hasChildren: false },
+  { hasChildren: false, hasLiveChildren: false, watchedByMe: false, canWatch: true },
 )
 
 const emit = defineEmits<{
@@ -57,6 +68,9 @@ const busy = ref<'html' | 'md' | 'pdf' | null>(null)
 // C-2:复制 in-flight 标记 —— 跟 export 的 busy 不同维度,互不阻塞。
 // 用独立 ref 而不是合并进 `busy`,这样 export 进行时仍然能点复制。
 const duplicating = ref(false)
+// P0/5.3:关注 toggle 的 re-entry 守卫(跟 PageWatchButton 同款),
+// 避免双击触发两次 store.togglePageWatch。
+const togglingWatch = ref(false)
 
 const showDeleteDivider = computed(() => props.canDelete)
 
@@ -113,8 +127,8 @@ function doMove() {
 
 /**
  * 复制链路 —— 跟 PageTree.duplicatePage 共用 store API,失败由 store 自
- * 己的 setError banner 兜底。ReadView 顶栏的「复制页面」快捷按钮 + 本
- * 菜单的「复制页面」/「复制整棵子树」共用同一套 store + 跳转路径:
+ * 己的 setError banner 兜底。本菜单的「复制页面」/「复制整棵子树」共用同一
+ * 套 store + 跳转路径:
  *   - 复制页面:duplicatePage(id) — 默认(无 withChildren)
  *   - 复制整棵子树:duplicatePage(id, { withChildren: true })
  * 复制成功后导航到新页 read view,跟 PageTree 同款(立即给用户看到新页
@@ -135,49 +149,22 @@ async function doDuplicate(withChildren: boolean): Promise<void> {
 }
 
 /**
- * D-1 (2026-08-03):智能 copyLink —— 当 page 存在 active public share 且
- * store 缓存了明文 token 时,复制公开 URL(${origin}/#/public/pages/<token>);
- * 否则回到内部 URL。ShareDialog 创建 share 后 1.2s banner 收起就丢 token
- * 的旧行为修掉:owner 「刚创建 share → 顶栏 ⋯ → 复制链接 → 给外群发」的
- * 路径现在能直接拿到正确 URL,不用再回去 ShareDialog 复制 banner。
+ * P0/5.3:菜单里的「关注/取消关注」toggle —— 跟 PageWatchButton 走同一份
+ * store.togglePageWatch(乐观翻转 + 失败回滚 + banner 报错)。Menu 中改完
+ * 顶栏 PageWatchButton 的 label / active class 也会同步(都是 reactive 透
+ * 读 page.watchedByMe)。
  *
- * 失败 / cache miss 容错:list 拉失败(token 缓存空 / 网络错)→ 走内部 URL,
- * 跟 v0 行为一致;用户感知是「复制了内部链接」(legacy toast 文案保留)。
- *
- * 多 active share 场景:取最新一个的 token(由 firstActiveShareToken 内
- * 按 createdAt DESC 决定),picker UI 是后续 P2 工作量,不在 D-1 范围。
+ * 个人空间无 watch 语义,ReadView 透传 watchedByMe=false 时这条不渲染
+ * (v-if 在模板里包,跟 PageWatchButton 的 v-if="!isPersonalSpace" 同源)。
  */
-async function copyLink(): Promise<void> {
-  const active = await pagesStore.firstActiveShareToken(props.page.id)
-  const publicUrl = active
-    ? `${window.location.origin}/#/public/pages/${active.token}`
-    : null
-  const internalUrl = `${window.location.origin}${window.location.pathname}#/p/${props.page.id}`
-  const url = publicUrl ?? internalUrl
-  const onOk = () => {
-    uiStore.notify(publicUrl ? '已复制公开链接' : '已复制链接')
+async function onToggleWatch(): Promise<void> {
+  if (togglingWatch.value) return
+  togglingWatch.value = true
+  try {
+    await pagesStore.togglePageWatch(props.page.id)
     close()
-  }
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(url).then(onOk, fallback)
-  } else {
-    fallback()
-  }
-  function fallback() {
-    const ta = document.createElement('textarea')
-    ta.value = url
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    try {
-      document.execCommand('copy')
-      onOk()
-    } catch {
-      uiStore.notify('复制失败,请手动复制', 'error')
-    } finally {
-      document.body.removeChild(ta)
-    }
+  } finally {
+    togglingWatch.value = false
   }
 }
 
@@ -212,6 +199,43 @@ function onDeleteClick() {
 
     <transition name="more-fade">
       <div v-if="open" class="more-popover" role="menu">
+        <!-- 高频区(P0/5.3 重组):关注 toggle + 页面历史。
+             无分隔线,跟前面顶栏的复制链接 icon 共同构成「最高频动作集」。
+             关注 / 取消关注 toggle 透传 page.watchedByMe 决定 label + icon
+             实心/空心。 -->
+        <button
+          v-if="canWatch"
+          type="button"
+          class="more-item"
+          role="menuitem"
+          :disabled="togglingWatch"
+          @click="onToggleWatch"
+        >
+          <span class="material-symbols-outlined more-icon">
+            {{ watchedByMe ? 'visibility_off' : 'visibility' }}
+          </span>
+          <span class="more-label-inline">
+            {{ watchedByMe ? '取消关注' : '关注' }}
+          </span>
+          <span
+            v-if="togglingWatch"
+            class="more-spinner material-symbols-outlined"
+            aria-hidden="true"
+          >progress_activity</span>
+        </button>
+        <button
+          type="button"
+          class="more-item"
+          role="menuitem"
+          @click="goHistory"
+        >
+          <span class="material-symbols-outlined more-icon">history</span>
+          <span class="more-label-inline">页面历史</span>
+        </button>
+
+        <div class="more-sep"></div>
+
+        <!-- 导出:HTML / MD / PDF。 -->
         <button
           type="button"
           class="more-item"
@@ -257,16 +281,8 @@ function onDeleteClick() {
 
         <div class="more-sep"></div>
 
-        <button
-          type="button"
-          class="more-item"
-          role="menuitem"
-          @click="goHistory"
-        >
-          <span class="material-symbols-outlined more-icon">history</span>
-          <span class="more-label-inline">页面历史</span>
-        </button>
-
+        <!-- 组织管理:限制 / 分享 / 移动 / 复制页面 / 复制整棵子树。
+             P0/5.3:复制链接提到顶栏了,这里只保留「复制页面 / 子树」两档。 -->
         <button
           v-if="canManageRestrictions"
           type="button"
@@ -289,8 +305,6 @@ function onDeleteClick() {
           <span class="more-label-inline">分享</span>
         </button>
 
-        <div class="more-sep"></div>
-
         <button
           v-if="canMove"
           type="button"
@@ -302,16 +316,11 @@ function onDeleteClick() {
           <span class="more-label-inline">移动</span>
         </button>
 
-        <!-- 2026-08-03 UX 一致性:复制三档跟 PageTree 标签对齐 ——
-             「复制页面」/「复制整棵子树」/「复制链接」。
-             三条都挂「复制」语义组下,扁平排列(原先 C-2 设计的 submenu
-             + parent row 被替换:parent row 跟「仅本页」重复触发同一动
-             作,用户反馈为「冗余 + 标签不一致」)。Popover 菜单里直接
-             扁平展示,跟 PageTree 的 primary/more 条目命名一一对应。
-
-             duplicate 期间整个 menu 禁用,跟 export 的 busy 同款语义:
-             避免用户对同一页连点两次触发两次 POST(第一次 in-flight 时
-             第二次会撞 store 的 tempId 重复键)。 -->
+        <!-- 复制:页面 / 子树。复制链接已 P0/5.3 提到顶栏 icon,这里
+             只保留跟 PageTree 语义对齐的「复制页面」/「复制整棵子树」
+             两档。duplicate 期间整个 menu 禁用,跟 export 的 busy 同款
+             语义:避免用户对同一页连点两次触发两次 POST(第一次 in-flight
+             时第二次会撞 store 的 tempId 重复键)。 -->
         <button
           type="button"
           class="more-item"
@@ -344,23 +353,18 @@ function onDeleteClick() {
           >progress_activity</span>
         </button>
 
-        <button
-          type="button"
-          class="more-item"
-          role="menuitem"
-          @click="copyLink"
-        >
-          <span class="material-symbols-outlined more-icon">link</span>
-          <span class="more-label-inline">复制链接</span>
-        </button>
-
         <div v-if="showDeleteDivider" class="more-sep"></div>
 
+        <!-- 危险区:danger 色。删除 gate 跟 PageTree 同源 —— 有未删除
+             子页时禁用 + tooltip 改为「请先删除子页面」,避免出现「左
+             侧 page 树禁用删除 / 顶栏 � 菜单却能点删除」的不一致。 -->
         <button
           v-if="canDelete"
           type="button"
           class="more-item more-item-danger"
           role="menuitem"
+          :disabled="hasLiveChildren"
+          :title="hasLiveChildren ? '请先删除子页面' : '删除此页面(可在回收站恢复)'"
           @click="onDeleteClick"
         >
           <span class="material-symbols-outlined more-icon">delete</span>
