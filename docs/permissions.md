@@ -241,7 +241,13 @@ space-admin 是 *空间级* 管理员,对本空间管成员、改权限、**改*
 
 **实战结论**:在父页加了 view 限制,所有后代子页都默认收紧。要"完全保密"某个子页,在子页自身也加 view 限制。
 
-**已知局限**(v0):`pageReadableDirectFilter`(侧栏树的 SQL `WHERE`)不沿父链 BFS —— 理论上受限子页在侧栏看见、点开后 404。后续优化:denormalized 父链 view-inheritance JSONB 列 + trigger,把 BFS 收进 SQL。
+**最近一条说了算,不是整链取交集**:上溯碰到第一个「自己挂了 view allow-list」的节点就定案 —— 你只要命中它 allow-list 里的**任意一条**(user 直接命中 or 所属组命中)就可读,更上层祖先不再叠加。祖父限给 A、父页限给 A+B 时,B 能读父页下的子页。
+
+**跳出继承**:`pages.inherit_view_restrictions=false` 让该页成为新规则的起点,上溯到它就停,它上面的祖先限制不再约束它和它的后代(见 `PUT /api/pages/:id/restrictions` 的 `inheritViewRestrictions` 字段)。
+
+**侧栏 / 列表跟详情页保持一致**:`pageReadableDirectFilter`(list 端点的 SQL `WHERE`)用 CTE 复刻上面同一套语义 —— 沿父链定位最近受限节点 + 任一命中即可读。它必须跟 `effectivePageReadAccess`(决定 `GET /api/pages/:id` 200 / 404 的权威解析器)逐字等价,否则会产出「侧栏有条目、点开 404」或反过来「打得开、侧栏里没有」的分裂状态。回归脚本:`scripts/verify_p1_list_detail_parity.py`(每个场景同时打详情 + list,断言两者答案相同)。
+
+> 历史:v0 的 SQL 只查本页 view 限制(2026-08-03 P1-3 补上父链 CTE);补上后仍有一处偏差 —— `NOT EXISTS (链上所有 view 行 AND NOT 命中我)` 实际等价于「每一条限制行都必须指向我本人」,allow-list 一有 2 个 principal 就把在列表里的人也判出局(能打开、侧栏里没有);单 principal 场景恰好不暴露,所以旧验收脚本全绿。2026-08-07 改写成「最近受限节点 + 任一命中」后两边对齐。
 
 ### **edit 不继承**(Confluence 标准)
 

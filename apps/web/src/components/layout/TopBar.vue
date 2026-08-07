@@ -15,6 +15,12 @@
  * P1-8: 「管理」入口从单个图标按钮升级为 dropdown(`ManagementMenu`)。
  * 原因见该组件 doc — 主要解决「全局 admin + space-admin 同时存在时」
  * 的语义分裂问题,让两条入口各自有清晰的标题段。
+ *
+ * 早一版(P0-1)在 `.brand` 里硬塞 SpaceBreadcrumb,在 1280 视口下会让
+ * grid 列撑超 192px(数学上不可能再放新元素)。改在 subheader 的既有
+ * `<Breadcrumb>` 第一段改用 active space 名字 + kind icon —— 详见
+ * ReadView/EditView/HistoryView 的 breadcrumbSegments 改动 + .topbar
+ * CSS 没有变化。
  */
 import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'

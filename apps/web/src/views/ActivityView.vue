@@ -20,6 +20,8 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { BreadcrumbItem } from '@/components/ui/Breadcrumb.vue'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -38,6 +40,17 @@ const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 const { state, load, loadMore } = useRecentActivity()
 useDocumentTitle(() => '活动流')
+
+// [P0-1] 面包屑首段改用 active space 名字 + kind icon。ActivityView
+// 是全空间活动流,active space 语义不强;但跟 ReadView/EditView 走
+// 同一份事实来源,统一观感。active 没 hydrate 时回退「我的知识库」
+// 静态文案(老字符串,避免 chain 头空白)
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  const head: BreadcrumbItem[] = sp ? [sp] : [{ label: '我的知识库', to: '/' }]
+  return [...head, { label: '最近页面活动' }]
+})
 
 /** 「所有空间」哨兵值。filter dropdown 用。 */
 const ALL_SPACES = '__all__'
@@ -196,10 +209,7 @@ function chipColor(kind: ActivityEvent['kind']): string {
 
 <template>
   <div class="activity-main">
-    <Breadcrumb :segments="[
-      { label: '我的知识库', to: '/' },
-      { label: '最近页面活动' },
-    ]" />
+    <Breadcrumb :segments="breadcrumbSegments" />
     <PageActions>
       <label class="filter-select">
         <span>空间</span>

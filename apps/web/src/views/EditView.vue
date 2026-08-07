@@ -21,6 +21,7 @@ import { useActivePageId } from '@/composables/useActivePageId'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { usePageAutoSave } from '@/composables/usePageAutoSave'
 import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
 import { useAttachmentLightbox } from '@/composables/useAttachmentLightbox'
@@ -330,7 +331,10 @@ function onRestrictionsSaved(flags: {
  * EditView 的特殊点:页面本身可能在 store 里(已创建)或不在(客户端 nanoid
  * 刚生成、还没等服务端回包)。两种情况都期望看到「父 → 当前」的链路 —— 所以
  * composable 的 pageIdGetter 在没有 page 时回退到 parentId,这样新建页
- * 也能看到「我的知识库 / 父 / 未命名」的三段式。 */
+ * 也能看到「<active space> / 父 / 未命名」的三段式。[P0-1] 第一段从
+ * 写死「我的知识库」改成 active space 名 + kind icon,跟 ReadView/HistoryView
+ * 及 PersonalHomeView/WatchedView/ActivityView/NotFoundView/ManagerLayout
+ * 统一。 */
 const pageBreadcrumb = usePageBreadcrumbSegments(
   () => page.value?.id ?? props.parentId ?? null,
   {
@@ -343,10 +347,12 @@ const pageBreadcrumb = usePageBreadcrumbSegments(
     },
   },
 )
-const breadcrumbSegments = computed(() => [
-  { label: '我的知识库', to: '/' },
-  ...pageBreadcrumb.value,
-])
+// [P0-1] 链头用 active space 名字,详见 useSpaceBreadcrumbSegment。
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  return sp ? [sp, ...pageBreadcrumb.value] : [...pageBreadcrumb.value]
+})
 
 /** 「未命名 · 点此重命名」CTA:新建页 / 标题被清空时,breadcrumb 最后一段
  *  渲染为可点击按钮,点击聚焦 title input 让用户立即起名。 */

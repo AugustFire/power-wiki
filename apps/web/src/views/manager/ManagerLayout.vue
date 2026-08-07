@@ -3,7 +3,7 @@
  * Manager layout — Stage 4c.
  *
  * Provides the /manager sub-navigation shell:
- *   - Subheader with breadcrumb (我的知识库 / 管理后台 / <sub>)
+ *   - Subheader with breadcrumb (<active space> / 管理后台 / <sub>)
  *   - Left sub-nav (200px) with admin sections: 用户 / 用户组 / 空间
  *   - Main content via <RouterView />
  *
@@ -12,7 +12,9 @@
  */
 import { RouterView, RouterLink, useRoute } from 'vue-router'
 import { computed } from 'vue'
+import type { BreadcrumbItem } from '@/components/ui/Breadcrumb.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 
 const route = useRoute()
 
@@ -33,13 +35,19 @@ const section = computed(() => {
 
 /** 面包屑 segments —— manager 分支没有 #app-subheader(那是 workspace 布局
  *  独有的),所以用 bar 变体:同一套 .breadcrumb 样式,原地渲染进本层
- *  自己的 .subheader。 */
+ *  自己的 .subheader。
+ *
+ *  [P0-1] 第一段改用 active space 名字 + kind icon(沿用 useSpaceBreadcrumbSegment),
+ *  跟 ReadView/EditView/WatchedView/ActivityView/NotFoundView/PersonalHomeView
+ *  全站统一。active space 还没 hydrate(冷启动首帧,ManagerLayout 不会出在这
+ *  个 frame,但保险起见保留 null 回退)。 */
+const spaceSegment = useSpaceBreadcrumbSegment()
 const breadcrumbSegments = computed(() => {
   const seg = section.value
-  const list: Array<{ label: string; to?: string }> = [
-    { label: '我的知识库', to: '/' },
-    { label: '管理后台', to: '/manager/people' },
-  ]
+  const head: BreadcrumbItem[] = spaceSegment.value
+    ? [spaceSegment.value]
+    : [{ label: '我的知识库', to: '/' }]
+  const list: BreadcrumbItem[] = [...head, { label: '管理后台', to: '/manager/people' }]
   if (seg !== '管理后台') list.push({ label: seg })
   return list
 })

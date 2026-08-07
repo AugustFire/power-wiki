@@ -746,15 +746,27 @@ export type PageMetaWithInherit = PageMeta
  *      命中 OR user 所属 group 命中),legacy space_group_access 视为
  *      editor 这里不命中,但 admin / 编辑者不被影响(legacy 不参与 view
  *      限制 bypass,因为 legacy 是 editor 角色,不是 admin)。
- *   3. **整条父链 + 本页的所有 view 限制都在 allow-list 内**:NOT EXISTS
- *      一个 CTE,该 CTE 沿 pages.parent_id 上溯本页祖先链,链上每条 view
- *      限制都必须满足 user 直接命中或 user 所属组命中。空链(即本页无 view
- *      限制、祖先也无 view 限制)vacuously 通过 → 走调用方的 space filter
- *      兜底 canReadSpace。
+ *   3. **「最近一条有 view allow-list 的链上节点」允许我**:沿 pages.parent_id
+ *      上溯(每一跳由当前节点的 inherit_view_restrictions 决定是否继续),
+ *      取深度最小的那个「自己挂了 view 限制」的节点,我只要命中它 allow-list
+ *      里的**任意一条**(user 直接命中 or 我所属组命中)就可读。链上完全没有
+ *      view 限制 → vacuously 通过 → 走调用方的 space filter 兜底 canReadSpace。
+ *
+ * 这一段必须跟 effectivePageReadAccess(单页权威解析器,决定 GET /api/pages/:id
+ * 的 200 / 404)逐字等价 —— 两边不一致就会产出「侧栏有条目点开 404」或
+ * 反过来「打得开但侧栏里没有」的分裂状态。对齐点有两个:
+ *   - **最近生效**,不是整链取交集。walker 命中第一条有 allow-list 的祖先就
+ *     `return isInAllowList(...)`,更上层祖先不再叠加。
+ *   - **任一命中**,不是逐行全中。allow-list 是「或」语义。
+ *
+ * 2026-08-07 修:旧写法是 `NOT EXISTS (链上所有 view 行 AND NOT 命中我)`,
+ * 等价于「链上每一条限制行都必须指向我本人」。allow-list 只要有 2 个 principal
+ * (给 A 和 B 都开),A 就会被 B 那一行判出局 —— A 打得开页面,侧栏 / 列表里
+ * 却没有。单 principal 场景恰好没暴露,所以之前的验收脚本全绿。
  *
  * 性能:页深度一般 < 10,CTE 50 层硬上限(防御 parent_id 循环 + 极端深树);
- * 配合 (page_id, kind) 上的 page_restrictions_page_idx,单页 NOT EXISTS
- * 是 O(depth) 的 index seek,实测 list 端点 P95 不退化。space_role_grants
+ * 配合 (page_id, kind) 上的 page_restrictions_page_idx,nearest 定位 + allow-list
+ * 判定都是 O(depth) 的 index seek,实测 list 端点 P95 不退化。space_role_grants
  * 是 page.space_id 上的 index seek,常数级。admin / author 是常数判定。
  *
  * 实现时间:2026-08-03,fix journey-B-1(替换 v0 折衷的「只查本页 view 限制」,
@@ -783,23 +795,35 @@ export function pageReadableDirectFilter(me: Principal): SQL {
         SELECT ${pages.id}, 0
         UNION ALL
         SELECT p.parent_id, pa.depth + 1
-        FROM pages p
-        INNER JOIN page_ancestors pa ON p.id = pa.id
-        INNER JOIN pages cur ON cur.id = pa.id
+        FROM page_ancestors pa
+        INNER JOIN pages p ON p.id = pa.id
         WHERE pa.depth < 50
           AND p.parent_id IS NOT NULL
-          AND cur.inherit_view_restrictions = TRUE
-      )
-      SELECT 1 FROM page_restrictions pr
-      WHERE pr.kind = 'view'
-        AND pr.page_id IN (SELECT id FROM page_ancestors)
-        AND NOT (
-          (pr.principal_kind = 'user' AND pr.principal_id = ${me.id})
-          OR (pr.principal_kind = 'group' AND pr.principal_id IN (
-            SELECT ugm.group_id FROM user_group_members ugm
-            WHERE ugm.user_id = ${me.id}
-          ))
+          AND p.inherit_view_restrictions = TRUE
+      ),
+      nearest_restricted AS (
+        SELECT pa.id
+        FROM page_ancestors pa
+        WHERE EXISTS (
+          SELECT 1 FROM page_restrictions pr
+          WHERE pr.page_id = pa.id AND pr.kind = 'view'
         )
+        ORDER BY pa.depth ASC
+        LIMIT 1
+      )
+      SELECT 1 FROM nearest_restricted n
+      WHERE NOT EXISTS (
+        SELECT 1 FROM page_restrictions pr
+        WHERE pr.page_id = n.id
+          AND pr.kind = 'view'
+          AND (
+            (pr.principal_kind = 'user' AND pr.principal_id = ${me.id})
+            OR (pr.principal_kind = 'group' AND pr.principal_id IN (
+              SELECT ugm.group_id FROM user_group_members ugm
+              WHERE ugm.user_id = ${me.id}
+            ))
+          )
+      )
     )
   )`
 }

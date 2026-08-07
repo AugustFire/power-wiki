@@ -15,12 +15,14 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { BreadcrumbItem } from '@/components/ui/Breadcrumb.vue'
 import { api } from '@/lib/api'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import { useSpacesStore } from '@/stores/spaces'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { usePagesStore } from '@/stores/pages'
@@ -31,6 +33,16 @@ const router = useRouter()
 const spacesStore = useSpacesStore()
 const pagesStore = usePagesStore()
 useDocumentTitle(() => '我的关注')
+
+// [P0-1] 面包屑首段改用 active space 名字 + kind icon,跟 ReadView / EditView
+// 同一份事实来源。冷启动首帧 space 还没 hydrate 时回退 `我的知识库`
+// 占位(原静态文案),避免 chain 段开头出现错位的「无链 + 0 段」。
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  const head: BreadcrumbItem[] = sp ? [sp] : [{ label: '我的知识库', to: '/' }]
+  return [...head, { label: '我的关注' }]
+})
 
 const PAGE_SIZE = 30
 const items = ref<PageNode[]>([])
@@ -143,10 +155,7 @@ function openPage(p: PageNode) {
 
 <template>
   <div class="read-shell">
-    <Breadcrumb :segments="[
-      { label: '我的知识库', to: '/' },
-      { label: '我的关注' },
-    ]" />
+    <Breadcrumb :segments="breadcrumbSegments" />
 
     <div class="content-inner watched-page">
           <h1 class="page-title">我的关注</h1>

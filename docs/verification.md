@@ -64,6 +64,7 @@ py -3.13 scripts/snap_<page>.py
 | `verify_attach_upload.py` *(若存在)* | MinIO 附件上传 / 列表 / 下载 / 删除 |
 | `verify_topbar_space_switcher.py` | TopBar space 切换 + 树懒加载 |
 | `verify_template_icons_api.py` | 模板图标 API 兼容(历史保留) |
+| `verify_p1_list_detail_parity.py` | page view 限制:list / search 端点跟详情端点(200 / 404)必须给出同一答案 |
 | `snap_*.py`(10+ 个) | 各 view 视觉快照,PR review 附图用 |
 
 ## 加新脚本

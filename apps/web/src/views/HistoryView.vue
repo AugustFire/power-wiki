@@ -28,6 +28,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
 import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import { usePageVersions } from '@/composables/usePageVersions'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import type { PageVersion } from '@power-wiki/shared'
@@ -58,16 +59,20 @@ watch(
   { immediate: true },
 )
 
-/** 面包屑 = 我的知识库 / <祖辈链> / <页面名> / 版本历史。页面名那段是链接,
+/** 面包屑 = <active 空间> / <祖辈链> / <页面名> / 版本历史。页面名那段是链接,
  *  兼作「返回页面」通道,代替原来 left-actions 的「← 返回页面」按钮
- *  (P2 收口:全站统一走 <Breadcrumb>,History 不再单独留「返回」位)。 */
+ *  (P2 收口:全站统一走 <Breadcrumb>,History 不再单独留「返回」位)。
+ *
+ *  [P0-1] 第一段改用 active space 名字(详见 useSpaceBreadcrumbSegment),
+ *  原「我的知识库」写死标签在用户深链 / 切换空间时丢空间感。*/
 const pageBreadcrumb = usePageBreadcrumbSegments(() => props.id, {
   trailingLabel: () => '版本历史',
 })
-const breadcrumbSegments = computed(() => [
-  { label: '我的知识库', to: '/' },
-  ...pageBreadcrumb.value,
-])
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  return sp ? [sp, ...pageBreadcrumb.value] : [...pageBreadcrumb.value]
+})
 
 /** 浏览器 tab 标题:"<页面名> · 历史版本 · power-wiki"。page 没解析出时退 BASE。 */
 useDocumentTitle(() => (page.value ? `${page.value.title} · 历史版本` : null))
@@ -262,9 +267,10 @@ function formatChangeNote(note: string | null | undefined): string {
 <style scoped>
 /* 旧 .left-actions / .back-link / .page-context / .page-context-icon /
    .history-page-title / .page-context-sep / .page-context-label 一律删除
-   (P2 收口):History 现在用统一 <Breadcrumb> 渲染「我的知识库 / <祖辈链>
-   / 版本历史」三段,原本「← 返回页面」按钮 + page-context 块被面包屑里的
-   页面链链接替代。 */
+   (P2 收口):History 现在用统一 <Breadcrumb> 渲染「<active space>
+   / <祖辈链> / 版本历史」三段,原本「← 返回页面」按钮 + page-context
+   块被面包屑里的页面链链接替代。 [P0-1] 第一段从「我的知识库」写死
+   改成 active space,跟 ReadView/EditView 同步。 */
 
 .vp-count {
   font-size: 11px;

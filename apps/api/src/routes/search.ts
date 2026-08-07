@@ -132,7 +132,8 @@ searchRouter.get('/', async (c) => {
         spaceFilter,
         labelFilter,
         accessibleScope,
-        // Phase B: 直接 view 限制过滤(父链继承留 v0,见 permissions.ts
+        // Phase B: page view 限制过滤(2026-08-03 起含父链继承,2026-08-07
+        // 起跟 effectivePageReadAccess 逐字等价 —— 见 permissions.ts
         // pageReadableDirectFilter 注释)。作者本人 / admin 始终可见。
         pageReadableDirectFilter(principalFromUser(me)),
       ),

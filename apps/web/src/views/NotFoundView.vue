@@ -23,11 +23,13 @@
  */
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { BreadcrumbItem } from '@/components/ui/Breadcrumb.vue'
 import type { Space } from '@power-wiki/shared'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import SpaceAvatar from '@/components/ui/SpaceAvatar.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import { useRecentPages } from '@/composables/useRecentPages'
 import { usePagesStore } from '@/stores/pages'
 import { useSpacesStore } from '@/stores/spaces'
@@ -42,6 +44,16 @@ const uiStore = useUiStore()
 const { list: recentList } = useRecentPages()
 
 useDocumentTitle(() => '页面未找到')
+
+// [P0-1] 面包屑首段改用 active space 名字 + kind icon,跟 ReadView /
+// EditView 收口到同一份事实来源。active 还没 hydrate 时回退到原静态
+// 「我的知识库」,避免 chain 头空白。
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  const head: BreadcrumbItem[] = sp ? [sp] : [{ label: '我的知识库', to: '/' }]
+  return [...head, { label: '页面不存在' }]
+})
 
 /** 失效路径回显。用 `route.fullPath` 而不是 `location.pathname` —— 路由是
  *  hash history(见 router/index.ts),pathname 永远是 `/`,拿不到用户
@@ -99,10 +111,7 @@ function relativeTime(timestamp: number): string {
 
 <template>
   <div class="notfound-shell">
-    <Breadcrumb :segments="[
-      { label: '我的知识库', to: '/' },
-      { label: '页面不存在' },
-    ]" />
+    <Breadcrumb :segments="breadcrumbSegments" />
 
     <div class="content-inner notfound-page">
       <div class="nf-hero">

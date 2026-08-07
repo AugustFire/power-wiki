@@ -23,6 +23,7 @@ import PageLinkPreview from '@/components/page/PageLinkPreview.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { usePageBreadcrumbSegments } from '@/composables/useBreadcrumb'
+import { useSpaceBreadcrumbSegment } from '@/composables/useSpaceBreadcrumbSegment'
 import Breadcrumb from '@/components/ui/Breadcrumb.vue'
 import PageActions from '@/components/ui/PageActions.vue'
 import PresenceAvatars from '@/components/page/PresenceAvatars.vue'
@@ -484,11 +485,15 @@ const showAuthorSuffix = computed(() => {
 // 面包屑链路(根 → 当前页) + 折叠渲染分段(>3 段中间省略)
 // usePageBreadcrumbSegments 适配到统一 <Breadcrumb> 组件,跟 EditView /
 // HistoryView 走同一份渲染;折叠 / … 省略策略在 composable 里集中处理。
+// [P0-1] 第一段改用 active space 名字 + kind icon,见
+// useSpaceBreadcrumbSegment doc。冷启动首帧 space 还没 hydrate 时
+// 回退 null,链前端让位,不闪烁。
 const pageBreadcrumb = usePageBreadcrumbSegments(() => props.id)
-const breadcrumbSegments = computed(() => [
-  { label: '我的知识库', to: '/' },
-  ...pageBreadcrumb.value,
-])
+const spaceSegment = useSpaceBreadcrumbSegment()
+const breadcrumbSegments = computed(() => {
+  const sp = spaceSegment.value
+  return sp ? [sp, ...pageBreadcrumb.value] : [...pageBreadcrumb.value]
+})
 
 function goEdit() {
   if (page.value) router.push(`/p/${page.value.id}/edit`)

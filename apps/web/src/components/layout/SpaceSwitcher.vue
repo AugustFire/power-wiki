@@ -19,8 +19,10 @@
  * Behaviour:
  *   - Zero spaces (no personal + no team) → trigger renders as an
  *     empty-state chip; the button itself isn't shown.
- *   - One option AND active is that option → trigger renders as a plain
- *     label (no caret, click is a no-op) — nowhere meaningful to go.
+ *   - One option AND active is that option → trigger renders as a
+ *     disabled chip (灰显 + cursor not-allowed + 原生 title tooltip
+ *     "You are in the only space you have access to")—— 没有任何其它
+ *     空间可切,点也没用,直接告诉用户为什么不能点。
  *   - Multiple options → caret + dropdown listing personal space first
  *     (with "仅自己可见" desc), then team spaces, then archived (admin).
  *
@@ -141,9 +143,13 @@ onBeforeUnmount(() => {
       class="ss-trigger"
       :class="{
         'ss-trigger-clickable': canOpen,
+        'ss-trigger-disabled': !canOpen,
         'ss-trigger-neutral': !isActiveShared,
         'ss-trigger-personal': active.kind === 'personal',
       }"
+      :disabled="!canOpen"
+      :title="canOpen ? undefined : 'You are in the only space you have access to'"
+      :aria-disabled="!canOpen"
       @click="toggle"
     >
       <SpaceAvatar :space="active" :size="28" :show-name="true" />
@@ -272,6 +278,18 @@ onBeforeUnmount(() => {
 }
 .ss-trigger-clickable { cursor: pointer; }
 .ss-trigger-clickable:hover { background: var(--bg-subtle); }
+
+/* Disabled 视觉 — 只在「只有一个空间且 active 就是它」时挂
+ * (`totalOptions===1 && isActiveShared`)。trigger 不响应点击,
+ * 灰显 + cursor not-allowed 避免误以为是 bug。原 title=tooltip
+ * 给文字解释。命名上跟 .ss-trigger-clickable 完全对称,语义清楚。 */
+.ss-trigger-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.ss-trigger-disabled:hover { background: transparent; }
+.ss-trigger-disabled :deep(.sa-name) { color: var(--text-3); }
+.ss-trigger-disabled .ss-private-icon { color: var(--text-3); }
 
 /* Neutral state: the active space is the user's personal space. 早期版本
  * 把名字变浅(text-3)作为"私密"信号,但跟共享空间并排时会视觉割裂
