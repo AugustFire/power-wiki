@@ -43,7 +43,7 @@ import { spaceGroupAccess, spaceRoleGrants, spaces, userGroups } from '../db/sch
 import { requireAdmin, type Variables } from '../auth/middleware'
 import { generatePageId } from '../lib/ids'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
-import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
+import { getSpacePageStats, getSpaceOwnerNames, getArchivedByUserInfo, type SpacePageStats, type ArchivedByUser } from '../lib/spaceStats'
 import { updateSpaceMetadata, validateHomepageForSpace } from '../lib/spaceMetadata'
 import { loadGrantsForSpaces, type SpaceGrants } from '../lib/permissions'
 import { recordPermissionAudit } from '../lib/auditLog'
@@ -87,8 +87,10 @@ function attachStats(
   stats: SpacePageStats | undefined,
   ownerNameMap?: Map<string, string>,
   grantsMap?: Map<string, SpaceGrants>,
+  archivedByMap?: Map<string, ArchivedByUser>,
 ): Space {
   const ownerName = ownerNameMap?.get(space.id)
+  const archivedBy = archivedByMap?.get(space.id)
   return {
     ...space,
     pageCount: stats?.pageCount ?? 0,
@@ -96,6 +98,11 @@ function attachStats(
     lastPageUpdatedAt: stats?.lastPageUpdatedAt ?? null,
     ...(ownerName ? { ownerName } : {}),
     ...(grantsMap ? { accessGrants: grantsMap.get(space.id) ?? { groups: [], users: [] } } : {}),
+    // 归档人冗余字段(P1-1 banner 用);跟 spaces.ts archivedByToDto 同款
+    archivedByName: archivedBy?.name ?? null,
+    archivedByColor: archivedBy?.color ?? null,
+    archivedByAvatarKind: archivedBy?.avatarKind ?? null,
+    archivedByAvatarRef: archivedBy?.avatarRef ?? null,
   }
 }
 
@@ -491,11 +498,15 @@ adminSpacesRouter.post('/:id/unarchive', async (c) => {
  * Compose the standard admin Space DTO for archive / unarchive responses.
  * 不带 page stats —— 归档状态变更不影响 pageCount / childPageCount /
  * lastPageUpdatedAt;前端 invalidate 缓存后 GET 时再聚合。
+ * 归档人冗余字段始终注入(P1-1 banner 「由 X 归档」所需),无论是否归档
+ * 都注入 —— unarchive 后 archivedBy* 全 null,前端用 archivedByName 兜底
+ * 「已匿名用户」即可。
  */
 async function archiveResponse(row: SpaceRow, id: string): Promise<Space> {
   const accessGroupIds = await getAccessGroupIds(id)
   const ownerNames = await getSpaceOwnerNames([id])
-  return attachStats(rowToSpace(row, accessGroupIds), undefined, ownerNames)
+  const archivedByMap = await getArchivedByUserInfo([id])
+  return attachStats(rowToSpace(row, accessGroupIds), undefined, ownerNames, undefined, archivedByMap)
 }
 
 /* ─── PUT /api/admin/spaces/:id/access ────────────────────────────────── */

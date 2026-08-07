@@ -27,6 +27,29 @@ export interface SpacePageStats {
   lastPageUpdatedAt: number | null
 }
 
+/**
+ * 归档人冗余信息(P1-1 归档 banner「由 张三 归档」所需)。
+ *
+ * 跟 ownerName 同款 batch pattern:一个 round-trip 拉完全部归档空间的
+ * 归档人 + 头像字段,前端 DTO 直接嵌入。LEFT JOIN users —— 已 anonymize
+ * / 已删用户的归档行 name = null,UI 兜底「?」/「已匿名用户」(跟 audit
+ * log 的 actor 渲染一致)。
+ *
+ * 字段对齐 feedback_denorm_user_embed_avatar.md:name + color + avatar
+ * 三件套(M11 起 user DTO 全量贯通 avatar fields),archivedBy* 同款语义。
+ *
+ * 未归档空间不进 map —— caller `archivedByName` 字段直接 undefined,跟
+ * archivedAt 同步表达「未归档」。
+ */
+export interface ArchivedByUser {
+  name: string | null
+  color: string | null
+  avatarKind: 'preset' | 'custom' | null
+  avatarRef: string | null
+}
+
+export type ArchivedByUserBySpaceId = Map<string, ArchivedByUser>
+
 /** Map keyed by `spaceId`. Spaces with no pages are not in the map. */
 export type SpacePageStatsById = Map<string, SpacePageStats>
 
@@ -98,6 +121,50 @@ export async function getSpaceOwnerNames(
   const out = new Map<string, string>()
   for (const r of rows) {
     if (r.ownerName != null) out.set(r.spaceId, r.ownerName)
+  }
+  return out
+}
+
+/**
+ * Batch lookup of archived-by user info for a fixed set of space ids.
+ *
+ * Only archived spaces (`archived_at IS NOT NULL` AND `archived_by_user_id IS NOT NULL`)
+ * are joined — unarchived spaces are intentionally absent from the returned map
+ * so the caller can rely on `archivedByName === undefined` to mean "not archived".
+ *
+ * Same LEFT JOIN pattern as `getSpaceOwnerNames`: anonymized / deleted archivers
+ * surface as null name/color/avatar fields; the UI falls back to "?" / "已匿名用户".
+ */
+export async function getArchivedByUserInfo(
+  spaceIds: string[],
+): Promise<ArchivedByUserBySpaceId> {
+  if (spaceIds.length === 0) return new Map()
+  const rows = await db
+    .select({
+      spaceId: spaces.id,
+      name: users.name,
+      color: users.color,
+      avatarKind: users.avatarKind,
+      avatarRef: users.avatarRef,
+    })
+    .from(spaces)
+    .leftJoin(users, eq(users.id, spaces.archivedByUserId))
+    .where(
+      and(
+        inArray(spaces.id, spaceIds),
+        isNotNull(spaces.archivedAt),
+        isNotNull(spaces.archivedByUserId),
+      ),
+    )
+  const out: ArchivedByUserBySpaceId = new Map()
+  for (const r of rows) {
+    if (r.spaceId == null) continue
+    out.set(r.spaceId, {
+      name: r.name ?? null,
+      color: r.color ?? null,
+      avatarKind: (r.avatarKind ?? null) as 'preset' | 'custom' | null,
+      avatarRef: r.avatarRef ?? null,
+    })
   }
   return out
 }

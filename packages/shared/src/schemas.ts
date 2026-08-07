@@ -288,6 +288,16 @@ export const SpaceSchema = z.object({
    */
   archivedByUserId: z.string().min(1).optional(),
   /**
+   * 归档人冗余字段(P1-1 banner 「由 张三 归档」用,见 types.ts)。
+   * 全路径(非 admin 也)都带 —— audit 元信息,跟 commit author 同性质。
+   * nullable 是为了 LEFT JOIN users 在 anonymized / 已删用户归档行上的
+   * 兜底 null;未归档空间字段值为 undefined。
+   */
+  archivedByName: z.string().nullable().optional(),
+  archivedByColor: z.string().nullable().optional(),
+  archivedByAvatarKind: z.enum(['preset', 'custom']).nullable().optional(),
+  archivedByAvatarRef: z.string().nullable().optional(),
+  /**
    * 团队空间主页 —— 指向本空间内一篇页面的 id。null = 未配置,`/` 渲染
    * SpaceHomeView 仪表盘模板;非 null = `/` 自动 redirect 到
    * `/p/:homepagePageId`,复用 ReadView 全套渲染。

@@ -25,7 +25,7 @@ import { spaceGroupAccess, spaces } from '../db/schema'
 import { getAccessibleSpaceIds } from '../lib/accessibleSpaceIds'
 import { rowToSpace } from '../lib/rowMappers'
 import { applyPagination, safeParsePagination } from '../lib/paginate'
-import { getSpacePageStats, getSpaceOwnerNames, type SpacePageStats } from '../lib/spaceStats'
+import { getSpacePageStats, getSpaceOwnerNames, getArchivedByUserInfo, type SpacePageStats, type ArchivedByUser } from '../lib/spaceStats'
 import { loadGrantsForSpace, loadGrantsForSpaces } from '../lib/permissions'
 import { canAdminSpace, getEffectiveSpaceRolesForUser, principalFromUser } from '../lib/permissions'
 import { updateSpaceMetadata, validateHomepageForSpace } from '../lib/spaceMetadata'
@@ -73,6 +73,8 @@ async function listVisibleSpaces(
     // Owner names for personal spaces — admin path only. Non-admin never
     // sees other users' personal space names (info leak protection).
     const ownerNameBySpace = await getSpaceOwnerNames(rows.map((r) => r.id))
+    // 归档人冗余:admin / 非 admin 都带 —— audit 元信息,跟 ownerId 隐私字段不同
+    const archivedByBySpace = await getArchivedByUserInfo(rows.map((r) => r.id))
     return rows.map((row) => {
       const ownerName = ownerNameBySpace.get(row.id)
       return SpaceSchema.parse({
@@ -80,6 +82,7 @@ async function listVisibleSpaces(
         accessGroupIds: accessBySpace.get(row.id) ?? [],
         accessGrants: grantsBySpace.get(row.id) ?? { groups: [], users: [] },
         ...statsToDto(statsBySpace.get(row.id)),
+        ...archivedByToDto(archivedByBySpace.get(row.id)),
         ...(ownerName ? { ownerName } : {}),
         viewerRole: 'admin',
       })
@@ -123,10 +126,13 @@ async function listVisibleSpaces(
     principalFromUser(me),
     rows.map((r) => r.id),
   )
+  // 归档人冗余:同 admin 路径 —— 「由 X 归档」是 audit 元信息
+  const archivedByBySpace = await getArchivedByUserInfo(rows.map((r) => r.id))
   return rows.map((row) =>
     SpaceSchema.parse({
       ...rowToSpace(row, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(row.id)),
+      ...archivedByToDto(archivedByBySpace.get(row.id)),
       viewerRole: roleMap.get(row.id) ?? null,
     }),
   )
@@ -141,6 +147,25 @@ function statsToDto(stats: SpacePageStats | undefined) {
     pageCount: stats?.pageCount ?? 0,
     childPageCount: stats?.childPageCount ?? 0,
     lastPageUpdatedAt: stats?.lastPageUpdatedAt ?? null,
+  }
+}
+
+/**
+ * 归档人冗余字段 → DTO 注入(P1-1 「由 张三 归档」 banner 用)。
+ * info 不存在 = 未归档,所有字段 undefined,跟 archivedAt 同步。
+ * 字段命名跟 User DTO 对齐(archivedBy* ↔ user.{name,color,avatarKind,avatarRef})。
+ */
+function archivedByToDto(info: ArchivedByUser | undefined): {
+  archivedByName: string | null
+  archivedByColor: string | null
+  archivedByAvatarKind: 'preset' | 'custom' | null
+  archivedByAvatarRef: string | null
+} {
+  return {
+    archivedByName: info?.name ?? null,
+    archivedByColor: info?.color ?? null,
+    archivedByAvatarKind: info?.avatarKind ?? null,
+    archivedByAvatarRef: info?.avatarRef ?? null,
   }
 }
 
@@ -183,6 +208,7 @@ spacesRouter.get('/:id', async (c) => {
     const grants = await loadGrantsForSpace(id)
     const statsBySpace = await getSpacePageStats([id])
     const ownerNameBySpace = await getSpaceOwnerNames([id])
+    const archivedByBySpace = await getArchivedByUserInfo([id])
     const ownerName = ownerNameBySpace.get(id)
     return c.json(
       SpaceSchema.parse({
@@ -190,6 +216,7 @@ spacesRouter.get('/:id', async (c) => {
         accessGroupIds: accessRows.map((r) => r.groupId),
         accessGrants: grants,
         ...statsToDto(statsBySpace.get(id)),
+        ...archivedByToDto(archivedByBySpace.get(id)),
         ...(ownerName ? { ownerName } : {}),
         viewerRole: 'admin',
       }),
@@ -197,11 +224,13 @@ spacesRouter.get('/:id', async (c) => {
   }
 
   const statsBySpace = await getSpacePageStats([id])
+  const archivedByBySpace = await getArchivedByUserInfo([id])
   const roleMap = await getEffectiveSpaceRolesForUser(principalFromUser(me), [id])
   return c.json(
     SpaceSchema.parse({
       ...rowToSpace(row, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(id)),
+      ...archivedByToDto(archivedByBySpace.get(id)),
       viewerRole: roleMap.get(id) ?? null,
     }),
   )
@@ -244,10 +273,12 @@ spacesRouter.patch('/:id', async (c) => {
   if (!updated) return c.json({ error: 'not_found' }, 404)
 
   const statsBySpace = await getSpacePageStats([id])
+  const archivedByBySpace = await getArchivedByUserInfo([id])
   return c.json(
     SpaceSchema.parse({
       ...rowToSpace(updated, { includeOwner: false }),
       ...statsToDto(statsBySpace.get(id)),
+      ...archivedByToDto(archivedByBySpace.get(id)),
       viewerRole: 'admin',
     }),
   )

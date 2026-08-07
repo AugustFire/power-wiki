@@ -335,9 +335,25 @@ export interface Space {
   /**
    * P1-1: 归档操作者 user id。仅 admin 路径附带;非归档空间为 undefined。
    * 审计事实来源是 permission_audit(kind='space_archived'),本字段给前端
-   * 显示「归档人 + 归档时间」用。
+   * 走「跳到归档人详情 / audit 过滤」用。展示走 archivedByName + 头像字段,
+   * 不依赖前端 user cache。
    */
   archivedByUserId?: string
+  /**
+   * 归档人显示名(冗余嵌入,对齐 feedback_denorm_user_embed_avatar.md)
+   * LEFT JOIN users 取名,anonymized / 已删用户的归档行 name = null,
+   * UI 兜底「已匿名用户」/「?」。null 也可能是「未归档」语义 —— 与
+   * archivedAt 同步,两个都 null = 未归档,都非 null = 已归档且能查到人。
+   * 所有路径(非 admin 也)都带 —— 「归档人」是 audit 元信息,跟 commit
+   * author 同性质,跟 ownerId 那类隐私字段不同。
+   */
+  archivedByName?: string | null
+  /** 归档人头像色(冗余嵌入)。 */
+  archivedByColor?: string | null
+  /** 归档人头像形态,跟 User.avatarKind 同款 enum。 */
+  archivedByAvatarKind?: 'preset' | 'custom' | null
+  /** 归档人头像引用,跟 User.avatarRef 同款。 */
+  archivedByAvatarRef?: string | null
   /**
    * 团队空间主页:Confluence space homepage 的同构能力。
    *   - null = 未配置,`/` 路由渲染 SpaceHomeView 仪表盘;

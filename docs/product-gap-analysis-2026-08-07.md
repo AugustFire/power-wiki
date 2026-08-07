@@ -197,15 +197,21 @@
 
 ---
 
-### 🟡 [P1] 归档空间「归档人」永远显示 `?`
+### ✅ [P1·已修 2026-08-07] 归档空间「归档人」永远显示 `?`
 
-**现状是什么**:`apps/web/src/views/SpaceHomeView.vue:44` `archivedByName = computed(() => null)`,写死返回 null,UI 上归档 banner 渲染「归档于 X」但「归档人」位置恒为 `?`。
+**怎么改的**:DB 列 `archived_by_user_id` 0032 migration 早就落地(schema + 路由都已写入),缺口只是 DTO 没把「归档人」的名字 + 头像冗余透出 + 前端硬编码 null。这次落地:
 
-**用户感觉哪里别扭**:归档 banner 应该是「X 月 X 日由 张三 归档」,现在 `?` 显示得很丑。
+- `apps/api/src/lib/spaceStats.ts`:加 `getArchivedByUserInfo(spaceIds)`,LEFT JOIN users ON `spaces.archived_by_user_id`,只取 archived 行(避免 LEFT JOIN 全空间浪费),返回 name/color/avatarKind/avatarRef —— 对齐 `feedback_denorm_user_embed_avatar.md` 头像三件套语义。
+- `apps/api/src/routes/spaces.ts`:`archivedByToDto()` helper 统一注入到 list(2 条分支)+ GET /:id(2 条分支)+ PATCH /:id 共 5 个返回路径,admin / 非 admin 都带 —— 「归档人」是 audit 元信息(跟 commit author 同性质),跟 `ownerId` 那类隐私字段不同。
+- `apps/api/src/routes/adminSpaces.ts`:archive / unarchive 的 `archiveResponse()` 也注入(同步,确保刚归档完立刻看到「由 X 归档」)。
+- `packages/shared/src/{types,schemas}.ts`:`Space` 扩 4 个 archivedBy* 字段,nullable 兜底 anonymize / 已删用户的归档行。
+- `apps/web/src/views/SpaceHomeView.vue`:`archivedByName` 从硬编码 `null` 改成读 `activeSpace.archivedByName`,兜底「已匿名用户」;banner meta 加 byline 段(`由 [UserAvatar] X 归档`),CSS `.archived-banner-byline` 控制头像 + 文字 inline-flex 布局。
 
-**问题在哪 / 怎么改**:`spaces` 表加 `archivedBy: text | null`(CLAUDE.md 硬约束:不写 FK,但加 text 字段 OK)。后端 `archiveSpace` 时写 `archivedBy = me.id`。前端 `activeSpace.archivedByName` 走用户反查(store 已 attach users 缓存)。
+**行为**:归档过的 team space 顶部 banner 现在显「归档于 X · 由 [头像] 张三 归档」;归档人 anonymize / 删除时 LEFT JOIN 兜底 null,UI fallback「已匿名用户」。unarchive 后 archivedBy* 全部 null,byline 段因为 `v-if="archivedAt"` 整体消失。
 
-**代码位置**:`SpaceHomeView.vue:42-44`、`apps/api/src/db/schema.ts:spaces`、`apps/api/src/routes/spaces.ts`。
+**怎么验证**:`scripts/smoke_p1_archived_by.py` 13/13 PASS —— 覆盖:DTO archivedByName/color/avatarKind/avatarRef 4 字段全齐、archive / unarchive 状态翻转、banner 文本含「此空间已归档 / 由 / Admin / 归档」、byline 段 UserAvatar 元素存在。
+
+**代码位置**:`apps/api/src/lib/spaceStats.ts:ArchivedByUser` + `getArchivedByUserInfo`、`apps/api/src/routes/spaces.ts:archivedByToDto`、`apps/api/src/routes/adminSpaces.ts:archiveResponse`、`packages/shared/src/{types,schemas}.ts:Space.archivedBy*`、`apps/web/src/views/SpaceHomeView.vue:archivedByName / banner byline`。
 
 ---
 

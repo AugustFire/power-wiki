@@ -41,7 +41,21 @@ const isPersonal = computed(() => activeSpace.value?.kind === 'personal')
  * 归档,可以读不能改」而不是静默 404 / 静默首页。*/
 const isArchived = computed(() => spacesStore.isArchived(activeSpaceId.value))
 const archivedAt = computed<number | null>(() => activeSpace.value?.archivedAt ?? null)
-const archivedByName = computed<string | null>(() => null)
+/* P1-1 · 归档人 banner 元信息 —— 后端 Space DTO 已冗余嵌入(name + color +
+ * avatarKind + avatarRef,见 lib/spaceStats.getArchivedByUserInfo),前端不走
+ * users cache,直接读 activeSpace 上的字段。name 兜底「已匿名用户」对应
+ * LEFT JOIN users 时 anonymize / deleted 用户的归档行;avatar 字段 null
+ * 时 UserAvatar 自动降级到 initials+color 渲染(见 UserAvatar fallback 链)。
+ * archivedByAvatarKind 在 DTO 是 'preset' | 'custom' | null 三态,跟 User
+ * 字段同款;nullable 兼容老 cache 没这字段。*/
+const archivedByName = computed<string>(() => activeSpace.value?.archivedByName ?? '已匿名用户')
+const archivedByColor = computed<string | null>(() => activeSpace.value?.archivedByColor ?? null)
+const archivedByAvatarKind = computed<'preset' | 'custom' | null>(
+  () => activeSpace.value?.archivedByAvatarKind ?? null,
+)
+const archivedByAvatarRef = computed<string | null>(
+  () => activeSpace.value?.archivedByAvatarRef ?? null,
+)
 /**
  * 团队空间主页跳转:Confluence space homepage 的同构。
  *
@@ -271,6 +285,19 @@ function onInviteMembers(): void {
           <p v-if="archivedAt" class="archived-banner-meta">
             归档于 {{ relativeTime(archivedAt) }}
           </p>
+          <p class="archived-banner-meta archived-banner-byline">
+            <span class="archived-banner-byline-label">由</span>
+            <UserAvatar
+              :size="20"
+              :label="archivedByName"
+              :color="archivedByColor"
+              :avatar-kind="archivedByAvatarKind"
+              :avatar-ref="archivedByAvatarRef"
+              :user-id="activeSpace?.archivedByUserId ?? null"
+            />
+            <span>{{ archivedByName }}</span>
+            <span class="archived-banner-byline-label">归档</span>
+          </p>
         </div>
       </div>
 
@@ -476,6 +503,15 @@ function onInviteMembers(): void {
   color: var(--text-3) !important;
   font-size: 12px;
   margin-top: 2px !important;
+}
+.archived-banner-byline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px !important;
+}
+.archived-banner-byline-label {
+  color: var(--text-3);
 }
 .home-hero { margin-bottom: 8px; }
 .space-overview {
