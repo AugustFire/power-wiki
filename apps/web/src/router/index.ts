@@ -354,11 +354,10 @@ router.beforeEach(async (to) => {
   }
 
   if (to.name === 'home') {
-    // SpaceHomeView 同一个组件处理 team + personal — 不再 redirect 到 /me。
-    // 之前这条 guard 是给拆分前的 HomeView(只渲染 team-home)准备的;P1-7
-    // 把 SpaceHomeView 改成 both-handling 后,SpaceSwitcher 切到 personal、
-    // UserMenu「我的空间」、PersonalHomeView cover「进入个人空间 →」 都依赖
-    // 这里能正常落到 SpaceHomeView 而不是被弹回 /me。
+    // home 路由 = SpaceHomeView(team-only)。active=personal 时,SpaceHomeView
+    // 的 setup watch 会把 `/` 重定向到 `/me`(2026-08-07 P0 落地)。这里仍
+    // 要等 spaces 加载完,否则 activeSpace 是 null、watch immediate-fire
+    // 时拿不到 kind → 错过重定向窗口。
     const spacesStore = useSpacesStore()
     if (!spacesStore.loaded.value) await spacesStore.init()
   }

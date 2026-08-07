@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * EmptySpaceOnboarding — 空白空间的「三步上手」大卡。
+ * EmptySpaceOnboarding — 团队空白空间的「三步上手」大卡。
  *
  * 替代原来的「空状态 + 单个创建按钮」。三个并排动作:
  *   1. 建第一个空白页 —— canCreate=false 时置灰 + tooltip
@@ -9,10 +9,14 @@
  *
  * 三件事都通过 emit 上交,组件本身不持有 store 调用 —— 父组件统一处理
  * 路由跳转 / modal 打开 / toast 兜底,符合「view 管业务,组件管视觉」。
+ *
+ * 2026-08-07 P0:`/` 重定向到 /me 后,本组件只服务于团队空间(
+ * SpaceHomeView 的 EmptySpaceOnboarding 调用点),删掉了原来的
+ * `kind: 'personal' | 'shared'` prop。personal 空态由 PersonalHomeView
+ * 的 todo card 兜底(1894 行,mainSection === null 时渲染)。
  */
 defineProps<{
   spaceName: string
-  kind: 'personal' | 'shared'
   canCreate: boolean
 }>()
 
@@ -42,10 +46,7 @@ const emit = defineEmits<{
     </div>
 
     <h2 class="onboarding-title">{{ spaceName }} 还是空的</h2>
-    <p class="onboarding-lead">
-      <template v-if="kind === 'personal'">创建第一个页面,记录只属于自己的笔记、想法和草稿。</template>
-      <template v-else>创建第一个页面,开始记录团队的思考、决策和成果。</template>
-    </p>
+    <p class="onboarding-lead">创建第一个页面,开始记录团队的思考、决策和成果。</p>
 
     <div class="onboarding-grid">
       <article class="ob-card" :class="{ 'is-disabled': !canCreate }">

@@ -42,15 +42,12 @@ const isPersonal = computed(() => activeSpace.value?.kind === 'personal')
 const isArchived = computed(() => spacesStore.isArchived(activeSpaceId.value))
 const archivedAt = computed<number | null>(() => activeSpace.value?.archivedAt ?? null)
 const archivedByName = computed<string | null>(() => null)
-const fallbackSpaceName = computed(() =>
-  isPersonal.value ? '我的个人空间' : '团队空间',
-)
 /**
  * 团队空间主页跳转:Confluence space homepage 的同构。
  *
  * 当 activeSpace 配置了 homepagePageId(管理员在 SpaceEditView 里挑的本
  * 空间内一篇页面),`/` 路由应该渲染那篇页面的 ReadView,而不是系统仪
- * 表盘。个人空间永远为 null(没这个概念),跳过此分支。
+ * 表盘。
  *
  * 用 router.replace 而不是 push —— `/` 是入口,「返回 `/`」不应再触发
  * 一次 redirect(否则 history 里堆栈爆炸)。
@@ -62,23 +59,31 @@ const fallbackSpaceName = computed(() =>
  *     所以「悬挂引用」不会发生(除非用户在 purge 流程完成前就缓存了
  *     stale activeSpace —— 此时 router.replace 会撞 ReadView 的 404,
  *     ReadView 显示错误页,用户可手动回 `/` 重试,这次就会走仪表盘)。
+ *
+ * 2026-08-07 P0:`/` 现在是 team-only(PersonalHomeView 已经是 personal
+ * 唯一入口)。`/` 在 personal 下需要重定向到 `/me`,这里把「personal
+ * → /me」和「team 且有 homepage → /p/<id>」收口到同一个 watch:两
+ * 条路径都只在 `router.currentRoute.value.name === 'home'` 时生效,
+ * 都不会跟「用户已经在别处」打架。
  */
-const homepagePageId = computed(() => {
-  if (isPersonal.value) return null
-  return activeSpace.value?.homepagePageId ?? null
-})
+const homepagePageId = computed(() => activeSpace.value?.homepagePageId ?? null)
 watch(
-  [homepagePageId, activeSpaceId],
-  ([target, sid]) => {
-    if (!target || !sid) return
+  [activeSpaceId, homepagePageId, isPersonal],
+  () => {
     // 仅当确实停在 `/`(home 路由)时跳;用户在 home 之后又点了别的页
     // 进来(罕见),不要把人家踢回主页。
     if (router.currentRoute.value.name !== 'home') return
-    void router.replace(`/p/${target}`)
+    if (isPersonal.value) {
+      void router.replace('/me')
+      return
+    }
+    if (homepagePageId.value) {
+      void router.replace(`/p/${homepagePageId.value}`)
+    }
   },
   { immediate: true },
 )
-const homeTitle = computed(() => activeSpace.value?.name ?? fallbackSpaceName.value)
+const homeTitle = computed(() => activeSpace.value?.name ?? '团队空间')
 useDocumentTitle(() => `${homeTitle.value} · 首页`)
 const me = computed(() => authStore.user)
 const canCreateInSpace = computed(() =>
@@ -232,14 +237,7 @@ function onInviteMembers(): void {
   <div class="home-shell">
     <Breadcrumb :segments="[{ label: homeTitle + ' · 首页' }]">
       <template #current>
-        <span class="crumb-item current">
-          {{ homeTitle }} · 首页
-          <span
-            v-if="!canCreateInSpace"
-            class="material-symbols-outlined crumb-lock"
-            title="你在此空间只有只读权限,无法创建新页面"
-          >lock</span>
-        </span>
+        <span class="crumb-item current">{{ homeTitle }} · 首页</span>
       </template>
     </Breadcrumb>
     <!-- page-actions 同样 Teleport 到 #app-subheader,与面包屑并列渲染,
@@ -278,8 +276,7 @@ function onInviteMembers(): void {
 
       <EmptySpaceOnboarding
         v-if="rootPages.length === 0"
-        :space-name="activeSpace?.name ?? fallbackSpaceName"
-        :kind="isPersonal ? 'personal' : 'shared'"
+        :space-name="activeSpace?.name ?? '团队空间'"
         :can-create="canCreateInSpace"
         @create-page="createRoot"
         @import-markdown="openImportModal"
@@ -503,11 +500,6 @@ function onInviteMembers(): void {
   color: var(--text-2);
   flex: 1;
   min-width: 0;
-}
-.crumb-lock {
-  font-size: 14px !important;
-  color: var(--text-3);
-  flex-shrink: 0;
 }
 .quick-action > span:last-child {
   display: flex;

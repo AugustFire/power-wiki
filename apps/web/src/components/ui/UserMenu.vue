@@ -67,15 +67,17 @@ onBeforeUnmount(() => {
 
 async function goMySpace() {
   close()
-  // P1-7: 「我的空间」 = 进入个人空间容器视图(跟 SpaceSwitcher 选中
-  // personal 是同一动作:切 activeSpace → 跳到该空间的 home)。这跟
-  // 「我的工作台」(/me)是两个产品:
-  //   - 我的工作台:跨空间个人 dashboard(pinned / recents / @mention)
-  //   - 我的空间:个人空间的 page tree 容器(可看可编辑私人页面)
-  // 之前把两条合并成 `push('/me')`,让用户失去了进入个人空间容器视图
-  // 的入口 —— 现在分开:
-  //   - Sidebar 顶部「我的工作台」 → /me (PersonalHomeView)
-  //   - UserMenu「我的空间」 → / (SpaceHomeView, active=personal)
+  // P1-7: 「我的空间」 = 进入个人空间。跟 SidebarHomeItem 「我的工作台」
+  // (→ /me) 是两条不同入口:
+  //   - 我的工作台 (SidebarHomeItem):跨空间个人 dashboard,不动 activeSpace
+  //   - 我的空间 (UserMenu):把 activeSpace 切到 personal,落 /me
+  //
+  // 2026-08-07 P0:`/` 现在是 team-only —— SpaceHomeView 的 setup watch
+  // 在 active=personal 时会把 `/` 重定向到 `/me`。所以这里 push('/') 实
+  // 际终点是 /me(setActiveSpace 把 activeSpace 翻成 personal,watch 把
+  // `/` 改成 `/me`)。不直接 push('/me') 是为了保留 setActiveSpace 的
+  // 副作用语义 —— 别的组件(Sidebar / TopBar / PageTree)依赖
+  // activeSpace 是 personal,不能跳过 setActiveSpace。
   if (personalSpace.value) {
     spacesStore.setActiveSpace(personalSpace.value.id)
     if (router.currentRoute.value.path !== '/') {

@@ -182,18 +182,18 @@
 
 ---
 
-### 🔴 [P0] 个人空间没有自己的主页,跟 team 空间共用模板显得空
+### ✅ [P0·已修 2026-08-07] 个人空间没有自己的主页,跟 team 空间共用模板显得空
 
-**现状是什么**:`SpaceHomeView.vue` 1133 行,**team + personal 共用一份逻辑**。personal 走 fallback 名字与「个人空间」模板,但 4 张 StatCard(全部 / 今日 / 本周 / 我的)+ 两个 recent list 在 personal 通常只有 1 个 root 页时显得空。
+**怎么改的**:`SpaceHomeView.vue` 收口成 team-only —— 删了 `fallbackSpaceName` / `crumb-lock` / `EmptySpaceOnboarding` 的 `kind="personal"` 分支,首页的 `homepagePageId` watch 升级成统一 watch,把「`/` 在 personal 下重定向到 `/me`」和「`/` 在 team 且有 homepage 时重定向到 `/p/<id>`」收口到同一处。`EmptySpaceOnboarding` 同步收紧成 shared-only(personal 空态由 `PersonalHomeView` 的 todo card 兜底)。UserMenu 的「我的空间」和 `router.beforeEach` 的注释同步更新。
 
-**用户感觉哪里别扭**:用户进入自己的 personal space,期望看到「我的草稿 / 我的待办 / 我最近的个人笔记」之类的清单,而不是跟 team 空间长得一模一样的 stats 卡片。
+行为:`/` 在 active=personal 时 1 帧内重定向到 `/me`,让已经存在的 `PersonalHomeView`(1894 行,profile cover + 5 tile 快速操作 + mentions / created / personalSpace / watched / recent / shared 6 个 section + todo card 兜底)成为 personal 唯一入口。短期方案(改 stats 文字)被否决 —— 那是「一个组件根据 kind 分支」的延伸,跟 team/personal 是两个产品的强约束冲突。
 
-**问题在哪 / 怎么改**:
-- 个人空间走单独的 `PersonalHomeView`(其实 `/me` 已经存在,但 `/` 在 personal 下走的是同一份 SpaceHomeView)。
-- 短期:在 personal 下,把 stats 改成「草稿数 / 私人页数 / 关注数 / 公开分享数」,recent list 改成「最近编辑 / 最近浏览 / 最近创建」。
-- 中期:把 personal home 直接 = `/me`,`/` 在 personal 下重定向 `/me`。
+**怎么验证**:
+- `verify_p1_7_home.py`:UserMenu「我的空间」终点断言从 `/` 反转成 `/me`(断言 `.personal-home-shell` 挂载、`我的工作台` 面包屑);redirect_context 直接访问 `/#/` 的终点断言同样反转。新增 `redirected /me breadcrumb says 我的工作台` 断言。
+- `verify_p3_personal_home.py`:`个人空间 tile` 导航终点从 `/` 改 `/me`。
+- `pnpm typecheck` 绿。
 
-**代码位置**:`apps/web/src/views/SpaceHomeView.vue`(整个文件 1133 行,agent 标记为「后期堆叠」)。
+**代码位置**:`apps/web/src/views/SpaceHomeView.vue`(统一 watch + 删 personal 分支)、`apps/web/src/components/space/EmptySpaceOnboarding.vue`(删 `kind` prop)、`apps/web/src/components/ui/UserMenu.vue`(注释同步)、`apps/web/src/router/index.ts`(`beforeEach` 注释同步)、`scripts/verify_p1_7_home.py`、`scripts/verify_p3_personal_home.py`。
 
 ---
 
