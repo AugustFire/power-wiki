@@ -311,8 +311,10 @@ async function onDelete(s: Space) {
     await spacesStore.deleteSpace(s.id)
     const list = s.kind === 'personal' ? personalList : sharedList
     list.items.value = list.items.value.filter((x) => x.id !== s.id)
-    // Delete cascades to the space's pages; drop them from the in-memory tree.
-    void pagesStore.refresh()
+    // 后端 DELETE 已 0-page gate(见 adminSpaces.ts:321),无 cascade 需要,
+    // 直接本地滤掉该空间的根节点即可——避免 586KB 全量重拉引起的页面卡顿。
+    const sid = s.id
+    pagesStore.pages = pagesStore.pages.filter((p: { spaceId: string }) => p.spaceId !== sid)
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : '删除失败'
     if (e instanceof ApiError && e.status === 409 && e.code === 'space_not_empty') {
